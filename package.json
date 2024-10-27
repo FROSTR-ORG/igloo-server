@@ -1,0 +1,47 @@
+{
+  "name": "@frostr/permafrost",
+  "version": "0.0.1",
+  "description": "Remote signing server for the FROSTR protocol.",
+  "author": "Christopher Scott",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/frostr-org/permafrost"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org",
+    "access": "public"
+  },
+  "files": [
+    "README.md",
+    "LICENSE",
+    "dist",
+    "src"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "load": "tsx --tsconfig ./test/tsconfig.json",
+    "scratch": "yarn load test/scratch.ts",
+    "dev": "yarn load -r dotenv/config test/start.ts"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.7.7",
+    "dotenv": "^16.4.5",
+    "tslib": "^2.8.0",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  },
+  "dependencies": {
+    "express": "^4.21.1",
+    "nostr-tools": "^2.9.4",
+    "zod": "^3.23.8"
+  }
+}
