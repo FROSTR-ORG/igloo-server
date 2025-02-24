@@ -1,6 +1,5 @@
 import { Buff }               from '@cmdcode/buff'
 import { secp256k1, schnorr } from '@noble/curves/secp256k1'
-import { cbc }                from '@noble/ciphers/aes'
 import { mod }                from '@noble/curves/abstract/modular'
 
 /**
@@ -74,43 +73,4 @@ export function verify_sig (
   signature : string
 ) {
   return schnorr.verify(signature, message, pubkey)
-}
-
-/**
- * Encrypts content using AES-CBC with an optional initialization vector.
- * @param secret    Encryption key in hex format
- * @param content   Content to encrypt
- * @param iv        Optional initialization vector in hex format
- * @returns         Encrypted content in base64url format with IV
- */
-export function encrypt_content (
-  secret  : string,
-  content : string,
-  iv?     : string
-) {
-  const cbytes = Buff.str(content)
-  const sbytes = Buff.hex(secret)
-  const vector = (iv !== undefined)
-    ? Buff.hex(iv, 16)
-    : Buff.random(16)
-  const encrypted = cbc(sbytes, vector).encrypt(cbytes)
-  return new Buff(encrypted).b64url + '?iv=' + vector.b64url
-}
-
-/**
- * Decrypts AES-CBC encrypted content using provided secret.
- * @param secret    Decryption key in hex format
- * @param content   Encrypted content in base64url format with IV
- * @returns         Decrypted content as string
- */
-export function decrypt_content (
-  secret  : string,
-  content : string
-) {
-  const [ encryped, iv ] = content.split('?iv=')
-  const cbytes = Buff.b64url(encryped)
-  const sbytes = Buff.hex(secret)
-  const vector = Buff.b64url(iv)
-  const decrypted = cbc(sbytes, vector).decrypt(cbytes)
-  return new Buff(decrypted).str
 }

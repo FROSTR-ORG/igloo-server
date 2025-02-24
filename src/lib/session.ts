@@ -1,10 +1,6 @@
 import { Buff } from '@cmdcode/buff'
-import { Util } from '../util/index.js'
 
-import {
-  decrypt_payload,
-  encrypt_payload
-} from './crypto.js'
+import { Cipher, Util } from '../util/index.js'
 
 import {
   parse_challenge,
@@ -29,7 +25,7 @@ export function create_session () {
   }
 
   const payload   = JSON.stringify(session)
-  const encrypted = encrypt_payload(CONST.SESSION_KEY, payload)
+  const encrypted = Cipher.encrypt_payload(CONST.SESSION_KEY, payload)
 
   return new Response(session.id, {
     status  : 200,
@@ -55,7 +51,7 @@ export async function verify_session (req: Request) {
   }
 
   const payload   = JSON.stringify({ ...session, is_auth: true })
-  const encrypted = encrypt_payload(CONST.SESSION_KEY, payload)
+  const encrypted = Cipher.encrypt_payload(CONST.SESSION_KEY, payload)
 
   return new Response('authentication successful', {
     status  : 200,
@@ -67,7 +63,7 @@ export function get_session (req: Request) : SessionCookie | null {
   try {
     const cookies = parse_cookies(req.headers.get("Cookie") || "")
     if (typeof cookies.session === 'string') {
-      const payload = decrypt_payload(CONST.SESSION_KEY, cookies.session)
+      const payload = Cipher.decrypt_payload(CONST.SESSION_KEY, cookies.session)
       return JSON.parse(payload)
     } else {
       return null

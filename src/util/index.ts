@@ -1,4 +1,5 @@
-export * as Crypto from './crypto.js'
+export * as Cipher from './cipher.js'
+export * as ECC    from './ecc.js'
 export * as Util   from './helpers.js'
 export * as Nostr  from './nostr.js'
 export * as Schema from './schema.js'
