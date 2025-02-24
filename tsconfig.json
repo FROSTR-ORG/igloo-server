@@ -1,14 +1,9 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
-    "paths": {
-      "@/*" : [ "src/*" ],
-    },
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "target": "ESNext",
-    "rootDir": "./src",
-    "outDir": "./dist",
+    "types": ["bun-types"],
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
     "declaration": true,
     "importHelpers": true,
     "resolveJsonModule": true,
@@ -28,6 +23,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
-  "exclude": [ "dist", "node_modules", "test" ],
-  "include": [ "src/**/*.ts" ]
+  "exclude": [ "node_modules" ],
+  "include": [ "src/**/*", "static" ]
 }

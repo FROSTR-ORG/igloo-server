@@ -1,0 +1,22 @@
+services:
+
+  permafrost:
+    build          : ./
+    env_file       : .env
+    image          : permafrost:latest
+    container_name : permafrost
+    platform       : linux/x86_64
+    hostname       : permafrost
+    restart        : unless-stopped
+    init           : true
+    tty            : true
+    networks:
+      - infranet
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./src:/app/src:rw
+
+networks:
+  infranet:
+    driver: bridge
