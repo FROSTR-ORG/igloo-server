@@ -12,7 +12,7 @@ Rent-a-signer service.
 
 ## Overview
 
-Permafrost is a self-hosted relay and co-signature service provider. It is designed to be used by multiple users, whom authenticate with NIP-07 for authentication and account management. Users can create an account via NIP-07 login, pay for the service via a lightning invoice, and manage their account via the web interface.
+Permafrost is a self-hosted relay and co-signature service provider. It is designed to be used by multiple users, whom authenticate with their own frostr npub. Users can create an account via NIP-07 login, pay for the service via a lightning invoice, and manage their account via the web interface.
 
 When a user pays for an account, they are given a bifrost node. This node is run by the permafrost server, and is used to co-sign transactions for the user.
 
