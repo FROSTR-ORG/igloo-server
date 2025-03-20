@@ -67,10 +67,6 @@ serve({
 
 console.log(`Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`)
 
-node.on('ready', () => {
-  console.log('node connected')
-})
-
 node.on('*', (event : any) => {
   if (event !== 'message') {
     console.log('[ bifrost ]', event)
