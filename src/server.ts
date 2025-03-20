@@ -71,4 +71,10 @@ node.on('ready', () => {
   console.log('node connected')
 })
 
+node.on('*', (event : any) => {
+  if (event !== 'message') {
+    console.log('[ bifrost ]', event)
+  }
+})
+
 node.connect()

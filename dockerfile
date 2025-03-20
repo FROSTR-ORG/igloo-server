@@ -8,7 +8,7 @@ WORKDIR /app
 COPY package.json bun.lock ./
 
 # Install dependencies using Bun
-RUN bun install --frozen-lockfile
+RUN bun install
 
 # Copy the source code and static files.
 COPY src    ./src
