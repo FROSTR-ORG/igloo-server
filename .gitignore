@@ -38,6 +38,3 @@ dist
 
 #VSCode
 .vscode
-
-#Core Data
-test/data
