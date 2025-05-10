@@ -32,7 +32,7 @@ serve({
         return new Response(script_file, {
           headers: { 'Content-Type': 'text/javascript' }
         })
-
+        
       default:
         return new Response(index_page, {
           headers: { 'Content-Type': 'text/html' }

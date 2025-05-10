@@ -1,1 +1,1 @@
-console.log('Permafrost Server is running')
+console.log('permafrost server is running')

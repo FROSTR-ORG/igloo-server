@@ -1,5 +1,6 @@
 {
   "name": "@frostr/permafrost",
+  "version": "1.0.0",
   "scripts": {
     "start": "bun run src/server.ts"
   },

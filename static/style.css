@@ -6,15 +6,3 @@ body {
   padding: 20px;
   line-height: 1.6;
 }
-
-.container {
-  background-color: #f8f9fa;
-  padding: 30px;
-  border-radius: 8px;
-  box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}
-
-h1 {
-  color: #2c3e50;
-  margin-bottom: 20px;
-}
