@@ -1,6 +1,6 @@
-import { serve }       from 'bun'
-import { BifrostNode } from '@frostr/bifrost'
-import { NostrRelay }  from './class/relay.js'
+import { serve }                from 'bun'
+import { createAndConnectNode } from '@frostr/igloo-core'
+import { NostrRelay }           from './class/relay.js'
 
 import * as CONST   from './const.js'
 
@@ -10,8 +10,14 @@ const style_file  = Bun.file('static/style.css')
 const script_file = Bun.file('static/app.js')
 
 const relays = [ ...CONST.RELAYS, 'ws://localhost:8002' ]
-const node   = new BifrostNode(CONST.GROUP, CONST.SHARE, relays)
 const relay  = new NostrRelay()
+
+// Create and connect the Bifrost node using igloo-core
+const node = await createAndConnectNode({
+  group: CONST.GROUP_CRED,
+  share: CONST.SHARE_CRED,
+  relays
+})
 
 // HTTP Server
 serve({
@@ -49,4 +55,4 @@ node.on('*', (event : any) => {
   }
 })
 
-node.connect()
+// Note: No need to call node.connect() as createAndConnectNode handles the connection

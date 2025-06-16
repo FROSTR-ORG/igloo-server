@@ -6,9 +6,11 @@
   },
   "dependencies": {
     "@cmdcode/buff": "^2.2.5",
-    "@frostr/bifrost": "^1.0.0",
+    "@frostr/bifrost": "^1.0.6",
+    "@frostr/igloo-core": "^0.1.1",
     "@noble/ciphers": "^1.2.1",
-    "@noble/curves": "^1.8.1"
+    "@noble/curves": "^1.8.1",
+    "nostr-tools": "^2.15.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.5",

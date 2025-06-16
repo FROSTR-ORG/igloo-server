@@ -1,10 +1,3 @@
-import {
-  decode_group_pkg,
-  decode_share_pkg
-} from '@frostr/bifrost/lib'
-
-import type { GroupPackage, SharePackage } from '@frostr/bifrost'
-
 if (process.env['GROUP_CRED'] === undefined) {
   throw new Error('GROUP_CRED is not set')
 }
@@ -20,5 +13,6 @@ export const RELAYS : string[]= process.env['RELAYS'] !== undefined
 export const HOST_NAME = process.env['HOST_NAME'] ?? 'localhost'
 export const HOST_PORT = process.env['HOST_PORT'] ?? 8002
 
-export const GROUP  : GroupPackage = decode_group_pkg(process.env['GROUP_CRED'])
-export const SHARE  : SharePackage = decode_share_pkg(process.env['SHARE_CRED'])
+// Raw credential strings for igloo-core functions
+export const GROUP_CRED = process.env['GROUP_CRED']
+export const SHARE_CRED = process.env['SHARE_CRED']
