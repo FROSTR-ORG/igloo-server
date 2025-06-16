@@ -1,659 +1,577 @@
-console.log('igloo server is running')
+console.log('Igloo Environment Manager is running')
 
-// Environment Variable Manager with Event Log - Igloo Desktop Style
-class EnvManager {
+// Environment Variables Manager
+class EnvironmentManager {
   constructor() {
-    this.envData = {};
-    this.logs = [];
-    this.sensitiveKeys = ['GROUP_CRED', 'SHARE_CRED', 'PASSWORD', 'SECRET', 'KEY', 'TOKEN'];
-    this.currentEditingKey = null;
-    this.eventLogExpanded = false;
-    
-    // Essential environment variables for Igloo
-    this.essentialVars = [
-      { 
-        key: 'GROUP_CRED', 
-        label: 'Group Credential',
-        placeholder: 'Enter your group credential (bfgroup...)',
-        description: 'This is your group data that contains the public information about your keyset, including the threshold and group public key.',
-        sensitive: true
-      },
-      { 
-        key: 'SHARE_CRED', 
-        label: 'Share Credential', 
-        placeholder: 'Enter your secret share (bfshare...)',
-        description: 'This is an individual secret share of the private key. Your keyset is split into shares and this is one of them.',
-        sensitive: true
-      }
-    ];
-    
-    this.initializeElements();
-    this.bindEvents();
-    this.loadEnvironmentVariables();
-    this.addLog('info', 'Environment manager initialized');
+    this.envVars = {};
+    this.eventLog = [];
+    this.isLogExpanded = false;
+    this.init();
   }
 
-  initializeElements() {
-    // Status elements
-    this.statusDot = document.getElementById('statusDot');
-    this.statusText = document.getElementById('statusText');
-    
-    // Main content elements
-    this.envList = document.getElementById('envList');
-    this.noVars = document.getElementById('noVars');
-    this.envSection = document.getElementById('envSection');
-    
-    // Modal elements
-    this.envModal = document.getElementById('envModal');
-    this.deleteModal = document.getElementById('deleteModal');
-    this.modalTitle = document.getElementById('modalTitle');
-    this.envForm = document.getElementById('envForm');
-    this.envKey = document.getElementById('envKey');
-    this.envValue = document.getElementById('envValue');
-    
-    // Button elements
-    this.addVarBtn = document.getElementById('addVarBtn');
-    this.basicTemplateBtn = document.getElementById('basicTemplateBtn');
-    this.fullTemplateBtn = document.getElementById('fullTemplateBtn');
-    
-    // Modal control buttons
-    this.closeModal = document.getElementById('closeModal');
-    this.cancelBtn = document.getElementById('cancelBtn');
-    this.closeDeleteModal = document.getElementById('closeDeleteModal');
-    this.cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
-    this.confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
-    this.deleteVarName = document.getElementById('deleteVarName');
-    
-    // Event log elements
-    this.eventLogHeader = document.getElementById('eventLogHeader');
-    this.eventLogContent = document.getElementById('eventLogContent');
-    this.eventLogChevron = document.getElementById('eventLogChevron');
-    this.eventLogCount = document.getElementById('eventLogCount');
-    this.eventLogEntries = document.getElementById('eventLogEntries');
-    this.clearLogsBtn = document.getElementById('clearLogsBtn');
-    this.eventLogStatus = document.getElementById('eventLogStatus');
+  init() {
+    this.bindEvents();
+    this.loadEnvironmentVariables();
+    this.setupEventLog();
   }
 
   bindEvents() {
-    // Main buttons
-    this.addVarBtn.addEventListener('click', () => this.showAddModal());
-    this.basicTemplateBtn.addEventListener('click', () => this.applyBasicTemplate());
-    this.fullTemplateBtn.addEventListener('click', () => this.applyFullTemplate());
+    // Template buttons
+    document.getElementById('basicTemplateBtn').addEventListener('click', () => this.applyTemplate('basic'));
+    document.getElementById('fullTemplateBtn').addEventListener('click', () => this.applyTemplate('full'));
+    
+    // Add variable button
+    document.getElementById('addVarBtn').addEventListener('click', () => this.showAddModal());
     
     // Modal events
-    this.closeModal.addEventListener('click', () => this.hideModal());
-    this.cancelBtn.addEventListener('click', () => this.hideModal());
-    this.closeDeleteModal.addEventListener('click', () => this.hideDeleteModal());
-    this.cancelDeleteBtn.addEventListener('click', () => this.hideDeleteModal());
-    this.confirmDeleteBtn.addEventListener('click', () => this.confirmDelete());
+    document.getElementById('closeModal').addEventListener('click', () => this.hideModal('envModal'));
+    document.getElementById('cancelModal').addEventListener('click', () => this.hideModal('envModal'));
+    document.getElementById('envForm').addEventListener('submit', (e) => this.handleFormSubmit(e));
     
-    // Form submission
-    this.envForm.addEventListener('submit', (e) => this.handleFormSubmit(e));
+    // Delete modal events
+    document.getElementById('closeDeleteModal').addEventListener('click', () => this.hideModal('deleteModal'));
+    document.getElementById('cancelDelete').addEventListener('click', () => this.hideModal('deleteModal'));
+    document.getElementById('confirmDelete').addEventListener('click', () => this.handleDelete());
     
-    // Click outside modal to close
-    this.envModal.addEventListener('click', (e) => {
-      if (e.target === this.envModal) this.hideModal();
-    });
-    this.deleteModal.addEventListener('click', (e) => {
-      if (e.target === this.deleteModal) this.hideDeleteModal();
-    });
-    
-    // Input validation
-    this.envKey.addEventListener('input', () => this.validateKeyInput());
-    
-    // Event log events
-    this.eventLogHeader.addEventListener('click', () => this.toggleEventLog());
-    this.clearLogsBtn.addEventListener('click', (e) => {
+    // Event log toggle
+    document.getElementById('eventLogHeader').addEventListener('click', () => this.toggleEventLog());
+    document.getElementById('clearLogsBtn').addEventListener('click', (e) => {
       e.stopPropagation();
-      this.clearLogs();
+      this.clearEventLog();
     });
+
+    // Copy buttons for essential variables
+    document.getElementById('copyGroupBtn').addEventListener('click', () => this.copyEssentialVariable('GROUP_CRED'));
+    document.getElementById('copyShareBtn').addEventListener('click', () => this.copyEssentialVariable('SHARE_CRED'));
+
+    // Close modals on outside click
+    document.getElementById('envModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) this.hideModal('envModal');
+    });
+    document.getElementById('deleteModal').addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) this.hideModal('deleteModal');
+    });
+  }
+
+  async loadEnvironmentVariables() {
+    try {
+      this.updateStatus('loading', 'Loading environment variables...');
+      
+      const response = await fetch('/api/env');
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      this.envVars = data.variables || {};
+      
+      const count = Object.keys(this.envVars).length;
+      this.updateStatus('success', `Loaded ${count} environment variable${count !== 1 ? 's' : ''}`);
+      
+      this.renderVariables();
+      this.addEventLogEntry('success', 'Environment variables loaded successfully', { count });
+      
+    } catch (error) {
+      console.error('Failed to load environment variables:', error);
+      this.updateStatus('error', 'Failed to load environment variables');
+      this.addEventLogEntry('error', 'Failed to load environment variables', { error: error.message });
+    }
+  }
+
+  renderVariables() {
+    // Update essential variables
+    this.renderEssentialVariables();
     
-    // Back to shares button (placeholder)
-    const backBtn = document.getElementById('backToShares');
-    if (backBtn) {
-      backBtn.addEventListener('click', () => {
-        this.addLog('info', 'Back to shares clicked (placeholder)');
+    // Filter out essential variables for additional section
+    const additionalVars = Object.keys(this.envVars).filter(key => 
+      !['GROUP_CRED', 'SHARE_CRED'].includes(key)
+    );
+    
+    const additionalSection = document.getElementById('additionalSection');
+    const envList = document.getElementById('envList');
+    const noVars = document.getElementById('noVars');
+    
+    if (additionalVars.length > 0) {
+      additionalSection.style.display = 'block';
+      noVars.style.display = 'none';
+      
+      // Render additional variables
+      envList.innerHTML = additionalVars.map(key => this.renderVariableCard(key, this.envVars[key])).join('');
+    } else {
+      additionalSection.style.display = 'none';
+      if (Object.keys(this.envVars).length === 0) {
+        noVars.style.display = 'block';
+      }
+    }
+  }
+
+  renderEssentialVariables() {
+    const groupCredInput = document.getElementById('groupCredInput');
+    const shareCredInput = document.getElementById('shareCredInput');
+    
+    // Set values for essential variables
+    groupCredInput.value = this.envVars['GROUP_CRED'] || '';
+    shareCredInput.value = this.envVars['SHARE_CRED'] || '';
+    
+    // Enable/disable copy buttons
+    document.getElementById('copyGroupBtn').disabled = !this.envVars['GROUP_CRED'];
+    document.getElementById('copyShareBtn').disabled = !this.envVars['SHARE_CRED'];
+  }
+
+  renderVariableCard(key, value) {
+    const isSensitive = this.isSensitiveVariable(key);
+    const displayValue = isSensitive ? '••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••' : value;
+    
+    return `
+      <div class="bg-slate-800/40 p-4 rounded-lg border border-slate-700/50 hover:border-slate-600/50 transition-all duration-200 hover:bg-slate-800/60">
+        <div class="flex justify-between items-start">
+          <div class="flex-1">
+            <div class="flex items-center gap-2 mb-2">
+              <h4 class="text-blue-300 font-mono text-sm font-medium">${key}</h4>
+              ${isSensitive ? '<span class="inline-flex items-center px-2 py-1 rounded text-xs bg-yellow-900/30 text-yellow-400 border border-yellow-800/30 font-mono">SENSITIVE</span>' : ''}
+            </div>
+            <div class="bg-gray-900/50 p-2 rounded text-sm font-mono text-gray-300 break-all">
+              ${displayValue}
+            </div>
+          </div>
+          <div class="flex gap-2 ml-4">
+            <button 
+              class="bg-blue-800/30 hover:bg-blue-800/50 text-blue-400 hover:text-blue-300 px-3 py-2 rounded transition-colors border border-blue-700/50 hover:border-blue-600/50 font-mono"
+              onclick="envManager.copyVariable('${key}')"
+              title="Copy"
+            >
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+              </svg>
+            </button>
+            <button 
+              class="bg-gray-700/50 hover:bg-gray-600/50 text-gray-400 hover:text-gray-300 px-3 py-2 rounded transition-colors border border-gray-600/50 hover:border-gray-500/50 font-mono"
+              onclick="envManager.showEditModal('${key}')"
+              title="Edit"
+            >
+              Edit
+            </button>
+            <button 
+              class="bg-red-800/30 hover:bg-red-700/50 text-red-400 hover:text-red-300 px-3 py-2 rounded transition-colors border border-red-700/50 hover:border-red-600/50 font-mono"
+              onclick="envManager.showDeleteModal('${key}')"
+              title="Delete"
+            >
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  async copyVariable(key) {
+    const value = this.envVars[key];
+    if (!value) return;
+    
+    try {
+      await navigator.clipboard.writeText(value);
+      this.showCopyFeedback(key);
+      this.addEventLogEntry('info', `Copied ${key} to clipboard`);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      this.addEventLogEntry('error', `Failed to copy ${key}`, { error: error.message });
+    }
+  }
+
+  async copyEssentialVariable(key) {
+    const value = this.envVars[key];
+    if (!value) return;
+    
+    try {
+      await navigator.clipboard.writeText(value);
+      this.showEssentialCopyFeedback(key);
+      this.addEventLogEntry('info', `Copied ${key} to clipboard`);
+    } catch (error) {
+      console.error('Failed to copy:', error);
+      this.addEventLogEntry('error', `Failed to copy ${key}`, { error: error.message });
+    }
+  }
+
+  showCopyFeedback(key) {
+    // Visual feedback for copy action
+    const buttons = document.querySelectorAll(`button[onclick="envManager.copyVariable('${key}')"]`);
+    buttons.forEach(button => {
+      const originalHtml = button.innerHTML;
+      button.innerHTML = `
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+        </svg>
+      `;
+      button.classList.add('bg-green-600/50', 'text-green-300');
+      
+      setTimeout(() => {
+        button.innerHTML = originalHtml;
+        button.classList.remove('bg-green-600/50', 'text-green-300');
+      }, 2000);
+    });
+  }
+
+  showEssentialCopyFeedback(key) {
+    const buttonId = key === 'GROUP_CRED' ? 'copyGroupBtn' : 'copyShareBtn';
+    const button = document.getElementById(buttonId);
+    
+    const originalHtml = button.innerHTML;
+    button.innerHTML = `
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+      </svg>
+    `;
+    button.classList.add('bg-green-600/50', 'text-green-300');
+    
+    setTimeout(() => {
+      button.innerHTML = originalHtml;
+      button.classList.remove('bg-green-600/50', 'text-green-300');
+    }, 2000);
+  }
+
+  showAddModal() {
+    document.getElementById('modalTitle').textContent = 'Add Environment Variable';
+    document.getElementById('envKey').value = '';
+    document.getElementById('envValue').value = '';
+    document.getElementById('envKey').disabled = false;
+    this.currentEditingKey = null;
+    this.showModal('envModal');
+  }
+
+  showEditModal(key) {
+    document.getElementById('modalTitle').textContent = 'Edit Environment Variable';
+    document.getElementById('envKey').value = key;
+    document.getElementById('envValue').value = this.envVars[key] || '';
+    document.getElementById('envKey').disabled = true;
+    this.currentEditingKey = key;
+    this.showModal('envModal');
+  }
+
+  showDeleteModal(key) {
+    document.getElementById('deleteVarName').textContent = key;
+    this.keyToDelete = key;
+    this.showModal('deleteModal');
+  }
+
+  showModal(modalId) {
+    const modal = document.getElementById(modalId);
+    modal.classList.remove('hidden');
+    modal.classList.add('flex');
+    
+    // Focus first input
+    if (modalId === 'envModal') {
+      setTimeout(() => {
+        const keyInput = document.getElementById('envKey');
+        if (!keyInput.disabled) {
+          keyInput.focus();
+        } else {
+          document.getElementById('envValue').focus();
+        }
+      }, 100);
+    }
+  }
+
+  hideModal(modalId) {
+    const modal = document.getElementById(modalId);
+    modal.classList.add('hidden');
+    modal.classList.remove('flex');
+  }
+
+  async handleFormSubmit(e) {
+    e.preventDefault();
+    
+    const key = document.getElementById('envKey').value.trim();
+    const value = document.getElementById('envValue').value.trim();
+    
+    if (!key || !value) {
+      this.addEventLogEntry('error', 'Both variable name and value are required');
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/env', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key, value }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        this.envVars[key] = value;
+        this.renderVariables();
+        this.hideModal('envModal');
+        
+        const action = this.currentEditingKey ? 'updated' : 'added';
+        this.addEventLogEntry('success', `Environment variable ${action}`, { key, action });
+        
+        // Update status
+        const count = Object.keys(this.envVars).length;
+        this.updateStatus('success', `Loaded ${count} environment variable${count !== 1 ? 's' : ''}`);
+      } else {
+        throw new Error(result.error || 'Failed to save variable');
+      }
+    } catch (error) {
+      console.error('Failed to save variable:', error);
+      this.addEventLogEntry('error', 'Failed to save environment variable', { 
+        key, 
+        error: error.message 
       });
     }
   }
 
-  validateKeyInput() {
-    const key = this.envKey.value.toUpperCase();
-    this.envKey.value = key.replace(/[^A-Z0-9_]/g, '');
-  }
+  async handleDelete() {
+    if (!this.keyToDelete) return;
 
-  updateStatus(type, message) {
-    this.statusDot.className = `w-3 h-3 rounded-full status-dot ${type}`;
-    this.statusText.textContent = message;
-    
-    // Update event log status
-    if (this.eventLogStatus) {
-      this.eventLogStatus.className = `w-2 h-2 rounded-full ${
-        type === 'connected' ? 'bg-green-500' : 
-        type === 'loading' ? 'bg-yellow-500' : 
-        'bg-red-500'
-      }`;
+    try {
+      const response = await fetch('/api/env/delete', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ key: this.keyToDelete }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (result.success) {
+        delete this.envVars[this.keyToDelete];
+        this.renderVariables();
+        this.hideModal('deleteModal');
+        
+        this.addEventLogEntry('success', 'Environment variable deleted', { key: this.keyToDelete });
+        
+        // Update status
+        const count = Object.keys(this.envVars).length;
+        this.updateStatus('success', `Loaded ${count} environment variable${count !== 1 ? 's' : ''}`);
+        
+        this.keyToDelete = null;
+      } else {
+        throw new Error(result.error || 'Failed to delete variable');
+      }
+    } catch (error) {
+      console.error('Failed to delete variable:', error);
+      this.addEventLogEntry('error', 'Failed to delete environment variable', { 
+        key: this.keyToDelete, 
+        error: error.message 
+      });
     }
   }
 
-  addLog(type, message, data = null) {
-    const timestamp = new Date().toLocaleTimeString();
-    const id = Math.random().toString(36).substr(2, 9);
+  async applyTemplate(type) {
+    try {
+      let templateVars = {};
+      
+      if (type === 'basic') {
+        templateVars = {
+          'GROUP_CRED': 'bfgroup_paste_your_group_credential_here',
+          'SHARE_CRED': 'bfshare_paste_your_share_credential_here',
+          'HOST_PORT': '8002'
+        };
+      } else if (type === 'full') {
+        templateVars = {
+          'GROUP_CRED': 'bfgroup_paste_your_group_credential_here',
+          'SHARE_CRED': 'bfshare_paste_your_share_credential_here',
+          'HOST_PORT': '8002',
+          'HOST_NAME': 'localhost',
+          'RELAYS': 'wss://relay.primal.net,wss://relay.snort.social'
+        };
+      }
+
+      // Apply template variables one by one
+      for (const [key, value] of Object.entries(templateVars)) {
+        const response = await fetch('/api/env', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ key, value }),
+        });
+
+        if (response.ok) {
+          this.envVars[key] = value;
+        }
+      }
+
+      this.renderVariables();
+      this.addEventLogEntry('success', `Applied ${type} template`, { 
+        template: type, 
+        variables: Object.keys(templateVars) 
+      });
+      
+      // Update status
+      const count = Object.keys(this.envVars).length;
+      this.updateStatus('success', `Loaded ${count} environment variable${count !== 1 ? 's' : ''}`);
+      
+    } catch (error) {
+      console.error('Failed to apply template:', error);
+      this.addEventLogEntry('error', `Failed to apply ${type} template`, { error: error.message });
+    }
+  }
+
+  isSensitiveVariable(key) {
+    const sensitiveKeys = ['CRED', 'KEY', 'SECRET', 'TOKEN', 'PASSWORD', 'PASS'];
+    return sensitiveKeys.some(sensitive => key.toUpperCase().includes(sensitive));
+  }
+
+  updateStatus(type, message) {
+    const statusDot = document.getElementById('statusDot');
+    const statusText = document.getElementById('statusText');
     
-    const logEntry = {
-      id,
-      timestamp,
+    statusDot.className = 'w-3 h-3 rounded-full';
+    statusText.textContent = message;
+    
+    switch (type) {
+      case 'success':
+        statusDot.classList.add('bg-green-500');
+        break;
+      case 'loading':
+        statusDot.classList.add('bg-yellow-500', 'pulse-glow');
+        break;
+      case 'error':
+        statusDot.classList.add('bg-red-500');
+        break;
+    }
+  }
+
+  setupEventLog() {
+    this.updateEventLogDisplay();
+  }
+
+  toggleEventLog() {
+    this.isLogExpanded = !this.isLogExpanded;
+    
+    const content = document.getElementById('eventLogContent');
+    const chevron = document.getElementById('eventLogChevron');
+    
+    if (this.isLogExpanded) {
+      content.style.maxHeight = '300px';
+      content.style.opacity = '1';
+      chevron.style.transform = 'rotate(180deg)';
+    } else {
+      content.style.maxHeight = '0';
+      content.style.opacity = '0';
+      chevron.style.transform = 'rotate(0deg)';
+    }
+  }
+
+  addEventLogEntry(type, message, data = null) {
+    const entry = {
+      timestamp: new Date().toLocaleTimeString(),
       type,
       message,
-      data
+      data,
+      id: Math.random().toString(36).substr(2, 9)
     };
     
-    this.logs.push(logEntry);
+    this.eventLog.push(entry);
     
-    // Keep only last 100 logs for performance
-    if (this.logs.length > 100) {
-      this.logs = this.logs.slice(-100);
+    // Keep only last 50 entries
+    if (this.eventLog.length > 50) {
+      this.eventLog = this.eventLog.slice(-50);
     }
     
     this.updateEventLogDisplay();
   }
 
   updateEventLogDisplay() {
-    if (!this.eventLogCount || !this.eventLogEntries) return;
+    const entriesContainer = document.getElementById('eventLogEntries');
+    const eventLogCount = document.getElementById('eventLogCount');
     
-    // Update count
-    this.eventLogCount.textContent = `${this.logs.length} event${this.logs.length !== 1 ? 's' : ''}`;
+    eventLogCount.textContent = `${this.eventLog.length} events`;
     
-    // Update entries if expanded
-    if (this.eventLogExpanded) {
-      this.renderEventLogEntries();
-    }
-  }
-
-  renderEventLogEntries() {
-    if (!this.eventLogEntries) return;
-    
-    if (this.logs.length === 0) {
-      this.eventLogEntries.innerHTML = '<div class="text-center text-gray-500 text-sm py-8">No events yet</div>';
+    if (this.eventLog.length === 0) {
+      entriesContainer.innerHTML = '<div class="text-center text-gray-500 text-sm py-8 font-mono">No events yet</div>';
       return;
     }
     
-    const entriesHtml = this.logs.slice(-50).reverse().map(log => this.createLogEntryHtml(log)).join('');
-    this.eventLogEntries.innerHTML = entriesHtml;
+    // Show latest entries first
+    const recentEntries = this.eventLog.slice(-20).reverse();
     
-    // Scroll to top of log entries
-    this.eventLogEntries.scrollTop = 0;
+    entriesContainer.innerHTML = recentEntries.map(entry => this.renderLogEntry(entry)).join('');
   }
 
-  createLogEntryHtml(log) {
-    const typeClass = log.type === 'error' ? 'error' : 
-                     log.type === 'success' ? 'success' : 
-                     log.type === 'info' ? 'info' : 
-                     log.type === 'warning' ? 'warning' : '';
+  renderLogEntry(entry) {
+    const badgeClass = this.getLogBadgeClass(entry.type);
+    const hasData = entry.data && Object.keys(entry.data).length > 0;
     
     return `
-      <div class="event-log-entry ${typeClass}">
-        <div class="flex items-center gap-2 mb-1">
-          <span class="event-timestamp">${log.timestamp}</span>
-          <span class="event-type ${log.type}">${log.type}</span>
-          <span class="event-message">${this.escapeHtml(log.message)}</span>
+      <div class="mb-2 bg-gray-800/40 p-2 rounded hover:bg-gray-800/50 transition-colors">
+        <div class="flex items-center gap-2 ${hasData ? 'cursor-pointer' : ''}" ${hasData ? `onclick="envManager.toggleLogEntry('${entry.id}')"` : ''}>
+          ${hasData ? `
+            <div class="text-blue-400 transition-transform duration-200 w-4 h-4 flex-shrink-0" id="chevron-${entry.id}">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+              </svg>
+            </div>
+          ` : `
+            <div class="w-4 h-4 flex-shrink-0 text-gray-600/30">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+              </svg>
+            </div>
+          `}
+          <span class="text-gray-500 text-xs font-mono">${entry.timestamp}</span>
+          <span class="inline-flex items-center px-2 py-1 rounded text-xs font-mono text-uppercase ${badgeClass}">
+            ${entry.type.toUpperCase()}
+          </span>
+          <span class="text-gray-300 font-mono">${entry.message}</span>
         </div>
-        ${log.data ? `
-          <details class="mt-2">
-            <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-300">Show details</summary>
-            <pre class="text-xs bg-gray-900/50 p-2 rounded mt-1 text-gray-400 overflow-x-auto">${this.escapeHtml(JSON.stringify(log.data, null, 2))}</pre>
-          </details>
+        ${hasData ? `
+          <div class="transition-all duration-200 ease-in-out overflow-hidden" id="data-${entry.id}" style="max-height: 0; opacity: 0;">
+            <pre class="mt-2 text-xs bg-gray-900/50 p-2 rounded overflow-x-auto text-gray-400 shadow-inner font-mono">${JSON.stringify(entry.data, null, 2)}</pre>
+          </div>
         ` : ''}
       </div>
     `;
   }
 
-  toggleEventLog() {
-    this.eventLogExpanded = !this.eventLogExpanded;
+  toggleLogEntry(entryId) {
+    const dataDiv = document.getElementById(`data-${entryId}`);
+    const chevron = document.getElementById(`chevron-${entryId}`);
     
-    if (this.eventLogExpanded) {
-      this.eventLogContent.style.maxHeight = '300px';
-      this.eventLogContent.style.opacity = '1';
-      this.eventLogChevron.style.transform = 'rotate(180deg)';
-      this.renderEventLogEntries();
-      this.addLog('info', 'Event log expanded');
+    if (dataDiv.style.maxHeight === '0px' || dataDiv.style.maxHeight === '') {
+      dataDiv.style.maxHeight = '500px';
+      dataDiv.style.opacity = '1';
+      if (chevron) chevron.style.transform = 'rotate(180deg)';
     } else {
-      this.eventLogContent.style.maxHeight = '0';
-      this.eventLogContent.style.opacity = '0';
-      this.eventLogChevron.style.transform = 'rotate(0deg)';
-      this.addLog('info', 'Event log collapsed');
+      dataDiv.style.maxHeight = '0';
+      dataDiv.style.opacity = '0';
+      if (chevron) chevron.style.transform = 'rotate(0deg)';
     }
   }
 
-  clearLogs() {
-    this.logs = [];
+  getLogBadgeClass(type) {
+    switch (type) {
+      case 'error':
+        return 'bg-red-900/20 text-red-400 border border-red-800/30';
+      case 'success':
+        return 'bg-green-900/20 text-green-400 border border-green-800/30';
+      case 'warning':
+        return 'bg-yellow-900/20 text-yellow-400 border border-yellow-800/30';
+      case 'info':
+        return 'bg-blue-900/20 text-blue-400 border border-blue-800/30';
+      default:
+        return 'bg-gray-900/20 text-gray-400 border border-gray-800/30';
+    }
+  }
+
+  clearEventLog() {
+    this.eventLog = [];
     this.updateEventLogDisplay();
-    this.addLog('info', 'Event logs cleared');
-  }
-
-  async loadEnvironmentVariables() {
-    this.updateStatus('loading', 'Loading environment variables...');
-    this.addLog('info', 'Loading environment variables from server');
-    
-    try {
-      const response = await fetch('/api/env');
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      this.envData = await response.json();
-      this.renderEnvironmentVariables();
-      
-      const count = Object.keys(this.envData).length;
-      this.updateStatus('connected', `Loaded ${count} environment variable${count !== 1 ? 's' : ''}`);
-      this.addLog('success', `Successfully loaded ${count} environment variables`);
-    } catch (error) {
-      console.error('Failed to load environment variables:', error);
-      this.updateStatus('error', 'Failed to load environment variables');
-      this.addLog('error', 'Failed to load environment variables', { error: error.message });
-      this.renderEnvironmentVariables(); // Show empty state
-    }
-  }
-
-  renderEnvironmentVariables() {
-    if (!this.envList) return;
-    
-    const keys = Object.keys(this.envData);
-    
-    if (keys.length === 0) {
-      this.envList.style.display = 'none';
-      this.noVars.style.display = 'block';
-      return;
-    }
-    
-    this.envList.style.display = 'block';
-    this.noVars.style.display = 'none';
-    
-    // Create essential environment variables UI (similar to Igloo Desktop)
-    const essentialHtml = this.essentialVars.map(varConfig => this.createEssentialVarHtml(varConfig)).join('');
-    
-    // Get other environment variables
-    const otherKeys = keys.filter(key => !this.essentialVars.some(ev => ev.key === key));
-    const otherVarsHtml = otherKeys.length > 0 ? `
-      <div class="mt-6 space-y-3">
-        <h4 class="text-blue-300 text-sm font-medium">Additional Variables</h4>
-        ${otherKeys.map(key => this.createEnvItem(key)).join('')}
-      </div>
-    ` : '';
-    
-    this.envList.innerHTML = essentialHtml + otherVarsHtml;
-    
-    // Bind events to the new elements
-    this.bindItemEvents();
-  }
-
-  createEssentialVarHtml(varConfig) {
-    const value = this.envData[varConfig.key] || '';
-    const hasValue = value.trim() !== '';
-    
-    return `
-      <div class="space-y-3 mb-6">
-        <div class="flex items-center">
-          <label class="text-blue-300 text-sm font-medium">${varConfig.label}:</label>
-          <div class="ml-2 text-blue-400 cursor-pointer" title="${varConfig.description}">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-            </svg>
-          </div>
-        </div>
-        <div class="flex">
-          <input
-            type="${varConfig.sensitive ? 'password' : 'text'}"
-            value="${this.escapeHtml(value)}"
-            placeholder="${varConfig.placeholder}"
-            class="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono form-input essential-var-input"
-            data-key="${varConfig.key}"
-            ${!hasValue ? '' : 'readonly'}
-          />
-          <button
-            class="ml-2 copy-btn"
-            data-key="${varConfig.key}"
-            title="Copy value"
-            ${!hasValue ? 'disabled' : ''}
-          >
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-            </svg>
-          </button>
-        </div>
-      </div>
-    `;
-  }
-
-  createEnvItem(key) {
-    const value = this.envData[key];
-    const isSensitive = this.isSensitiveKey(key);
-    const displayValue = isSensitive ? '••••••••••••••••' : (value || '(empty)');
-    
-    return `
-      <div class="env-item ${isSensitive ? 'sensitive' : ''}" data-key="${key}">
-        <div class="env-info">
-          <div class="env-key">${key}</div>
-          <div class="env-value ${isSensitive ? 'hidden' : ''}" data-key="${key}">
-            ${this.escapeHtml(displayValue)}
-          </div>
-        </div>
-        <div class="env-actions">
-          <button class="copy-btn" data-key="${key}" title="Copy value">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-            </svg>
-          </button>
-          <button class="btn-secondary btn-small edit-btn" data-key="${key}">Edit</button>
-          <button class="btn-danger btn-small delete-btn" data-key="${key}">Delete</button>
-        </div>
-      </div>
-    `;
-  }
-
-  bindItemEvents() {
-    // Essential variable inputs
-    document.querySelectorAll('.essential-var-input').forEach(input => {
-      const key = input.dataset.key;
-      
-      // Double click to edit
-      input.addEventListener('dblclick', () => {
-        input.readOnly = false;
-        input.focus();
-        this.addLog('info', `Editing ${key} in place`);
-      });
-      
-      // Save on blur or enter
-      const saveValue = async () => {
-        const newValue = input.value.trim();
-        if (newValue !== (this.envData[key] || '')) {
-          await this.saveEnvironmentVariable(key, newValue);
-        }
-        input.readOnly = true;
-      };
-      
-      input.addEventListener('blur', saveValue);
-      input.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          saveValue();
-        } else if (e.key === 'Escape') {
-          input.value = this.envData[key] || '';
-          input.readOnly = true;
-        }
-      });
-    });
-    
-    // Edit buttons
-    document.querySelectorAll('.edit-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const key = e.target.dataset.key;
-        this.showEditModal(key);
-      });
-    });
-    
-    // Delete buttons
-    document.querySelectorAll('.delete-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
-        const key = e.target.dataset.key;
-        this.showDeleteModal(key);
-      });
-    });
-    
-    // Copy buttons
-    document.querySelectorAll('.copy-btn').forEach(btn => {
-      btn.addEventListener('click', async (e) => {
-        const key = e.target.closest('[data-key]').dataset.key;
-        await this.handleCopy(this.envData[key] || '', key, btn);
-      });
-    });
-    
-    // Click to reveal sensitive values
-    document.querySelectorAll('.env-value.hidden').forEach(el => {
-      el.addEventListener('click', () => {
-        const key = el.dataset.key;
-        const value = this.envData[key] || '(empty)';
-        el.textContent = this.escapeHtml(value);
-        el.classList.remove('hidden');
-        this.addLog('info', `Revealed sensitive value for ${key}`);
-        setTimeout(() => {
-          el.textContent = '••••••••••••••••';
-          el.classList.add('hidden');
-        }, 3000);
-      });
-    });
-  }
-
-  async saveEnvironmentVariable(key, value) {
-    try {
-      this.addLog('info', `Saving environment variable: ${key}`);
-      
-      const response = await fetch('/api/env', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ [key]: value }),
-      });
-      
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const result = await response.json();
-      if (result.success) {
-        this.envData[key] = value;
-        this.addLog('success', `Successfully saved ${key}`);
-        
-        // Update copy button state
-        const copyBtn = document.querySelector(`[data-key="${key}"] .copy-btn`);
-        if (copyBtn) {
-          copyBtn.disabled = !value.trim();
-        }
-      } else {
-        throw new Error(result.message);
-      }
-    } catch (error) {
-      console.error('Failed to save environment variable:', error);
-      this.addLog('error', 'Failed to save environment variable', { key, error: error.message });
-      alert('Failed to save environment variable: ' + error.message);
-    }
-  }
-
-  async handleCopy(text, key, buttonEl) {
-    try {
-      await navigator.clipboard.writeText(text);
-      
-      // Visual feedback
-      const originalClass = buttonEl.className;
-      buttonEl.classList.add('success');
-      buttonEl.innerHTML = `
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-        </svg>
-      `;
-      
-      this.addLog('success', `Copied ${key} to clipboard`);
-      
-      setTimeout(() => {
-        buttonEl.className = originalClass;
-        buttonEl.innerHTML = `
-          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
-          </svg>
-        `;
-      }, 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-      this.addLog('error', `Failed to copy ${key}`, { error: err.message });
-    }
-  }
-
-  isSensitiveKey(key) {
-    return this.sensitiveKeys.some(sensitive => 
-      key.toUpperCase().includes(sensitive.toUpperCase())
-    );
-  }
-
-  escapeHtml(text) {
-    const div = document.createElement('div');
-    div.textContent = text;
-    return div.innerHTML;
-  }
-
-  showAddModal() {
-    this.currentEditingKey = null;
-    this.modalTitle.textContent = 'Add Environment Variable';
-    this.envKey.value = '';
-    this.envValue.value = '';
-    this.envKey.disabled = false;
-    this.showModal();
-    this.addLog('info', 'Add variable modal opened');
-  }
-
-  showEditModal(key) {
-    this.currentEditingKey = key;
-    this.modalTitle.textContent = 'Edit Environment Variable';
-    this.envKey.value = key;
-    this.envValue.value = this.envData[key] || '';
-    this.envKey.disabled = true;
-    this.showModal();
-    this.addLog('info', `Edit modal opened for ${key}`);
-  }
-
-  showModal() {
-    this.envModal.classList.add('show');
-    this.envKey.focus();
-  }
-
-  hideModal() {
-    this.envModal.classList.remove('show');
-  }
-
-  showDeleteModal(key) {
-    this.currentEditingKey = key;
-    this.deleteVarName.textContent = key;
-    this.deleteModal.classList.add('show');
-    this.addLog('warning', `Delete confirmation for ${key}`);
-  }
-
-  hideDeleteModal() {
-    this.deleteModal.classList.remove('show');
-  }
-
-  async handleFormSubmit(e) {
-    e.preventDefault();
-    
-    const key = this.envKey.value.trim();
-    const value = this.envValue.value.trim();
-    
-    if (!key) {
-      alert('Please enter a variable name');
-      this.addLog('error', 'Form submission failed: empty variable name');
-      return;
-    }
-    
-    // Validate key format
-    if (!/^[A-Z0-9_]+$/.test(key)) {
-      alert('Variable name must contain only uppercase letters, numbers, and underscores');
-      this.addLog('error', 'Form submission failed: invalid variable name format', { key });
-      return;
-    }
-    
-    await this.saveEnvironmentVariable(key, value);
-    this.renderEnvironmentVariables();
-    this.hideModal();
-  }
-
-  async confirmDelete() {
-    if (!this.currentEditingKey) return;
-    
-    try {
-      this.addLog('info', `Deleting environment variable: ${this.currentEditingKey}`);
-      
-      const response = await fetch('/api/env/delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ keys: [this.currentEditingKey] }),
-      });
-      
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const result = await response.json();
-      if (result.success) {
-        delete this.envData[this.currentEditingKey];
-        this.renderEnvironmentVariables();
-        this.hideDeleteModal();
-        this.updateStatus('connected', result.message);
-        this.addLog('success', `Successfully deleted ${this.currentEditingKey}`);
-      } else {
-        throw new Error(result.message);
-      }
-    } catch (error) {
-      console.error('Failed to delete environment variable:', error);
-      this.addLog('error', 'Failed to delete environment variable', { key: this.currentEditingKey, error: error.message });
-      alert('Failed to delete environment variable: ' + error.message);
-    }
-  }
-
-  async applyBasicTemplate() {
-    const template = {
-      'GROUP_CRED': '',
-      'SHARE_CRED': '',
-      'HOST_PORT': '8002'
-    };
-    
-    await this.applyTemplate(template, 'Basic template applied');
-  }
-
-  async applyFullTemplate() {
-    const template = {
-      'GROUP_CRED': '',
-      'SHARE_CRED': '',
-      'HOST_NAME': 'localhost',
-      'HOST_PORT': '8002',
-      'RELAYS': 'wss://relay.damus.io,wss://relay.snort.social,wss://relay.nostr.bg'
-    };
-    
-    await this.applyTemplate(template, 'Full template applied');
-  }
-
-  async applyTemplate(template, successMessage) {
-    const confirmMessage = `This will add/update ${Object.keys(template).length} environment variables. Continue?`;
-    if (!confirm(confirmMessage)) {
-      this.addLog('info', 'Template application cancelled by user');
-      return;
-    }
-    
-    try {
-      this.addLog('info', `Applying template with ${Object.keys(template).length} variables`);
-      
-      const response = await fetch('/api/env', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(template),
-      });
-      
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      
-      const result = await response.json();
-      if (result.success) {
-        Object.assign(this.envData, template);
-        this.renderEnvironmentVariables();
-        this.updateStatus('connected', successMessage);
-        this.addLog('success', successMessage, { variables: Object.keys(template) });
-      } else {
-        throw new Error(result.message);
-      }
-    } catch (error) {
-      console.error('Failed to apply template:', error);
-      this.addLog('error', 'Failed to apply template', { error: error.message });
-      alert('Failed to apply template: ' + error.message);
-    }
+    this.addEventLogEntry('info', 'Event log cleared');
   }
 }
 
-// Initialize the application when the DOM is loaded
-document.addEventListener('DOMContentLoaded', () => {
-  new EnvManager();
-});
+// Initialize the environment manager
+const envManager = new EnvironmentManager();
