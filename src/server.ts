@@ -73,6 +73,24 @@ function writeEnvFile(env: Record<string, string>): boolean {
   }
 }
 
+function getContentType(filePath: string): string {
+  const ext = filePath.split('.').pop()?.toLowerCase()
+  switch (ext) {
+    case 'png': return 'image/png'
+    case 'jpg':
+    case 'jpeg': return 'image/jpeg'
+    case 'gif': return 'image/gif'
+    case 'svg': return 'image/svg+xml'
+    case 'webp': return 'image/webp'
+    case 'ico': return 'image/x-icon'
+    case 'css': return 'text/css'
+    case 'js': return 'text/javascript'
+    case 'html': return 'text/html'
+    case 'json': return 'application/json'
+    default: return 'application/octet-stream'
+  }
+}
+
 // HTTP Server
 serve({
   port      : 8002,
@@ -146,6 +164,21 @@ serve({
     }
 
     // Serve static files
+    if (url.pathname.startsWith('/assets/')) {
+      // Serve files from assets directory
+      const assetPath = url.pathname.substring(1) // Remove leading slash
+      const file = Bun.file(`static/${assetPath}`)
+      
+      if (await file.exists()) {
+        const contentType = getContentType(assetPath)
+        return new Response(file, {
+          headers: { 'Content-Type': contentType }
+        })
+      }
+      
+      return new Response('Asset not found', { status: 404 })
+    }
+
     switch (url.pathname) {
       case '/style.css':
         return new Response(style_file, {
