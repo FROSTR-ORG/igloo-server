@@ -8,7 +8,7 @@ import * as CONST   from './const.js'
 
 // Load static files into memory
 const index_page  = Bun.file('static/index.html')
-const style_file  = Bun.file('static/style.css')
+const style_file  = Bun.file('static/styles.css')
 const script_file = Bun.file('static/app.js')
 
 const relays = [ ...CONST.RELAYS, 'ws://localhost:8002' ]
@@ -180,7 +180,7 @@ serve({
     }
 
     switch (url.pathname) {
-      case '/style.css':
+      case '/styles.css':
         return new Response(style_file, {
           headers: { 'Content-Type': 'text/css' }
         })
