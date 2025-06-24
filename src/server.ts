@@ -1,5 +1,5 @@
 import { serve }                from 'bun'
-import { createAndConnectNode } from '@frostr/igloo-core'
+import { createAndConnectNode, createConnectedNode } from '@frostr/igloo-core'
 import { NostrRelay }           from './class/relay.js'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
@@ -11,15 +11,393 @@ const index_page  = Bun.file('static/index.html')
 const style_file  = Bun.file('static/styles.css')
 const script_file = Bun.file('static/app.js')
 
-const relays = [ ...CONST.RELAYS, 'ws://localhost:8002' ]
+// Helper function to get valid relay URLs
+function getValidRelays(envRelays?: string): string[] {
+  // Use single default relay as requested
+  const defaultRelays = ['wss://relay.primal.net'];
+  
+  if (!envRelays) {
+    return defaultRelays;
+  }
+  
+  try {
+    let relayList: string[] = [];
+    
+    // Try to parse as JSON first
+    if (envRelays.startsWith('[')) {
+      relayList = JSON.parse(envRelays);
+    } else {
+      // Handle comma-separated or space-separated strings
+      relayList = envRelays
+        .split(/[,\s]+/)
+        .map(relay => relay.trim())
+        .filter(relay => relay.length > 0);
+    }
+    
+    // Validate each relay URL and exclude localhost to avoid conflicts
+    const validRelays = relayList.filter(relay => {
+      try {
+        const url = new URL(relay);
+        // Exclude localhost relays to avoid conflicts with our server
+        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+          console.warn(`Excluding localhost relay to avoid conflicts: ${relay}`);
+          return false;
+        }
+        return url.protocol === 'ws:' || url.protocol === 'wss:';
+      } catch {
+        return false;
+      }
+    });
+    
+    // If no valid relays, use default
+    if (validRelays.length === 0) {
+      console.warn('No valid relays found, using default relay');
+      return defaultRelays;
+    }
+    
+    // Respect user's relay configuration exactly as they set it
+    return validRelays;
+  } catch (error) {
+    console.warn('Error parsing relay URLs, using default:', error);
+    return defaultRelays;
+  }
+}
+
+const relays = getValidRelays(process.env.RELAYS);
 const relay  = new NostrRelay()
 
-// Create and connect the Bifrost node using igloo-core
-const node = await createAndConnectNode({
-  group: CONST.GROUP_CRED,
-  share: CONST.SHARE_CRED,
-  relays
-})
+// Event streaming for frontend
+const eventStreams = new Set<ReadableStreamDefaultController>();
+
+// Helper function to safely serialize data with circular reference handling
+function safeStringify(obj: any, maxDepth = 3): string {
+  const seen = new WeakSet();
+  
+  const replacer = (key: string, value: any, depth = 0): any => {
+    if (depth > maxDepth) {
+      return '[Max Depth Reached]';
+    }
+    
+    if (value === null || typeof value !== 'object') {
+      return value;
+    }
+    
+    if (seen.has(value)) {
+      return '[Circular Reference]';
+    }
+    
+    seen.add(value);
+    
+    if (Array.isArray(value)) {
+      return value.map((item, index) => replacer(String(index), item, depth + 1));
+    }
+    
+    const result: any = {};
+    for (const [k, v] of Object.entries(value)) {
+      // Skip functions and undefined values
+      if (typeof v === 'function' || v === undefined) {
+        continue;
+      }
+      result[k] = replacer(k, v, depth + 1);
+    }
+    
+    return result;
+  };
+  
+  try {
+    return JSON.stringify(replacer('', obj));
+  } catch (error) {
+    return JSON.stringify({
+      error: 'Failed to serialize object',
+      type: typeof obj,
+      constructor: obj?.constructor?.name || 'Unknown'
+    });
+  }
+}
+
+// Helper function to broadcast events to all connected clients
+function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
+  if (eventStreams.size === 0) {
+    return; // No connected clients
+  }
+  
+  try {
+    // Safely serialize the event data
+    const safeEvent = {
+      ...event,
+      data: event.data ? JSON.parse(safeStringify(event.data)) : undefined
+    };
+    
+    const eventData = `data: ${JSON.stringify(safeEvent)}\n\n`;
+    const encodedData = new TextEncoder().encode(eventData);
+    
+    // Send to all connected streams, removing failed ones
+    const failedStreams = new Set<ReadableStreamDefaultController>();
+    
+    for (const controller of eventStreams) {
+      try {
+        controller.enqueue(encodedData);
+      } catch (error) {
+        // Mark for removal - don't modify set while iterating
+        failedStreams.add(controller);
+      }
+    }
+    
+    // Remove failed streams
+    for (const failedController of failedStreams) {
+      eventStreams.delete(failedController);
+    }
+  } catch (error) {
+    console.error('Broadcast event error:', error);
+  }
+}
+
+// Helper function to add log entries
+function addServerLog(type: string, message: string, data?: any) {
+  const event = {
+    type,
+    message,
+    data,
+    timestamp: new Date().toLocaleTimeString(),
+    id: Math.random().toString(36).substr(2, 9)
+  };
+  
+  console.log(`[${type.toUpperCase()}] ${message}`);
+  broadcastEvent(event);
+}
+
+// Event mapping for cleaner message handling - matching Igloo Desktop
+const EVENT_MAPPINGS = {
+  '/sign/req': { type: 'sign', message: 'Signature request received' },
+  '/sign/res': { type: 'sign', message: 'Signature response sent' },
+  '/sign/rej': { type: 'sign', message: 'Signature request rejected' },
+  '/sign/ret': { type: 'sign', message: 'Signature shares aggregated' },
+  '/sign/err': { type: 'sign', message: 'Signature share aggregation failed' },
+  '/ecdh/req': { type: 'ecdh', message: 'ECDH request received' },
+  '/ecdh/res': { type: 'ecdh', message: 'ECDH response sent' },
+  '/ecdh/rej': { type: 'ecdh', message: 'ECDH request rejected' },
+  '/ecdh/ret': { type: 'ecdh', message: 'ECDH shares aggregated' },
+  '/ecdh/err': { type: 'ecdh', message: 'ECDH share aggregation failed' },
+  '/ping/req': { type: 'bifrost', message: 'Ping request' },
+  '/ping/res': { type: 'bifrost', message: 'Ping response' },
+} as const;
+
+// Setup comprehensive event listeners for the Bifrost node
+function setupNodeEventListeners(node: any) {
+  // Basic node events - matching Igloo Desktop
+  node.on('closed', () => {
+    addServerLog('bifrost', 'Bifrost node is closed');
+  });
+
+  node.on('error', (error: unknown) => {
+    addServerLog('error', 'Node error', error);
+  });
+
+  node.on('ready', (data: unknown) => {
+    // Log basic info about the ready event without the potentially problematic data object
+    const logData = data && typeof data === 'object' ?
+      { message: 'Node ready event received', hasData: true, dataType: typeof data } :
+      data;
+    addServerLog('ready', 'Node is ready', logData);
+  });
+
+  node.on('bounced', (reason: string, msg: unknown) => {
+    addServerLog('bifrost', `Message bounced: ${reason}`, msg);
+  });
+
+  // Message events
+  node.on('message', (msg: unknown) => {
+    try {
+      if (msg && typeof msg === 'object' && 'tag' in msg) {
+        const messageData = msg as { tag: unknown; [key: string]: unknown };
+        const tag = messageData.tag;
+
+        if (typeof tag === 'string') {
+          const eventInfo = EVENT_MAPPINGS[tag as keyof typeof EVENT_MAPPINGS];
+          if (eventInfo) {
+            addServerLog(eventInfo.type, eventInfo.message, msg);
+          } else if (tag.startsWith('/sign/')) {
+            addServerLog('sign', `Signature event: ${tag}`, msg);
+          } else if (tag.startsWith('/ecdh/')) {
+            addServerLog('ecdh', `ECDH event: ${tag}`, msg);
+          } else if (tag.startsWith('/ping/')) {
+            addServerLog('bifrost', `Ping event: ${tag}`, msg);
+          } else {
+            addServerLog('bifrost', `Message received: ${tag}`, msg);
+          }
+        } else {
+          addServerLog('bifrost', 'Message received (invalid tag type)', {
+            tagType: typeof tag,
+            tag,
+            originalMessage: msg
+          });
+        }
+      } else {
+        addServerLog('bifrost', 'Message received (no tag)', msg);
+      }
+    } catch (error) {
+      addServerLog('bifrost', 'Error parsing message event', { error, originalMessage: msg });
+    }
+  });
+
+  // Special handlers for events with different signatures - matching Igloo Desktop
+  try {
+    const ecdhSenderRejHandler = (reason: string, pkg: any) =>
+      addServerLog('ecdh', `ECDH request rejected: ${reason}`, pkg);
+    const ecdhSenderRetHandler = (reason: string, pkgs: string) =>
+      addServerLog('ecdh', `ECDH shares aggregated: ${reason}`, pkgs);
+    const ecdhSenderErrHandler = (reason: string, msgs: unknown[]) =>
+      addServerLog('ecdh', `ECDH share aggregation failed: ${reason}`, msgs);
+    const ecdhHandlerRejHandler = (reason: string, msg: unknown) =>
+      addServerLog('ecdh', `ECDH rejection sent: ${reason}`, msg);
+
+    node.on('/ecdh/sender/rej', ecdhSenderRejHandler);
+    node.on('/ecdh/sender/ret', ecdhSenderRetHandler);
+    node.on('/ecdh/sender/err', ecdhSenderErrHandler);
+    node.on('/ecdh/handler/rej', ecdhHandlerRejHandler);
+
+    const signSenderRejHandler = (reason: string, pkg: any) => {
+      // Filter out common websocket connection errors to reduce noise
+      if (reason === 'websocket closed' || reason === 'connection timeout') {
+        addServerLog('sign', `Signature request rejected due to network issue: ${reason}`, null);
+      } else {
+        addServerLog('sign', `Signature request rejected: ${reason}`, pkg);
+      }
+    };
+    const signSenderRetHandler = (reason: string, msgs: any[]) =>
+      addServerLog('sign', `Signature shares aggregated: ${reason}`, msgs);
+    const signSenderErrHandler = (reason: string, msgs: unknown[]) =>
+      addServerLog('sign', `Signature share aggregation failed: ${reason}`, msgs);
+    const signHandlerRejHandler = (reason: string, msg: unknown) => {
+      // Filter out common websocket connection errors to reduce noise
+      if (reason === 'websocket closed' || reason === 'connection timeout') {
+        addServerLog('sign', `Signature rejection sent due to network issue: ${reason}`, null);
+      } else {
+        addServerLog('sign', `Signature rejection sent: ${reason}`, msg);
+      }
+    };
+
+    node.on('/sign/sender/rej', signSenderRejHandler);
+    node.on('/sign/sender/ret', signSenderRetHandler);
+    node.on('/sign/sender/err', signSenderErrHandler);
+    node.on('/sign/handler/rej', signHandlerRejHandler);
+
+    // Legacy direct event listeners for backward compatibility - only for events NOT handled by message handler
+    const legacyEvents = [
+      // Only include events that aren't already handled by EVENT_MAPPINGS via message handler
+      { event: '/ecdh/sender/req', type: 'ecdh', message: 'ECDH request sent' },
+      { event: '/ecdh/sender/res', type: 'ecdh', message: 'ECDH responses received' },
+      { event: '/sign/sender/req', type: 'sign', message: 'Signature request sent' },
+      { event: '/sign/sender/res', type: 'sign', message: 'Signature responses received' },
+      // Note: Removed /ecdh/handler/req, /ecdh/handler/res, /sign/handler/req, /sign/handler/res 
+      // because they're already handled by the message handler via EVENT_MAPPINGS
+    ];
+
+    legacyEvents.forEach(({ event, type, message }) => {
+      try {
+        const handler = (msg: unknown) => addServerLog(type, message, msg);
+        (node as any).on(event, handler);
+      } catch (e) {
+        // Silently ignore if event doesn't exist
+      }
+    });
+  } catch (e) {
+    addServerLog('bifrost', 'Error setting up some legacy event listeners', e);
+  }
+
+  // Catch-all for any other events - but exclude ping events since they're handled by message handler
+  node.on('*', (event: any) => {
+    // Only log events that aren't already handled above, and exclude ping events to avoid duplicates
+    if (event !== 'message' && 
+        event !== 'closed' && 
+        event !== 'error' && 
+        event !== 'ready' && 
+        event !== 'bounced' &&
+        !event.startsWith('/ping/') &&
+        !event.startsWith('/sign/') &&
+        !event.startsWith('/ecdh/')) {
+      addServerLog('bifrost', `Bifrost event: ${event}`);
+    }
+  });
+}
+
+// Create and connect the Bifrost node using igloo-core only if credentials are available
+let node: any = null
+if (CONST.hasCredentials()) {
+  addServerLog('info', 'Creating and connecting node...');
+  try {
+    // Use enhanced node creation with better connection management
+    let connectionAttempts = 0;
+    const maxAttempts = 3;
+    
+    while (connectionAttempts < maxAttempts && !node) {
+      connectionAttempts++;
+      
+      try {
+        addServerLog('info', `Connection attempt ${connectionAttempts}/${maxAttempts} using ${relays.length} relays`);
+        
+        const result = await createConnectedNode({
+          group: CONST.GROUP_CRED!,
+          share: CONST.SHARE_CRED!,
+          relays,
+          connectionTimeout: 20000,  // 20 second timeout (increased)
+          autoReconnect: true        // Enable auto-reconnection
+        }, {
+          enableLogging: false,      // Disable internal logging to avoid duplication
+          logLevel: 'error'          // Only log errors from igloo-core
+        });
+        
+        if (result.node) {
+          node = result.node;
+          setupNodeEventListeners(node);
+          addServerLog('info', 'Node connected and ready');
+          
+          // Log connection state info
+          if (result.state) {
+            addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${relays.length} relays`);
+            
+            // Log which relays are connected
+            if (result.state.connectedRelays.length > 0) {
+              addServerLog('info', `Active relays: ${result.state.connectedRelays.join(', ')}`);
+            }
+          }
+          break; // Success, exit retry loop
+        } else {
+          throw new Error('Enhanced node creation returned no node');
+        }
+      } catch (enhancedError) {
+        addServerLog('warn', `Enhanced connection attempt ${connectionAttempts} failed: ${enhancedError instanceof Error ? enhancedError.message : 'Unknown error'}`);
+        
+        // If this was the last attempt, try basic connection
+        if (connectionAttempts === maxAttempts) {
+          addServerLog('info', 'All enhanced attempts failed, trying basic connection...');
+          
+          try {
+            node = await createAndConnectNode({
+              group: CONST.GROUP_CRED!,
+              share: CONST.SHARE_CRED!,
+              relays
+            });
+            
+            if (node) {
+              setupNodeEventListeners(node);
+              addServerLog('info', 'Node connected and ready (basic mode)');
+            }
+          } catch (basicError) {
+            addServerLog('error', `Basic connection also failed: ${basicError instanceof Error ? basicError.message : 'Unknown error'}`);
+          }
+        } else {
+          // Wait before retry
+          await new Promise(resolve => setTimeout(resolve, 2000));
+        }
+      }
+    }
+  } catch (error) {
+    addServerLog('error', 'Failed to create initial Bifrost node', error);
+  }
+} else {
+  addServerLog('info', 'No credentials found, starting server without Bifrost node. Use the Configure page to set up credentials.');
+}
 
 // Helper functions for .env file management
 const ENV_FILE_PATH = '.env'
@@ -99,9 +477,7 @@ serve({
     if (server.upgrade(req)) return
     const url = new URL(req.url)
 
-    // API endpoints for .env management
-    if (url.pathname.startsWith('/api/env')) {
-      // Set CORS headers
+    // Set CORS headers for all API endpoints
       const headers = {
         'Content-Type': 'application/json',
         'Access-Control-Allow-Origin': '*',
@@ -109,11 +485,95 @@ serve({
         'Access-Control-Allow-Headers': 'Content-Type',
       }
 
-      // Handle preflight OPTIONS request
-      if (req.method === 'OPTIONS') {
+    // Handle preflight OPTIONS request for all API endpoints
+    if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
         return new Response(null, { status: 200, headers })
       }
 
+    // API endpoints for server status
+    if (url.pathname === '/api/status') {
+      if (req.method === 'GET') {
+        try {
+          // Get current relay count from environment or use default
+          const env = readEnvFile();
+          const currentRelays = getValidRelays(env.RELAYS);
+          
+          const status = {
+            serverRunning: true,
+            nodeActive: node !== null,
+            hasCredentials: env.SHARE_CRED && env.GROUP_CRED ? true : false,
+            relayCount: currentRelays.length,
+            timestamp: new Date().toISOString()
+          }
+          return Response.json(status, { headers })
+        } catch (error) {
+          console.error('Status API Error:', error)
+          return Response.json({ error: 'Failed to get status' }, { status: 500, headers })
+        }
+      }
+    }
+
+    // Server-Sent Events endpoint for streaming node events
+    if (url.pathname === '/api/events') {
+      if (req.method === 'GET') {
+        let streamController: ReadableStreamDefaultController | null = null;
+        
+        const stream = new ReadableStream({
+          start(controller) {
+            try {
+              // Store reference to controller
+              streamController = controller;
+              // Add this controller to the set of active streams
+              eventStreams.add(controller);
+              
+              // Send initial connection event
+              const connectEvent = {
+                type: 'system',
+                message: 'Connected to event stream',
+                timestamp: new Date().toLocaleTimeString(),
+                id: Math.random().toString(36).substr(2, 9)
+              };
+              
+              const eventData = `data: ${JSON.stringify(connectEvent)}\n\n`;
+              controller.enqueue(new TextEncoder().encode(eventData));
+            } catch (error) {
+              console.error('EventSource start error:', error);
+              try {
+                controller.error(error);
+              } catch (e) {
+                // Ignore if controller is already closed
+              }
+            }
+          },
+          
+          cancel(reason) {
+            try {
+              // Remove this controller when the connection is closed
+              if (streamController) {
+                eventStreams.delete(streamController);
+                streamController = null;
+              }
+            } catch (error) {
+              console.error('EventSource cancel error:', error);
+            }
+          }
+        });
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'Access-Control-Allow-Origin': '*',
+            'Access-Control-Allow-Headers': 'Content-Type, Cache-Control',
+            'Access-Control-Allow-Methods': 'GET',
+          }
+        });
+      }
+    }
+
+    // API endpoints for .env management
+    if (url.pathname.startsWith('/api/env')) {
       try {
         switch (url.pathname) {
           case '/api/env':
@@ -126,10 +586,89 @@ serve({
               const body = await req.json()
               const env = readEnvFile()
               
+              // Check if we're updating credentials
+              const updatingCredentials = 'SHARE_CRED' in body || 'GROUP_CRED' in body
+              
               // Update environment variables
               Object.assign(env, body)
               
               if (writeEnvFile(env)) {
+                // If credentials were updated, recreate the node
+                if (updatingCredentials) {
+                  try {
+                    // Clean up existing node if it exists
+                    if (node) {
+                      addServerLog('info', 'Cleaning up existing Bifrost node...');
+                      // Note: igloo-core handles cleanup internally
+                      node = null
+                    }
+                    
+                    // Check if we now have both credentials
+                    if (env.SHARE_CRED && env.GROUP_CRED) {
+                      addServerLog('info', 'Creating and connecting node...');
+                      // Use relays from the updated environment
+                      const nodeRelays = getValidRelays(env.RELAYS);
+                      
+                      // Try enhanced node creation with retry logic
+                      let apiConnectionAttempts = 0;
+                      const apiMaxAttempts = 2; // Fewer attempts for API calls to avoid long delays
+                      
+                      while (apiConnectionAttempts < apiMaxAttempts && !node) {
+                        apiConnectionAttempts++;
+                        
+                        try {
+                          const result = await createConnectedNode({
+                            group: env.GROUP_CRED,
+                            share: env.SHARE_CRED,
+                            relays: nodeRelays,
+                            connectionTimeout: 20000,
+                            autoReconnect: true
+                          }, {
+                            enableLogging: false,
+                            logLevel: 'error'
+                          });
+                          
+                          if (result.node) {
+                            node = result.node;
+                            setupNodeEventListeners(node);
+                            addServerLog('info', 'Node connected and ready');
+                            
+                            if (result.state) {
+                              addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
+                            }
+                            break; // Success
+                          } else {
+                            throw new Error('Enhanced node creation returned no node');
+                          }
+                        } catch (enhancedError) {
+                          if (apiConnectionAttempts === apiMaxAttempts) {
+                            addServerLog('info', 'Enhanced node creation failed, using basic connection...');
+                            
+                            node = await createAndConnectNode({
+                              group: env.GROUP_CRED,
+                              share: env.SHARE_CRED,
+                              relays: nodeRelays
+                            });
+                            
+                            if (node) {
+                              setupNodeEventListeners(node);
+                              addServerLog('info', 'Node connected and ready (basic mode)');
+                            }
+                          } else {
+                            await new Promise(resolve => setTimeout(resolve, 1000));
+                          }
+                        }
+                      }
+                    } else {
+                      addServerLog('info', 'Incomplete credentials, node not created');
+                      addServerLog('info', `Share credential: ${env.SHARE_CRED ? 'Present' : 'Missing'}, Group credential: ${env.GROUP_CRED ? 'Present' : 'Missing'}`);
+                    }
+                  } catch (error) {
+                    addServerLog('error', 'Error recreating Bifrost node', error);
+                    // Continue anyway - the env vars were saved
+                  }
+                }
+                
                 return Response.json({ success: true, message: 'Environment variables updated' }, { headers })
               } else {
                 return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers })
@@ -142,12 +681,28 @@ serve({
               const { keys } = await req.json()
               const env = readEnvFile()
               
+              // Check if we're deleting credentials
+              const deletingCredentials = keys.includes('SHARE_CRED') || keys.includes('GROUP_CRED')
+              
               // Delete specified keys
               for (const key of keys) {
                 delete env[key]
               }
               
               if (writeEnvFile(env)) {
+                // If credentials were deleted, clean up the node
+                if (deletingCredentials && node) {
+                  try {
+                    addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
+                    // Note: igloo-core handles cleanup internally
+                    node = null
+                    addServerLog('info', 'Bifrost node cleaned up successfully');
+                  } catch (error) {
+                    addServerLog('error', 'Error cleaning up Bifrost node', error);
+                    // Continue anyway - the env vars were deleted
+                  }
+                }
+                
                 return Response.json({ success: true, message: 'Environment variables deleted' }, { headers })
               } else {
                 return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers })
@@ -199,11 +754,9 @@ serve({
 })
 
 console.log(`Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`)
+addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
 
-node.on('*', (event : any) => {
-  if (event !== 'message') {
-    console.log('[ bifrost ]', event)
-  }
-})
-
-// Note: No need to call node.connect() as createAndConnectNode handles the connection
+// Note: Node event listeners are already set up in setupNodeEventListeners() if node exists
+if (!node) {
+  addServerLog('info', 'Node not initialized - credentials not available. Server is ready for configuration.');
+}

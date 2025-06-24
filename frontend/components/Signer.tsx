@@ -6,10 +6,20 @@ import { Copy, Check, X, HelpCircle, ChevronDown, ChevronRight, User } from "luc
 import { EventLog, type LogEntryData } from "./EventLog"
 import { Input } from "./ui/input"
 import PeerList from "./ui/peer-list"
-import type {
-  SignerHandle,
-  SignerProps
-} from '../types';
+// Define types locally
+export interface SignerHandle {
+  stopSigner: () => Promise<void>;
+}
+
+export interface SignerProps {
+  initialData?: {
+    share: string;
+    groupCredential: string;
+    name?: string;
+    threshold?: number;
+    totalShares?: number;
+  };
+}
 
 // Mock validation functions
 const validateShare = (share: string) => ({
@@ -87,21 +97,7 @@ const pulseStyle = `
   }
 `;
 
-// Event mapping for cleaner message handling
-const EVENT_MAPPINGS = {
-  '/sign/req': { type: 'sign', message: 'Signature request received' },
-  '/sign/res': { type: 'sign', message: 'Signature response sent' },
-  '/sign/rej': { type: 'sign', message: 'Signature request rejected' },
-  '/sign/ret': { type: 'sign', message: 'Signature shares aggregated' },
-  '/sign/err': { type: 'sign', message: 'Signature share aggregation failed' },
-  '/ecdh/req': { type: 'ecdh', message: 'ECDH request received' },
-  '/ecdh/res': { type: 'ecdh', message: 'ECDH response sent' },
-  '/ecdh/rej': { type: 'ecdh', message: 'ECDH request rejected' },
-  '/ecdh/ret': { type: 'ecdh', message: 'ECDH shares aggregated' },
-  '/ecdh/err': { type: 'ecdh', message: 'ECDH share aggregation failed' },
-  '/ping/req': { type: 'system', message: 'Ping request' },
-  '/ping/res': { type: 'system', message: 'Ping response' },
-} as const;
+
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
 
@@ -133,13 +129,22 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
 const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
   const [isSignerRunning, setIsSignerRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [signerSecret, setSignerSecret] = useState(initialData?.share || "");
+  const [signerSecret, setSignerSecret] = useState("");
   const [isShareValid, setIsShareValid] = useState(false);
   const [relayUrls, setRelayUrls] = useState<string[]>([DEFAULT_RELAY]);
   const [newRelayUrl, setNewRelayUrl] = useState("");
 
-  const [groupCredential, setGroupCredential] = useState(initialData?.groupCredential || "");
+  const [groupCredential, setGroupCredential] = useState("");
   const [isGroupValid, setIsGroupValid] = useState(false);
+  const [signerName, setSignerName] = useState("");
+  const [isLoading, setIsLoading] = useState(true);
+  const [serverStatus, setServerStatus] = useState<{
+    serverRunning: boolean;
+    nodeActive: boolean;
+    hasCredentials: boolean;
+    relayCount: number;
+    timestamp: string;
+  } | null>(null);
 
   const [copiedStates, setCopiedStates] = useState({
     group: false,
@@ -151,10 +156,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
   });
   const [logs, setLogs] = useState<LogEntryData[]>([]);
 
-  // Mock node ref - no longer using actual BifrostNode
+  // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
-  // Track cleanup functions for event listeners to prevent memory leaks
-  const cleanupListenersRef = useRef<(() => void)[]>([]);
 
   // Expose the stopSigner method to parent components through ref
   useImperativeHandle(ref, () => ({
@@ -206,235 +209,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     }
   };
 
-  const addLog = useCallback((type: string, message: string, data?: unknown) => {
-    const timestamp = new Date().toLocaleTimeString();
-    const id = Math.random().toString(36).substr(2, 9);
+  // Note: Logging is now handled server-side via SSE - no client addLog needed
 
-    setLogs(prev => {
-      // Only check for duplicates if we have data to compare
-      if (data) {
-        const recentLogs = prev.slice(-5); // Check last 5 entries for performance
-        if (isDuplicateLog(data, recentLogs)) {
-          return prev; // Skip adding duplicate
-        }
-      }
-
-      return [...prev, { timestamp, type, message, data, id }];
-    });
-  }, []);
-
-  // Extracted event handling functions with cleanup capabilities
-  const setupBasicEventListeners = useCallback((node: any) => {
-    const closedHandler = () => {
-      addLog('system', 'Bifrost node is closed');
-      setIsSignerRunning(false);
-      setIsConnecting(false);
-    };
-
-    const errorHandler = (error: unknown) => {
-      addLog('error', 'Node error', error);
-      setIsSignerRunning(false);
-      setIsConnecting(false);
-    };
-
-    const readyHandler = (data: unknown) => {
-      // Log basic info about the ready event without the potentially problematic data object
-      const logData = data && typeof data === 'object' ?
-        { message: 'Node ready event received', hasData: true, dataType: typeof data } :
-        data;
-      addLog('ready', 'Node is ready', logData);
-      setIsConnecting(false);
-      setIsSignerRunning(true);
-    };
-
-    const bouncedHandler = (reason: string, msg: unknown) =>
-      addLog('system', `Message bounced: ${reason}`, msg);
-
-    // Add event listeners
-    node.on('closed', closedHandler);
-    node.on('error', errorHandler);
-    node.on('ready', readyHandler);
-    node.on('bounced', bouncedHandler);
-
-    // Return cleanup function
-    return () => {
-      try {
-        node.off('closed', closedHandler);
-        node.off('error', errorHandler);
-        node.off('ready', readyHandler);
-        node.off('bounced', bouncedHandler);
-      } catch (error) {
-        console.warn('Error removing basic event listeners:', error);
-      }
-    };
-  }, [addLog, setIsSignerRunning, setIsConnecting]);
-
-  const setupMessageEventListener = useCallback((node: any) => {
-    const messageHandler = (msg: unknown) => {
-      try {
-        if (msg && typeof msg === 'object' && 'tag' in msg) {
-          const messageData = msg as { tag: unknown;[key: string]: unknown };
-          const tag = messageData.tag;
-
-          // Ensure tag is a string before calling string methods
-          if (typeof tag !== 'string') {
-            addLog('system', 'Message received (invalid tag type)', {
-              tagType: typeof tag,
-              tag,
-              originalMessage: msg
-            });
-            return;
-          }
-
-          // Use the event mapping for cleaner code
-          const eventInfo = EVENT_MAPPINGS[tag as keyof typeof EVENT_MAPPINGS];
-          if (eventInfo) {
-            addLog(eventInfo.type, eventInfo.message, msg);
-          } else if (tag.startsWith('/sign/')) {
-            addLog('sign', `Signature event: ${tag}`, msg);
-          } else if (tag.startsWith('/ecdh/')) {
-            addLog('ecdh', `ECDH event: ${tag}`, msg);
-          } else if (tag.startsWith('/ping/')) {
-            addLog('system', `Ping event: ${tag}`, msg);
-          } else {
-            addLog('system', `Message received: ${tag}`, msg);
-          }
-        } else {
-          addLog('system', 'Message received (no tag)', msg);
-        }
-      } catch (error) {
-        addLog('system', 'Error parsing message event', { error, originalMessage: msg });
-      }
-    };
-
-    // Add event listener
-    node.on('message', messageHandler);
-
-    // Return cleanup function
-    return () => {
-      try {
-        node.off('message', messageHandler);
-      } catch (error) {
-        console.warn('Error removing message event listener:', error);
-      }
-    };
-  }, [addLog]);
-
-  const setupLegacyEventListeners = useCallback((node: any) => {
-    const nodeAny = node as any;
-    const cleanupFunctions: (() => void)[] = [];
-
-    // Legacy direct event listeners for backward compatibility
-    const legacyEvents = [
-      // ECDH events
-      { event: '/ecdh/sender/req', type: 'ecdh', message: 'ECDH request sent' },
-      { event: '/ecdh/sender/res', type: 'ecdh', message: 'ECDH responses received' },
-      { event: '/ecdh/handler/req', type: 'ecdh', message: 'ECDH request received' },
-      { event: '/ecdh/handler/res', type: 'ecdh', message: 'ECDH response sent' },
-      // Signature events
-      { event: '/sign/sender/req', type: 'sign', message: 'Signature request sent' },
-      { event: '/sign/sender/res', type: 'sign', message: 'Signature responses received' },
-      { event: '/sign/handler/req', type: 'sign', message: 'Signature request received' },
-      { event: '/sign/handler/res', type: 'sign', message: 'Signature response sent' },
-      // Note: Ping events are handled by the main message handler - no duplicates needed
-    ];
-
-    legacyEvents.forEach(({ event, type, message }) => {
-      try {
-        const handler = (msg: unknown) => addLog(type, message, msg);
-        nodeAny.on(event, handler);
-        cleanupFunctions.push(() => {
-          try {
-            nodeAny.off(event, handler);
-          } catch (e) {
-            // Silently ignore cleanup errors for legacy events
-          }
-        });
-      } catch (e) {
-        // Silently ignore if event doesn't exist
-      }
-    });
-
-    // Special handlers for events with different signatures
-    try {
-      const ecdhSenderRejHandler = (reason: string, pkg: any) =>
-        addLog('ecdh', `ECDH request rejected: ${reason}`, pkg);
-      const ecdhSenderRetHandler = (reason: string, pkgs: string) =>
-        addLog('ecdh', `ECDH shares aggregated: ${reason}`, pkgs);
-      const ecdhSenderErrHandler = (reason: string, msgs: unknown[]) =>
-        addLog('ecdh', `ECDH share aggregation failed: ${reason}`, msgs);
-      const ecdhHandlerRejHandler = (reason: string, msg: unknown) =>
-        addLog('ecdh', `ECDH rejection sent: ${reason}`, msg);
-
-      node.on('/ecdh/sender/rej', ecdhSenderRejHandler);
-      node.on('/ecdh/sender/ret', ecdhSenderRetHandler);
-      node.on('/ecdh/sender/err', ecdhSenderErrHandler);
-      node.on('/ecdh/handler/rej', ecdhHandlerRejHandler);
-
-      cleanupFunctions.push(() => {
-        try {
-          node.off('/ecdh/sender/rej', ecdhSenderRejHandler);
-          node.off('/ecdh/sender/ret', ecdhSenderRetHandler);
-          node.off('/ecdh/sender/err', ecdhSenderErrHandler);
-          node.off('/ecdh/handler/rej', ecdhHandlerRejHandler);
-        } catch (e) {
-          console.warn('Error removing ECDH event listeners:', e);
-        }
-      });
-
-      const signSenderRejHandler = (reason: string, pkg: any) =>
-        addLog('sign', `Signature request rejected: ${reason}`, pkg);
-      const signSenderRetHandler = (reason: string, msgs: any[]) =>
-        addLog('sign', `Signature shares aggregated: ${reason}`, msgs);
-      const signSenderErrHandler = (reason: string, msgs: unknown[]) =>
-        addLog('sign', `Signature share aggregation failed: ${reason}`, msgs);
-      const signHandlerRejHandler = (reason: string, msg: unknown) =>
-        addLog('sign', `Signature rejection sent: ${reason}`, msg);
-
-      node.on('/sign/sender/rej', signSenderRejHandler);
-      node.on('/sign/sender/ret', signSenderRetHandler);
-      node.on('/sign/sender/err', signSenderErrHandler);
-      node.on('/sign/handler/rej', signHandlerRejHandler);
-
-      cleanupFunctions.push(() => {
-        try {
-          node.off('/sign/sender/rej', signSenderRejHandler);
-          node.off('/sign/sender/ret', signSenderRetHandler);
-          node.off('/sign/sender/err', signSenderErrHandler);
-          node.off('/sign/handler/rej', signHandlerRejHandler);
-        } catch (e) {
-          console.warn('Error removing signature event listeners:', e);
-        }
-      });
-
-      // Note: Ping events are handled by the main message handler and PeerList component
-      // No need for additional ping event handlers here as they create duplicate/useless logs
-    } catch (e) {
-      addLog('system', 'Error setting up some legacy event listeners', e);
-    }
-
-    // Return consolidated cleanup function
-    return () => {
-      cleanupFunctions.forEach(cleanup => {
-        try {
-          cleanup();
-        } catch (error) {
-          console.warn('Error in legacy event listener cleanup:', error);
-        }
-      });
-    };
-  }, [addLog]);
+  // Note: Event listeners are now handled server-side via SSE
+  // All node events are captured on the server and streamed to frontend
 
   // Clean up event listeners before node cleanup
   const cleanupEventListeners = useCallback(() => {
-    cleanupListenersRef.current.forEach(cleanup => {
-      try {
-        cleanup();
-      } catch (error) {
-        console.warn('Error cleaning up event listeners:', error);
-      }
-    });
-    cleanupListenersRef.current = [];
+    // Event listeners are now handled server-side, no client cleanup needed
   }, []);
 
   // Clean node cleanup using igloo-core
@@ -467,29 +249,172 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     }
   }, [cleanupEventListeners]);
 
+  // Function to check server status
+  const checkServerStatus = useCallback(async () => {
+    try {
+      const response = await fetch('/api/status');
+      const status = await response.json();
+      setServerStatus(status);
+      
+      // Update signer running state based on server node status
+      const wasRunning = isSignerRunning;
+      const nowRunning = status.nodeActive && status.hasCredentials;
+      
+      if (wasRunning !== nowRunning) {
+        setIsSignerRunning(nowRunning);
+        setIsConnecting(false);
+        
+        // Status changes are now logged server-side via node events
+        // No need for client-side logging here
+      }
+      
+      // Debug logging for troubleshooting
+      if (!nowRunning && status.hasCredentials) {
+        console.log('Server has credentials but node is not active. Status:', status);
+        }
+      } catch (error) {
+      console.error('Error checking server status:', error);
+      // If we can't reach the server, assume signer is not running
+      if (isSignerRunning) {
+        setIsSignerRunning(false);
+        setIsConnecting(false);
+        // Connection errors will be handled by the EventSource error handler
+      }
+    }
+  }, [isSignerRunning]);
+
+  // Poll server status every 2 seconds
+  useEffect(() => {
+    checkServerStatus(); // Check immediately
+    const interval = setInterval(checkServerStatus, 2000);
+    return () => clearInterval(interval);
+  }, [checkServerStatus]);
+
+  // Connect to server event stream
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+    
+    eventSource.onmessage = (event) => {
+      try {
+        const logEntry = JSON.parse(event.data);
+        // Add the server log entry to our local logs
+        setLogs(prev => [...prev, logEntry]);
+      } catch (error) {
+        console.error('Error parsing server event:', error);
+      }
+    };
+    
+    eventSource.onerror = (error) => {
+      console.error('EventSource error:', error);
+      // The connection will automatically retry
+    };
+    
+    // Cleanup on unmount
+    return () => {
+      eventSource.close();
+    };
+  }, []);
+
   // Add effect to cleanup on unmount
   useEffect(() => {
     // Cleanup function that runs when component unmounts
     return () => {
       if (nodeRef.current) {
-        addLog('info', 'Signer stopped due to page navigation');
+        // Cleanup handled server-side when credentials are removed
         cleanupNode();
       }
     };
-  }, [addLog, cleanupNode]); // Include dependencies
+  }, [cleanupNode]); // Include dependencies
 
-  // Validate initial data
+  // Fetch initial data from server .env file
   useEffect(() => {
-    if (initialData?.share) {
+    const fetchEnvData = async () => {
+      try {
+        const response = await fetch('/api/env');
+        const envVars = await response.json();
+        
+        // Set values from environment variables
+        if (envVars.SHARE_CRED) {
+          setSignerSecret(envVars.SHARE_CRED);
+          const validation = validateShare(envVars.SHARE_CRED);
+          setIsShareValid(validation.isValid);
+        }
+        
+        if (envVars.GROUP_CRED) {
+          setGroupCredential(envVars.GROUP_CRED);
+          const validation = validateGroup(envVars.GROUP_CRED);
+          setIsGroupValid(validation.isValid);
+        }
+        
+        if (envVars.GROUP_NAME) {
+          setSignerName(envVars.GROUP_NAME);
+        }
+        
+        // Load relays from environment if available
+        if (envVars.RELAYS) {
+          try {
+            let relays: string[] = [];
+            
+            // Try to parse as JSON first
+            if (envVars.RELAYS.startsWith('[')) {
+              relays = JSON.parse(envVars.RELAYS);
+            } else {
+              // Handle comma-separated or space-separated strings
+              relays = envVars.RELAYS
+                .split(/[,\s]+/)
+                .map((relay: string) => relay.trim())
+                .filter((relay: string) => relay.length > 0);
+            }
+            
+            if (Array.isArray(relays) && relays.length > 0) {
+              setRelayUrls(relays);
+            } else {
+              // If no valid relays found, save default relays
+              saveRelaysToEnv([DEFAULT_RELAY]);
+            }
+      } catch (error) {
+            console.warn('Failed to parse RELAYS from env:', error);
+            // Fallback: treat the whole string as a single relay if it looks like a URL
+            if (typeof envVars.RELAYS === 'string' && envVars.RELAYS.includes('://')) {
+              setRelayUrls([envVars.RELAYS]);
+            } else {
+              // Save default relays if parsing failed
+              saveRelaysToEnv([DEFAULT_RELAY]);
+            }
+          }
+        } else {
+          // If no RELAYS environment variable exists, save the default
+          console.log('No RELAYS found in env, saving default relay');
+          saveRelaysToEnv([DEFAULT_RELAY]);
+        }
+      } catch (error) {
+        console.error('Error fetching environment variables:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchEnvData();
+  }, []);
+
+  // Validate initial data (fallback for when props are provided)
+  useEffect(() => {
+    if (initialData?.share && !signerSecret) {
+      setSignerSecret(initialData.share);
       const validation = validateShare(initialData.share);
       setIsShareValid(validation.isValid);
     }
 
-    if (initialData?.groupCredential) {
+    if (initialData?.groupCredential && !groupCredential) {
+      setGroupCredential(initialData.groupCredential);
       const validation = validateGroup(initialData.groupCredential);
       setIsGroupValid(validation.isValid);
     }
-  }, [initialData]);
+    
+    if (initialData?.name && !signerName) {
+      setSignerName(initialData.name);
+    }
+  }, [initialData, signerSecret, groupCredential, signerName]);
 
   const handleCopy = async (text: string, field: 'group' | 'share') => {
     try {
@@ -578,6 +503,29 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     );
   };
 
+  // Save credentials to server .env file
+  const saveCredentialsToEnv = async (share?: string, group?: string) => {
+    try {
+      const updateData: Record<string, string> = {};
+      if (share !== undefined) updateData.SHARE_CRED = share;
+      if (group !== undefined) updateData.GROUP_CRED = group;
+      
+      if (Object.keys(updateData).length > 0) {
+        console.log('Saving credentials to env:', Object.keys(updateData));
+        await fetch('/api/env', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(updateData)
+        });
+        console.log('Credentials saved successfully');
+      }
+    } catch (error) {
+      console.error('Error saving credentials to env:', error);
+    }
+  };
+
   const handleShareChange = (value: string) => {
     setSignerSecret(value);
     const validation = validateShare(value);
@@ -598,6 +546,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
         }
 
         setIsShareValid(true);
+        // Save valid share to env
+        saveCredentialsToEnv(value, undefined);
       } catch {
         setIsShareValid(false);
       }
@@ -626,6 +576,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
         }
 
         setIsGroupValid(true);
+        // Save valid group to env
+        saveCredentialsToEnv(undefined, value);
       } catch {
         setIsGroupValid(false);
       }
@@ -634,100 +586,70 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     }
   };
 
+  // Save relay URLs to server .env file
+  const saveRelaysToEnv = async (relays: string[]) => {
+    try {
+      await fetch('/api/env', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          RELAYS: JSON.stringify(relays)
+        })
+      });
+    } catch (error) {
+      console.error('Error saving relays to env:', error);
+    }
+  };
+
   const handleAddRelay = () => {
     const isAlreadyAdded = relayUrls.indexOf(newRelayUrl) !== -1;
     if (newRelayUrl && !isAlreadyAdded) {
-      setRelayUrls([...relayUrls, newRelayUrl]);
+      const newRelays = [...relayUrls, newRelayUrl];
+      setRelayUrls(newRelays);
       setNewRelayUrl("");
+      saveRelaysToEnv(newRelays);
     }
   };
 
   const handleRemoveRelay = (urlToRemove: string) => {
-    setRelayUrls(relayUrls.filter(url => url !== urlToRemove));
+    const newRelays = relayUrls.filter(url => url !== urlToRemove);
+    setRelayUrls(newRelays);
+    saveRelaysToEnv(newRelays);
   };
 
-  const handleStartSigner = async () => {
-    if (!isShareValid || !isGroupValid || relayUrls.length === 0) {
-      addLog('error', 'Missing or invalid required fields');
-      return;
-    }
-
-    try {
-      // Ensure cleanup before starting
-      cleanupNode();
-      setIsConnecting(true);
-      addLog('info', 'Creating and connecting node...');
-
-      // Use the improved createConnectedNode API which returns enhanced state info
-      const result = await createConnectedNode({
-        group: groupCredential,
-        share: signerSecret,
-        relays: relayUrls
-      });
-
-      nodeRef.current = result.node;
-
-      // Set up all event listeners using our extracted functions
-      const cleanupBasic = setupBasicEventListeners(result.node);
-      const cleanupMessage = setupMessageEventListener(result.node);
-      const cleanupLegacy = setupLegacyEventListeners(result.node);
-
-      // Use the enhanced state info from createConnectedNode
-      if (result.state.isReady) {
-        addLog('info', 'Node connected and ready');
-        setIsConnecting(false);
-        setIsSignerRunning(true);
-      } else {
-        addLog('warning', 'Node created but not yet ready, waiting...');
-        // Keep connecting state until ready
-      }
-
-      // Add cleanup functions to cleanupListenersRef
-      cleanupListenersRef.current.push(cleanupBasic);
-      cleanupListenersRef.current.push(cleanupMessage);
-      cleanupListenersRef.current.push(cleanupLegacy);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', 'Failed to start signer', { error: errorMessage });
-      cleanupNode();
-      setIsSignerRunning(false);
-      setIsConnecting(false);
-    }
-  };
-
+  // Expose the stopSigner method for compatibility (server-managed, no action needed)
   const handleStopSigner = async () => {
-    try {
-      cleanupNode();
-      addLog('info', 'Signer stopped');
-      setIsSignerRunning(false);
-      setIsConnecting(false);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      addLog('error', 'Failed to stop signer', { error: errorMessage });
-    }
+    // Signer is managed by the server - no manual stop needed
   };
 
-  const handleSignerButtonClick = () => {
-    if (isSignerRunning) {
-      handleStopSigner();
-    } else {
-      handleStartSigner();
-    }
-  };
+  // Show loading state while fetching environment variables
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-center py-12">
+          <div className="text-blue-300">Loading signer configuration...</div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
       {/* Add the pulse style */}
       <style>{pulseStyle}</style>
       <div className="flex items-center">
-        <h2 className="text-blue-300 text-lg">Start your signer to handle requests</h2>
+        <div className="flex flex-col">
+          <h2 className="text-blue-300 text-lg">Server-managed signer status</h2>
+        </div>
         <Tooltip
           trigger={<HelpCircle size={18} className="ml-2 text-blue-400 cursor-pointer" />}
           position="right"
           content={
             <>
-              <p className="mb-2 font-semibold">Important:</p>
-              <p>The signer must be running to handle signature requests from clients. When active, it will communicate with other nodes through your configured relays.</p>
+              <p className="mb-2 font-semibold">Server-Managed Signer:</p>
+              <p>The signer runs automatically on the server when credentials are configured. It will handle signature requests from clients and communicate with other nodes through your configured relays.</p>
             </>
           }
         />
@@ -735,7 +657,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
 
       {/* Share Information Header */}
       {(() => {
-        const shareInfo = getShareInfo(groupCredential, signerSecret, initialData?.name);
+        const shareInfo = getShareInfo(groupCredential, signerSecret, signerName || initialData?.name);
         return shareInfo && isGroupValid && isShareValid ? (
           <div className="border border-blue-800/30 rounded-lg p-4">
             <div className="flex items-center gap-3">
@@ -771,7 +693,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
                   value={groupCredential}
                   onChange={(e) => handleGroupChange(e.target.value)}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono"
-                  disabled={isSignerRunning || isConnecting}
                   placeholder="Enter your group credential (bfgroup...)"
                   aria-label="Group credential input"
                 />
@@ -846,7 +767,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
                   value={signerSecret}
                   onChange={(e) => handleShareChange(e.target.value)}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono"
-                  disabled={isSignerRunning || isConnecting}
                   placeholder="Enter your secret share (bfshare...)"
                   aria-label="Secret share input"
                 />
@@ -908,7 +828,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
             </div>
           )}
 
-          <div className="flex items-center justify-between mt-6">
+          <div className="flex items-center justify-center mt-6">
             <div className="flex items-center gap-2">
               <div className={`w-3 h-3 rounded-full ${isSignerRunning
                   ? 'bg-green-500 pulse-animation'
@@ -917,24 +837,29 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
                     : 'bg-red-500'
                 }`}></div>
               <span className="text-gray-300">
-                Signer {
+                Server Signer: {
                   isSignerRunning ? 'Running' :
-                    isConnecting ? 'Connecting...' :
+                    isConnecting ? 'Starting...' :
                       'Stopped'
                 }
               </span>
+              {serverStatus && (
+                <span className="text-gray-400 text-sm ml-2">
+                  ({serverStatus.nodeActive ? 'Node Active' : 'Node Inactive'})
+                </span>
+              )}
             </div>
-            <Button
-              onClick={handleSignerButtonClick}
-              className={`px-6 py-2 ${isSignerRunning
-                  ? "bg-red-600 hover:bg-red-700"
-                  : "bg-green-600 hover:bg-green-700"
-                } transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer`}
-              disabled={!isShareValid || !isGroupValid || relayUrls.length === 0 || isConnecting}
-            >
-              {isSignerRunning ? "Stop Signer" : isConnecting ? "Connecting..." : "Start Signer"}
-            </Button>
           </div>
+          
+          {!isSignerRunning && isShareValid && isGroupValid && (
+            <div className="mt-4 p-3 bg-blue-900/30 rounded-lg">
+              <div className="text-blue-300 text-sm">
+                <strong>Server-Managed Signer:</strong> The signer runs automatically on the server when credentials are configured. 
+                {!serverStatus?.hasCredentials && " Save your credentials to start the signer."}
+                {serverStatus?.hasCredentials && !serverStatus?.nodeActive && " Server is starting the signer node..."}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="space-y-3">
@@ -958,12 +883,11 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
               value={newRelayUrl}
               onChange={(e) => setNewRelayUrl(e.target.value)}
               className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full"
-              disabled={isSignerRunning || isConnecting}
             />
             <Button
               onClick={handleAddRelay}
               className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
-              disabled={!newRelayUrl.trim() || isSignerRunning || isConnecting}
+              disabled={!newRelayUrl.trim()}
             >
               Add
             </Button>
@@ -979,7 +903,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
                   icon={<X className="h-4 w-4" />}
                   onClick={() => handleRemoveRelay(relay)}
                   tooltip="Remove relay"
-                  disabled={isSignerRunning || isConnecting || relayUrls.length <= 1}
+                  disabled={relayUrls.length <= 1}
                 />
               </div>
             ))}
@@ -991,7 +915,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
       {/* Peer List and Event Log with consistent spacing */}
       <div className="space-y-4">
         <PeerList
-          node={nodeRef.current}
+          node={null}
           groupCredential={groupCredential}
           shareCredential={signerSecret}
           isSignerRunning={isSignerRunning}
@@ -1011,4 +935,3 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
 Signer.displayName = 'Signer';
 
 export default Signer;
-export type { SignerHandle }; 
