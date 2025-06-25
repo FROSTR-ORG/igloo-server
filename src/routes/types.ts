@@ -8,10 +8,46 @@ export interface PeerStatus {
   lastPingAttempt?: Date;
 }
 
+// Allowed event types for Bifrost node
+export type BifrostNodeEvent =
+  | 'closed'
+  | 'error'
+  | 'ready'
+  | 'bounced'
+  | 'message'
+  | '/ping/req'
+  | '/ping/res'
+  | '/sign/req'
+  | '/sign/res'
+  | '/sign/rej'
+  | '/sign/ret'
+  | '/sign/err'
+  | '/ecdh/req'
+  | '/ecdh/res'
+  | '/ecdh/rej'
+  | '/ecdh/ret'
+  | '/ecdh/err';
+
+// Ping result type for node.req.ping
+export interface PingResult {
+  ok: boolean;
+  latency?: number;
+  error?: string;
+  [key: string]: any;
+}
+
 export interface ServerBifrostNode {
-  on: (event: string, callback: (...args: unknown[]) => void) => void;
+  on: (
+    event: BifrostNodeEvent,
+    callback:
+      | ((...args: any[]) => void) // fallback for unknown events
+      | ((error: Error) => void) // 'error'
+      | (() => void) // 'closed'
+      | ((data: any) => void) // 'ready', 'message', etc.
+      | ((reason: string, msg: any) => void) // 'bounced'
+  ) => void;
   req: {
-    ping: (pubkey: string) => Promise<unknown>;
+    ping: (pubkey: string) => Promise<PingResult>;
     // Add other req methods if needed
   };
   // Add other properties/methods as needed

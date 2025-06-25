@@ -65,6 +65,17 @@ serve({
       addServerLog,
       broadcastEvent,
       updateNode: (newNode: ServerBifrostNode | null) => {
+        // Clean up the old node to prevent memory leaks
+        if (node) {
+          // Import cleanupBifrostNode from @frostr/igloo-core at the top if not already imported
+          // @ts-ignore: TypeScript may not know about this import if using require
+          const { cleanupBifrostNode } = require('@frostr/igloo-core');
+          try {
+            cleanupBifrostNode(node);
+          } catch (err) {
+            addServerLog('warn', 'Failed to clean up previous node', err);
+          }
+        }
         node = newNode;
         if (newNode) {
           setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses);

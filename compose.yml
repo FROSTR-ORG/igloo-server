@@ -3,13 +3,19 @@ services:
   igloo-server:
     build          : ./
     env_file       : .env
-    image          : igloo-server:latest
+    image          : igloo-server:v0.1.0
     container_name : igloo-server
     platform       : linux/x86_64
     hostname       : igloo-server
     restart        : unless-stopped
     init           : true
     tty            : true
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/api/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - infranet
     ports:

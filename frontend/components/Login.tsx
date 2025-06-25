@@ -34,16 +34,21 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
       if (response.ok) {
         const status = await response.json();
         setAuthStatus(status);
-        
+        setError(''); // Clear any previous error
         // Set default auth mode based on available methods
         if (status.methods.includes('api-key')) {
           setAuthMode('api');
         } else if (status.methods.includes('basic-auth')) {
           setAuthMode('basic');
         }
+      } else {
+        setError('Failed to fetch authentication status. Please try again later.');
+        setAuthStatus(null);
       }
     } catch (error) {
       console.error('Failed to fetch auth status:', error);
+      setError('Unable to connect to the server to check authentication status.');
+      setAuthStatus(null);
     }
   };
 
@@ -103,6 +108,12 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
         </div>
 
         <Card className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
+          {error && !authStatus && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
+              {error}
+            </div>
+          )}
+
           {authStatus && (
             <div className="mb-6">
               <div className="flex justify-center space-x-4">

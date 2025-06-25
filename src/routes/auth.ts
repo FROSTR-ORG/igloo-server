@@ -199,6 +199,11 @@ function cleanupExpiredSessions(): void {
   }
 }
 
+// Set up periodic cleanup to prevent memory leaks from expired sessions
+// Run cleanup every 10 minutes (600,000 ms)
+const CLEANUP_INTERVAL = 10 * 60 * 1000;
+setInterval(cleanupExpiredSessions, CLEANUP_INTERVAL);
+
 // Main authentication function
 export function authenticate(req: Request): AuthResult {
   if (!AUTH_CONFIG.ENABLED) {

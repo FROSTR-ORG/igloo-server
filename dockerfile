@@ -1,26 +1,26 @@
-# Use the latest Bun image as the base environment.
-FROM oven/bun:latest
+# Use a multi-stage build for smaller, more secure images
 
-# Set the working directory in the container to /app
-WORKDIR /app
-
-# Copy package files first (for better caching)
-COPY package.json bun.lock ./
-
-# Install dependencies using Bun
+# --- Frontend build stage ---
+FROM oven/bun:latest AS frontend-build
+WORKDIR /frontend
+COPY frontend/package.json frontend/bun.lock ./
 RUN bun install
-
-# Copy the source code and frontend files
-COPY src       ./src
-COPY frontend  ./frontend
-COPY static    ./static
-COPY tsconfig.json ./
-
-# Build the production frontend
+COPY frontend .
 RUN bun run build
 
-# Expose the port the app runs on
-EXPOSE 8002
+# --- Main app build stage ---
+FROM oven/bun:latest AS app
+WORKDIR /app
 
-# Run the application using Bun when the container launches
+# Copy only necessary files for the backend
+COPY package.json bun.lock ./
+RUN bun install --production
+COPY src ./src
+COPY static ./static
+COPY tsconfig.json ./
+
+# Copy built frontend assets from the build stage
+COPY --from=frontend-build /frontend/dist ./static/dist
+
+EXPOSE 8002
 CMD ["bun", "start"]

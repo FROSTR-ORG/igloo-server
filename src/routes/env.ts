@@ -11,6 +11,76 @@ import {
   getValidRelays 
 } from './utils.js';
 
+// Add a lock to prevent concurrent node updates
+let nodeUpdateLock: Promise<void> = Promise.resolve();
+
+// Extracted node creation and connection logic with reduced timeout and retries
+async function createAndConnectServerNode(env: any, context: RouteContext): Promise<void> {
+  // Synchronize node updates to prevent race conditions
+  nodeUpdateLock = nodeUpdateLock.then(async () => {
+    // Clean up existing node if it exists
+    if (context.node) {
+      context.addServerLog('info', 'Cleaning up existing Bifrost node...');
+      // igloo-core handles cleanup internally
+    }
+
+    // Check if we now have both credentials
+    if (env.SHARE_CRED && env.GROUP_CRED) {
+      context.addServerLog('info', 'Creating and connecting node...');
+      const nodeRelays = getValidRelays(env.RELAYS);
+      let apiConnectionAttempts = 0;
+      const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
+      let newNode: ServerBifrostNode | null = null;
+      while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
+        apiConnectionAttempts++;
+        try {
+          const result = await createConnectedNode({
+            group: env.GROUP_CRED,
+            share: env.SHARE_CRED,
+            relays: nodeRelays,
+            connectionTimeout: 5000, // 5 seconds for fast API response
+            autoReconnect: true
+          }, {
+            enableLogging: false,
+            logLevel: 'error'
+          });
+          if (result.node) {
+            newNode = result.node as unknown as ServerBifrostNode;
+            if (context.updateNode) {
+              context.updateNode(newNode);
+            }
+            context.addServerLog('info', 'Node connected and ready');
+            if (result.state) {
+              context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
+            }
+            break;
+          } else {
+            throw new Error('Enhanced node creation returned no node');
+          }
+        } catch (enhancedError) {
+          context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
+          const basicNode = await createAndConnectNode({
+            group: env.GROUP_CRED,
+            share: env.SHARE_CRED,
+            relays: nodeRelays
+          });
+          if (basicNode) {
+            newNode = basicNode as unknown as ServerBifrostNode;
+            if (context.updateNode) {
+              context.updateNode(newNode);
+            }
+            context.addServerLog('info', 'Node connected and ready (basic mode)');
+          }
+        }
+      }
+    } else {
+      context.addServerLog('info', 'Incomplete credentials, node not created');
+      context.addServerLog('info', `Share credential: ${env.SHARE_CRED ? 'Present' : 'Missing'}, Group credential: ${env.GROUP_CRED ? 'Present' : 'Missing'}`);
+    }
+  });
+  return nodeUpdateLock;
+}
+
 export async function handleEnvRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/env')) return null;
 
@@ -60,78 +130,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: RouteConte
             // If credentials were updated, recreate the node
             if (updatingCredentials) {
               try {
-                // Clean up existing node if it exists
-                if (context.node) {
-                  context.addServerLog('info', 'Cleaning up existing Bifrost node...');
-                  // Note: igloo-core handles cleanup internally
-                  // context.node = null; // Can't modify readonly property directly
-                }
-                
-                // Check if we now have both credentials
-                if (env.SHARE_CRED && env.GROUP_CRED) {
-                  context.addServerLog('info', 'Creating and connecting node...');
-                  // Use relays from the updated environment
-                  const nodeRelays = getValidRelays(env.RELAYS);
-                  
-                  // Try enhanced node creation with retry logic
-                  let apiConnectionAttempts = 0;
-                  const apiMaxAttempts = 2; // Fewer attempts for API calls to avoid long delays
-                  let newNode: ServerBifrostNode | null = null;
-                  
-                  while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
-                    apiConnectionAttempts++;
-                    
-                    try {
-                      const result = await createConnectedNode({
-                        group: env.GROUP_CRED,
-                        share: env.SHARE_CRED,
-                        relays: nodeRelays,
-                        connectionTimeout: 20000,
-                        autoReconnect: true
-                      }, {
-                        enableLogging: false,
-                        logLevel: 'error'
-                      });
-                      
-                      if (result.node) {
-                        newNode = result.node as unknown as ServerBifrostNode;
-                        if (context.updateNode) {
-                          context.updateNode(newNode);
-                        }
-                        context.addServerLog('info', 'Node connected and ready');
-                        
-                        if (result.state) {
-                          context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
-                        }
-                        break; // Success
-                      } else {
-                        throw new Error('Enhanced node creation returned no node');
-                      }
-                    } catch (enhancedError) {
-                      if (apiConnectionAttempts === apiMaxAttempts) {
-                        context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
-                        
-                        const basicNode = await createAndConnectNode({
-                          group: env.GROUP_CRED,
-                          share: env.SHARE_CRED,
-                          relays: nodeRelays
-                        });
-                        if (basicNode) {
-                          newNode = basicNode as unknown as ServerBifrostNode;
-                          if (context.updateNode) {
-                            context.updateNode(newNode);
-                          }
-                          context.addServerLog('info', 'Node connected and ready (basic mode)');
-                        }
-                      } else {
-                        await new Promise(resolve => setTimeout(resolve, 1000));
-                      }
-                    }
-                  }
-                } else {
-                  context.addServerLog('info', 'Incomplete credentials, node not created');
-                  context.addServerLog('info', `Share credential: ${env.SHARE_CRED ? 'Present' : 'Missing'}, Group credential: ${env.GROUP_CRED ? 'Present' : 'Missing'}`);
-                }
+                await createAndConnectServerNode(env, context);
               } catch (error) {
                 context.addServerLog('error', 'Error recreating Bifrost node', error);
                 // Continue anyway - the env vars were saved
