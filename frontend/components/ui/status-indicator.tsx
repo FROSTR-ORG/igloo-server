@@ -31,9 +31,11 @@ const StatusIndicator: React.FC<StatusIndicatorProps> = ({
       <div className={cn("w-2 h-2 rounded-full", statusColors[status], dotClassName)} />
       {(label || count !== undefined) && (
         <span className={cn("text-gray-400", labelClassName)}>
-          {label}
-          {count !== undefined && (count === 0 ? 'No' : count)} 
-          {count !== undefined && ' ' + (count === 1 ? 'event' : 'events')}
+          {count !== undefined
+            ? count === 0
+              ? 'No events'
+              : `${count} ${count === 1 ? 'event' : 'events'}`
+            : label}
         </span>
       )}
     </div>

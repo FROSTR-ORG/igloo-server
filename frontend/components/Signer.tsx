@@ -178,25 +178,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       // First clean up our event listeners
       cleanupEventListeners();
 
-      // Temporarily suppress console.warn to hide expected igloo-core warnings
-      const originalWarn = console.warn;
-      const warnOverride = (message: string, ...args: unknown[]) => {
-        // Only suppress the specific expected warning about removeAllListeners
-        if (typeof message === 'string' && message.includes('removeAllListeners not available')) {
-          return; // Skip this expected warning
-        }
-        originalWarn(message, ...args);
-      };
-      console.warn = warnOverride;
-
       try {
         // Use igloo-core's cleanup - it handles the manual cleanup internally
         cleanupBifrostNode(nodeRef.current);
+        // Note: You may see a warning about 'removeAllListeners not available' from igloo-core.
+        // This is expected and harmless. Consider filing an issue upstream to suppress or handle this internally.
       } catch (error) {
         console.error('Unexpected error during cleanup:', error);
       } finally {
-        // Restore original console.warn
-        console.warn = originalWarn;
         nodeRef.current = null;
       }
     }
@@ -262,7 +251,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         // Silently ignore errors fetching self pubkey
       }
     };
-
     fetchSelfPubkey();
   }, [isSignerRunning, isGroupValid, isShareValid]);
 
