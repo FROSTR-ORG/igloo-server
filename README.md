@@ -69,6 +69,9 @@ HOST_PORT=8002
 # Install dependencies
 bun install
 
+# Build the frontend (required)
+bun run build
+
 # Start the server
 bun run start
 ```
@@ -137,16 +140,30 @@ Server running at localhost:8002
 ```
 
 ### Building from Source
+
+**⚠️ Important**: Build artifacts (`static/app.js`, `static/styles.css`) are not committed to version control. You must build the frontend before running the server.
+
 ```bash
 # Install dependencies
 bun install
 
+# Build for production (optimized, minified) - REQUIRED before running
+bun run build
+
+# Build for development (unminified, with source maps)
+bun run build:dev
+
+# Run development mode with live reload
+bun run dev
+
 # Run in development mode (with hot reload)
 bun --watch run src/server.ts
-
-# Type checking
-bun run typecheck
 ```
+
+**Build Process:**
+- Frontend source is in `frontend/` directory
+- Build outputs to `static/app.js` and `static/styles.css`
+- Docker builds automatically handle the build step
 
 ## Troubleshooting
 
@@ -155,6 +172,11 @@ bun run typecheck
 **Server won't start**: 
 - Verify `GROUP_CRED` and `SHARE_CRED` are valid base64-encoded credentials
 - Check that port 8002 is available
+- **Build required**: Run `bun run build` if you see missing static files errors
+
+**Missing frontend/blank page**:
+- Frontend build artifacts are not committed to git
+- Run `bun run build` to generate `static/app.js` and `static/styles.css`
 
 **Connection failures**:
 - Ensure external relay URLs are correct and accessible

@@ -36,5 +36,10 @@ node_modules/
 # Distributions
 dist
 
+# Build artifacts
+static/app.js
+static/app.css
+static/styles.css
+
 #VSCode
 .vscode

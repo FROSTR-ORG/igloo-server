@@ -11,8 +11,7 @@ interface RecoverProps {
   defaultTotalShares?: number;
 }
 
-// Enable debugging for troubleshooting group auto-population issues
-const DEBUG_AUTO_POPULATE = true;
+
 
 // Mock validation functions
 const validateShare = (share: string) => ({
@@ -61,16 +60,12 @@ const findMatchingGroup = async (shareValue: string) => {
     // const matchingGroup = await response.json();
     // return matchingGroup?.groupCredential || null;
     
-    if (DEBUG_AUTO_POPULATE) {
-      console.log("Share input for group lookup:", shareValue);
-    }
+
     
     // Mock matching group for UI demonstration
     return null; // No matching group found for now
   } catch (error) {
-    if (DEBUG_AUTO_POPULATE) {
-      console.error("Error finding matching group:", error);
-    }
+    // Silently handle error
   }
   
   return null;
@@ -81,7 +76,7 @@ const decodeGroupThresholdAndShares = (
   groupCredential: string,
   defaultThreshold: number,
   defaultTotalShares: number,
-  debugEnabled = DEBUG_AUTO_POPULATE
+  debugEnabled = false
 ): { threshold: number; totalShares: number } => {
   try {
     // TODO: Replace with server API call to decode group
@@ -264,9 +259,7 @@ const Recover: React.FC<RecoverProps> = ({
         // Mock shares for UI demonstration
         const shares: any[] = [];
         
-        if (DEBUG_AUTO_POPULATE) {
-          console.log("Checking for stored shares on mount:", Array.isArray(shares) ? shares.length : 0);
-        }
+
         
         if (shares && Array.isArray(shares) && shares.length > 0) {
           // Sort by savedAt date if available
@@ -284,9 +277,7 @@ const Recover: React.FC<RecoverProps> = ({
           );
           
           if (firstValidShare) {
-            if (DEBUG_AUTO_POPULATE) {
-              console.log("Found recent share with group on mount:", firstValidShare.id);
-            }
+
             
             // Set the share
             if (firstValidShare.shareCredential) {
@@ -307,9 +298,7 @@ const Recover: React.FC<RecoverProps> = ({
           }
         }
       } catch (error) {
-        if (DEBUG_AUTO_POPULATE) {
-          console.error("Error auto-detecting share/group on mount:", error);
-        }
+        // Silently handle error
       }
     };
     
@@ -348,9 +337,7 @@ const Recover: React.FC<RecoverProps> = ({
         // If this doesn't throw, it's a valid share
         const decodedShare = decodeShare(value);
         
-        if (DEBUG_AUTO_POPULATE) {
-          console.log(`Decoded share ${index}:`, decodedShare);
-        }
+
         
         // Additional structure validation
         if (typeof decodedShare.idx !== 'number' || 
@@ -385,9 +372,7 @@ const Recover: React.FC<RecoverProps> = ({
         newSharesValidity[index] = validation;
         setSharesValidity(newSharesValidity);
       } catch (error) {
-        if (DEBUG_AUTO_POPULATE) {
-          console.error("Error decoding share:", error);
-        }
+        // Silently handle decoding error
         
         const errorMessage = error instanceof Error ? error.message : 'Invalid share structure';
         const newSharesValidity = [...sharesValidity];

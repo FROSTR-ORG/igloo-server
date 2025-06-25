@@ -4,8 +4,11 @@
   "scripts": {
     "start": "bun run src/server.ts",
     "build:css": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --watch",
+    "build:css:prod": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --minify",
     "build:js": "esbuild frontend/index.tsx --bundle --outfile=static/app.js --jsx=automatic",
-    "build": "bun run build:js && cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css",
+    "build:js:prod": "NODE_ENV=production esbuild frontend/index.tsx --bundle --outfile=static/app.js --jsx=automatic --minify --tree-shaking --define:process.env.NODE_ENV='\"production\"'",
+    "build": "bun run build:js:prod && bun run build:css:prod",
+    "build:dev": "bun run build:js && cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css",
     "dev": "concurrently \"bun run build:css\" \"bun run build:js -- --watch\""
   },
   "dependencies": {

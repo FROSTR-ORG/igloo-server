@@ -6,6 +6,9 @@ import { join } from 'path'
 
 import * as CONST   from './const.js'
 
+// Constants
+const PING_TIMEOUT_MS = 5000;
+
 // Load static files into memory
 const index_page  = Bun.file('static/index.html')
 const style_file  = Bun.file('static/styles.css')
@@ -313,10 +316,10 @@ function setupNodeEventListeners(node: any) {
               
               peerStatuses.set(normalizedPubkey, updatedStatus);
               
-              // Broadcast peer status update to frontend
+              // Broadcast peer status update for peer list (not logged to event stream)
               broadcastEvent({
-                type: 'peer-status',
-                message: `Peer ${tag === '/ping/req' ? 'ping request' : 'ping response'} from ${fromPubkey.slice(0, 16)}...`,
+                type: 'peer-status-internal',
+                message: '', // Internal use only - not logged
                 data: {
                   pubkey: fromPubkey,
                   status: updatedStatus,
@@ -792,7 +795,7 @@ serve({
                        const startTime = Date.now();
                        const result = await Promise.race([
                          node.req.ping(normalizedPubkey),
-                         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
                        ]);
                        
                        const latency = Date.now() - startTime;
@@ -806,10 +809,10 @@ serve({
                          };
                          peerStatuses.set(normalizedPubkey, updatedStatus);
                          
-                         // Broadcast successful ping
+                         // Broadcast peer status for peer list (not logged to event stream)
                          broadcastEvent({
-                           type: 'peer-ping',
-                           message: `Successfully pinged ${pubkey.slice(0, 16)}... (${latency}ms)`,
+                           type: 'peer-ping-internal',
+                           message: '', // Internal use only - not logged
                            data: { pubkey, status: updatedStatus, success: true },
                            timestamp: new Date().toLocaleTimeString(),
                            id: Math.random().toString(36).substr(2, 9)
@@ -850,7 +853,7 @@ serve({
                   const startTime = Date.now();
                   const result = await Promise.race([
                     node.req.ping(normalizedPubkey),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
                   ]);
                   
                   const latency = Date.now() - startTime;
@@ -864,10 +867,10 @@ serve({
                     };
                     peerStatuses.set(normalizedPubkey, updatedStatus);
                     
-                    // Broadcast successful ping
+                    // Broadcast peer status for peer list (not logged to event stream)
                     broadcastEvent({
-                      type: 'peer-ping',
-                      message: `Successfully pinged ${target.slice(0, 16)}... (${latency}ms)`,
+                      type: 'peer-ping-internal',
+                      message: '', // Internal use only - not logged
                       data: { pubkey: target, status: updatedStatus, success: true },
                       timestamp: new Date().toLocaleTimeString(),
                       id: Math.random().toString(36).substr(2, 9)

@@ -10,9 +10,14 @@ COPY package.json bun.lock ./
 # Install dependencies using Bun
 RUN bun install
 
-# Copy the source code and static files.
-COPY src    ./src
-COPY static ./static
+# Copy the source code and frontend files
+COPY src       ./src
+COPY frontend  ./frontend
+COPY static    ./static
+COPY tsconfig.json ./
+
+# Build the production frontend
+RUN bun run build
 
 # Expose the port the app runs on
 EXPOSE 8002

@@ -276,10 +276,10 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     }
   }, [isSignerRunning]);
 
-  // Poll server status every 2 seconds
+  // Poll server status every 5 seconds
   useEffect(() => {
     checkServerStatus(); // Check immediately
-    const interval = setInterval(checkServerStatus, 2000);
+    const interval = setInterval(checkServerStatus, 5000);
     return () => clearInterval(interval);
   }, [checkServerStatus]);
 
@@ -313,21 +313,23 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
       try {
         const logEntry = JSON.parse(event.data);
         
-        // Add the server log entry to our local logs
-        setLogs(prev => [...prev, logEntry]);
-        
-        // Dispatch custom events for peer status updates
-        if (logEntry.type === 'peer-status' && logEntry.data) {
+        // Handle internal peer events (don't add to logs but dispatch for peer list)
+        if (logEntry.type === 'peer-status-internal' && logEntry.data) {
           window.dispatchEvent(new CustomEvent('peerStatusUpdate', {
             detail: logEntry.data
           }));
+          return; // Don't add to event log
         }
         
-        if (logEntry.type === 'peer-ping' && logEntry.data) {
+        if (logEntry.type === 'peer-ping-internal' && logEntry.data) {
           window.dispatchEvent(new CustomEvent('peerPingUpdate', {
             detail: logEntry.data
           }));
+          return; // Don't add to event log
         }
+        
+        // Add all other server log entries to our local logs (original Igloo Desktop events)
+        setLogs(prev => [...prev, logEntry]);
       } catch (error) {
         console.error('Error parsing server event:', error);
       }
