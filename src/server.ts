@@ -1,65 +1,29 @@
 import { serve }                from 'bun'
-import { createAndConnectNode, createConnectedNode, decodeGroup, decodeShare } from '@frostr/igloo-core'
+import { 
+  createAndConnectNode, 
+  createConnectedNode, 
+  decodeGroup, 
+  decodeShare,
+  extractPeersFromCredentials,
+  normalizePubkey,
+  comparePubkeys,
+  extractSelfPubkeyFromCredentials,
+  pingPeer,
+  DEFAULT_PING_TIMEOUT
+} from '@frostr/igloo-core'
 import { NostrRelay }           from './class/relay.js'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
 
 import * as CONST   from './const.js'
 
-// Constants
-const PING_TIMEOUT_MS = 5000;
+// Constants - use igloo-core default
+const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 
 // Load static files into memory
 const index_page  = Bun.file('static/index.html')
 const style_file  = Bun.file('static/styles.css')
 const script_file = Bun.file('static/app.js')
-
-// Utility functions for peer management
-const normalizePubkey = (pubkey: string): string => {
-  const trimmed = pubkey.trim().toLowerCase();
-  // Remove 02/03 prefix for igloo-core compatibility
-  if (trimmed.startsWith('02') || trimmed.startsWith('03')) {
-    return trimmed.slice(2);
-  }
-  return trimmed;
-};
-
-const comparePubkeys = (pubkey1: string, pubkey2: string): boolean => {
-  // Normalize both pubkeys by removing prefixes for comparison
-  const normalized1 = normalizePubkey(pubkey1);
-  const normalized2 = normalizePubkey(pubkey2);
-  return normalized1 === normalized2;
-};
-
-const extractSelfPubkeyFromCredentials = (
-  groupCredential: string,
-  shareCredential: string
-) => {
-  try {
-    const decodedGroup = decodeGroup(groupCredential);
-    const decodedShare = decodeShare(shareCredential);
-    
-    // Find the corresponding commit in the group
-    const commit = decodedGroup.commits.find(c => c.idx === decodedShare.idx);
-    
-    if (commit) {
-      return {
-        pubkey: commit.pubkey,
-        warnings: [] as string[]
-      };
-    }
-    
-    return {
-      pubkey: null,
-      warnings: ['Could not find matching commit for share index']
-    };
-  } catch (error) {
-    return {
-      pubkey: null,
-      warnings: [error instanceof Error ? error.message : 'Unknown error extracting pubkey']
-    };
-  }
-};
 
 // Helper function to get valid relay URLs
 function getValidRelays(envRelays?: string): string[] {
@@ -697,22 +661,28 @@ serve({
         switch (url.pathname) {
           case '/api/peers':
             if (req.method === 'GET') {
-              // Get all peers from group credential
+              // Get all peers from group credential using igloo-core decoding
               const env = readEnvFile();
               if (!env.GROUP_CRED) {
                 return Response.json({ error: 'No group credential available' }, { status: 400, headers });
               }
               
               try {
+                // Use igloo-core function to decode group and extract peers
                 const decodedGroup = decodeGroup(env.GROUP_CRED);
                 const allPeers = decodedGroup.commits.map(commit => commit.pubkey);
                 
                 // Filter out self if we have share credential
                 let filteredPeers = allPeers;
                 if (env.SHARE_CRED) {
-                  const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
-                  if (selfPubkeyResult.pubkey) {
-                    filteredPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                  try {
+                    const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+                    if (selfPubkeyResult.pubkey) {
+                      filteredPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                    }
+                  } catch (error) {
+                    // If self extraction fails, just use all peers (self will be in the list)
+                    console.warn('Could not extract self pubkey for filtering:', error);
                   }
                 }
                 
@@ -735,6 +705,7 @@ serve({
                   online: peersWithStatus.filter(p => p.online).length
                 }, { headers });
               } catch (error) {
+                console.error('Failed to decode group credential:', error);
                 return Response.json({ error: 'Failed to decode group credential' }, { status: 400, headers });
               }
             }
@@ -771,21 +742,26 @@ serve({
               const { target } = await req.json();
               
               if (target === 'all') {
-                // Ping all peers
+                // Ping all peers using igloo-core decoding
                 const env = readEnvFile();
                 if (!env.GROUP_CRED) {
                   return Response.json({ error: 'No group credential available' }, { status: 400, headers });
                 }
                 
                 try {
+                  // Use igloo-core function to decode group and extract peers
                   const decodedGroup = decodeGroup(env.GROUP_CRED);
                   let allPeers = decodedGroup.commits.map(commit => commit.pubkey);
                   
                   // Filter out self if we have share credential
                   if (env.SHARE_CRED) {
-                    const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
-                    if (selfPubkeyResult.pubkey) {
-                      allPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                    try {
+                      const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+                      if (selfPubkeyResult.pubkey) {
+                        allPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                      }
+                    } catch (error) {
+                      console.warn('Could not extract self pubkey for ping filtering:', error);
                     }
                   }
                   

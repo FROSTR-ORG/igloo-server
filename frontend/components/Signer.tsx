@@ -6,6 +6,16 @@ import { Copy, Check, X, HelpCircle, ChevronDown, ChevronRight, User } from "luc
 import { EventLog, type LogEntryData } from "./EventLog"
 import { Input } from "./ui/input"
 import PeerList from "./ui/peer-list"
+// Import real igloo-core functions
+import { 
+  validateShare, 
+  validateGroup, 
+  decodeShare, 
+  decodeGroup, 
+  createConnectedNode,
+  getShareDetailsWithGroup
+} from '@frostr/igloo-core'
+
 // Define types locally
 export interface SignerHandle {
   stopSigner: () => Promise<void>;
@@ -20,59 +30,6 @@ export interface SignerProps {
     totalShares?: number;
   };
 }
-
-// Mock validation functions
-const validateShare = (share: string) => ({
-  isValid: share.trim().length > 0 && share.startsWith('bfshare'),
-  message: share.trim().length === 0 ? 'Share is required' : 
-           !share.startsWith('bfshare') ? 'Share must start with "bfshare"' : undefined
-});
-
-const validateGroup = (group: string) => ({
-  isValid: group.trim().length > 0 && group.startsWith('bfgroup'),
-  message: group.trim().length === 0 ? 'Group credential is required' : 
-           !group.startsWith('bfgroup') ? 'Group credential must start with "bfgroup"' : undefined
-});
-
-const decodeShare = (share: string) => ({
-  idx: 1,
-  seckey: `mock_seckey_${Date.now()}`,
-  binder_sn: `mock_binder_${Date.now()}`,
-  hidden_sn: `mock_hidden_${Date.now()}`
-});
-
-const decodeGroup = (group: string) => ({
-  threshold: 2,
-  group_pk: `mock_group_pk_${Date.now()}`,
-  commits: [
-    { idx: 1, pubkey: `mock_pubkey_1_${Date.now()}`, hidden_pn: 'mock_hidden_1', binder_pn: 'mock_binder_1' },
-    { idx: 2, pubkey: `mock_pubkey_2_${Date.now()}`, hidden_pn: 'mock_hidden_2', binder_pn: 'mock_binder_2' }
-  ]
-});
-
-const createConnectedNode = async (config: {
-  group: string;
-  share: string;
-  relays: string[];
-}) => {
-  // Mock node creation - would be replaced with server API call
-  return {
-    node: {
-      on: () => {},
-      off: () => {},
-      disconnect: async () => {},
-      req: {
-        ping: async () => ({ ok: true })
-      }
-    },
-    state: {
-      isReady: true,
-      isConnected: true,
-      isConnecting: false,
-      connectedRelays: config.relays
-    }
-  };
-};
 
 // Add CSS for the pulse animation
 const pulseStyle = `
@@ -97,24 +54,22 @@ const pulseStyle = `
   }
 `;
 
-
-
 const DEFAULT_RELAY = "wss://relay.primal.net";
 
-// Helper function to extract share information
+// Helper function to extract share information using real igloo-core functions
 const getShareInfo = (groupCredential: string, shareCredential: string, shareName?: string, realPubkey?: string) => {
   try {
     if (!groupCredential || !shareCredential) return null;
 
-    // Decode group to get threshold and total shares (using mock for now)
-    const mockDecodedGroup = decodeGroup(groupCredential);
+    // Use real igloo-core function to get share details with group context
+    const shareDetails = getShareDetailsWithGroup(shareCredential, groupCredential);
 
     return {
-      index: 1, // Would come from decoded share
+      index: shareDetails.idx,
       pubkey: realPubkey || 'Loading...', // Use real pubkey if available
-      shareName: shareName || 'Share 1',
-      threshold: mockDecodedGroup.threshold,
-      totalShares: mockDecodedGroup.commits.length
+      shareName: shareName || `Share ${shareDetails.idx}`,
+      threshold: shareDetails.threshold,
+      totalShares: shareDetails.totalMembers
     };
   } catch (error) {
     console.error('Error getting share info:', error);
@@ -558,13 +513,13 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     setSignerSecret(value);
     const validation = validateShare(value);
 
-    // Try deeper validation with bifrost decoder if basic validation passes
+    // Try deeper validation with real decoder if basic validation passes
     if (validation.isValid && value.trim()) {
       try {
         // If this doesn't throw, it's a valid share
         const decodedShare = decodeShare(value);
 
-        // Additional structure validation could be done here
+        // Additional structure validation - igloo-core returns proper structure
         if (typeof decodedShare.idx !== 'number' ||
           typeof decodedShare.seckey !== 'string' ||
           typeof decodedShare.binder_sn !== 'string' ||
@@ -588,13 +543,13 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     setGroupCredential(value);
     const validation = validateGroup(value);
 
-    // Try deeper validation with bifrost decoder if basic validation passes
+    // Try deeper validation with real decoder if basic validation passes
     if (validation.isValid && value.trim()) {
       try {
         // If this doesn't throw, it's a valid group
         const decodedGroup = decodeGroup(value);
 
-        // Additional structure validation
+        // Additional structure validation - igloo-core returns proper structure
         if (typeof decodedGroup.threshold !== 'number' ||
           typeof decodedGroup.group_pk !== 'string' ||
           !Array.isArray(decodedGroup.commits) ||
