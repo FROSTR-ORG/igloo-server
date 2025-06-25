@@ -273,12 +273,48 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 - **Core Library**: [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core)
 - **Bifrost Reference**: [Bifrost Implementation](https://github.com/FROSTR-ORG/bifrost)
 
+## Security Configuration
+
+Igloo Server includes comprehensive security features to protect your FROSTR credentials and signing operations:
+
+### 🔐 **Authentication**
+- **Multiple Auth Methods**: API Key, Basic Auth, Session-based authentication
+- **Configurable Security**: Enable/disable authentication for development vs production
+- **Rate Limiting**: IP-based request limiting to prevent abuse
+- **Session Management**: Secure cookie-based sessions with configurable timeouts
+
+### 📋 **Quick Security Setup**
+
+**Production (Secure)**:
+```bash
+AUTH_ENABLED=true
+API_KEY=your-secure-api-key-here
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=your-strong-password
+RATE_LIMIT_ENABLED=true
+```
+
+**Development (Local only)**:
+```bash
+AUTH_ENABLED=false  # Only for local development
+```
+
+### 🛡️ **Security Features**
+- **Timing-safe authentication** to prevent timing attacks
+- **Environment variable whitelisting** for configuration endpoints
+- **Automatic session cleanup** and timeout management
+- **Comprehensive rate limiting** with configurable windows and limits
+- **Secure headers** and CORS configuration
+
+See [SECURITY.md](SECURITY.md) for complete security configuration guide.
+
 ## Security Notes
 
 - **Share credentials are sensitive**: Store `SHARE_CRED` securely - it's part of your nsec fragments
 - **Network security**: Use WSS (secure WebSocket) relays in production  
-- **Access control**: The web interface has no authentication - secure your deployment
+- **Authentication required**: Configure authentication for any non-local deployment
 - **Memory management**: The relay auto-purges events to prevent memory leaks
+- **HTTPS recommended**: Use a reverse proxy with TLS for production deployments
 
 ## License
 

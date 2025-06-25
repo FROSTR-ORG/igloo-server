@@ -11,9 +11,10 @@ import { InputWithValidation } from "./ui/input-with-validation"
 interface ConfigureProps {
   onKeysetCreated: (data: { groupCredential: string; shareCredentials: string[]; name: string }) => void;
   onBack?: () => void;
+  authHeaders?: Record<string, string>;
 }
 
-const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack }) => {
+const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHeaders = {} }) => {
   const [keysetGenerated, setKeysetGenerated] = useState<{ success: boolean; location: string | React.ReactNode }>({ success: false, location: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [keysetName, setKeysetName] = useState("");
@@ -33,7 +34,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack }) => {
     const loadExistingData = async () => {
       try {
         // Check for existing credentials in environment variables
-        const response = await fetch('/api/env');
+        const response = await fetch('/api/env', {
+          headers: authHeaders
+        });
         const envVars = await response.json();
         
         const savedShare = envVars.SHARE_CRED;
@@ -122,6 +125,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders
         },
         body: JSON.stringify({
           keys: ['SHARE_CRED', 'GROUP_CRED', 'GROUP_NAME']
@@ -162,6 +166,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack }) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...authHeaders
           },
           body: JSON.stringify({
             SHARE_CRED: share,

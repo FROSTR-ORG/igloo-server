@@ -70,8 +70,8 @@ const PeerList: React.FC<PeerListProps> = ({
         const data = await response.json();
         setPeers(data.peers.map((peer: any) => ({
           ...peer,
-          lastSeen: peer.lastSeen ? new Date(peer.lastSeen) : undefined,
-          lastPingAttempt: peer.lastPingAttempt ? new Date(peer.lastPingAttempt) : undefined
+          lastSeen: peer.lastSeen ? (new Date(peer.lastSeen).getTime() ? new Date(peer.lastSeen) : undefined) : undefined,
+          lastPingAttempt: peer.lastPingAttempt ? (new Date(peer.lastPingAttempt).getTime() ? new Date(peer.lastPingAttempt) : undefined) : undefined
         })));
       } else {
         throw new Error('Failed to fetch peers');
@@ -177,9 +177,9 @@ const PeerList: React.FC<PeerListProps> = ({
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
+            lastSeen: status.lastSeen ? (new Date(status.lastSeen).getTime() ? new Date(status.lastSeen) : peer.lastSeen) : peer.lastSeen,
             latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
+            lastPingAttempt: status.lastPingAttempt ? (new Date(status.lastPingAttempt).getTime() ? new Date(status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
           } as PeerStatus;
         }
         // Try match without 02 prefix
@@ -189,9 +189,9 @@ const PeerList: React.FC<PeerListProps> = ({
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
+            lastSeen: status.lastSeen ? (new Date(status.lastSeen).getTime() ? new Date(status.lastSeen) : peer.lastSeen) : peer.lastSeen,
             latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
+            lastPingAttempt: status.lastPingAttempt ? (new Date(status.lastPingAttempt).getTime() ? new Date(status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
           } as PeerStatus;
         }
         return peer;
@@ -236,9 +236,9 @@ const PeerList: React.FC<PeerListProps> = ({
             ? {
                 ...peer,
                 online: Boolean(result.status.online),
-                lastSeen: result.status.lastSeen ? new Date(result.status.lastSeen) : peer.lastSeen,
+                lastSeen: result.status.lastSeen ? (new Date(result.status.lastSeen).getTime() ? new Date(result.status.lastSeen) : peer.lastSeen) : peer.lastSeen,
                 latency: result.status.latency ? Number(result.status.latency) : peer.latency,
-                lastPingAttempt: result.status.lastPingAttempt ? new Date(result.status.lastPingAttempt) : peer.lastPingAttempt
+                lastPingAttempt: result.status.lastPingAttempt ? (new Date(result.status.lastPingAttempt).getTime() ? new Date(result.status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
               } as PeerStatus
             : peer
         ));
@@ -442,7 +442,7 @@ const PeerList: React.FC<PeerListProps> = ({
                           }
                           content={
                             peer.online 
-                              ? `Online${peer.lastSeen ? ` - Last seen: ${peer.lastSeen.toLocaleTimeString()}` : ''}` 
+                              ? `Online${peer.lastSeen && peer.lastSeen instanceof Date && !isNaN(peer.lastSeen.getTime()) ? ` - Last seen: ${peer.lastSeen.toLocaleTimeString()}` : ''}` 
                               : `Offline - Timeouts are normal in P2P networks where peers may not be reachable directly`
                           }
                           position="top"
@@ -457,10 +457,10 @@ const PeerList: React.FC<PeerListProps> = ({
                             {peer.latency && (
                               <span>• Ping: {peer.latency}ms</span>
                             )}
-                            {peer.lastSeen && (
+                            {peer.lastSeen && peer.lastSeen instanceof Date && !isNaN(peer.lastSeen.getTime()) && (
                               <span>• Last seen: {peer.lastSeen.toLocaleTimeString()}</span>
                             )}
-                            {!peer.online && peer.lastPingAttempt && (
+                            {!peer.online && peer.lastPingAttempt && peer.lastPingAttempt instanceof Date && !isNaN(peer.lastPingAttempt.getTime()) && (
                               <span>• Last attempt: {peer.lastPingAttempt.toLocaleTimeString()}</span>
                             )}
                           </div>

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react"
 import Configure from "./components/Configure"
 import Signer, { SignerHandle } from "./components/Signer"
 import Recover from "./components/Recover"
+import Login from "./components/Login"
 import { Button } from "./components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
 import { PageLayout } from "./components/ui/page-layout"
@@ -16,44 +17,136 @@ interface SignerData {
   totalShares?: number;
 }
 
+interface AuthState {
+  isAuthenticated: boolean;
+  sessionId?: string;
+  userId?: string;
+  authEnabled: boolean;
+}
+
 const App: React.FC = () => {
   const [signerData, setSignerData] = useState<SignerData | null>(null);
   const [activeTab, setActiveTab] = useState("signer");
   const [initializing, setInitializing] = useState(true);
+  const [authState, setAuthState] = useState<AuthState>({
+    isAuthenticated: false,
+    authEnabled: false
+  });
   // Reference to the Signer component to call its stop method
   const signerRef = useRef<SignerHandle>(null);
 
   useEffect(() => {
-    // Check for environment variables and initialize the appropriate view
-    const initializeApp = async () => {
-      try {
-        // Fetch environment variables from server
-        const response = await fetch('/api/env');
-        const envVars = await response.json();
-        
-        const savedShare = envVars.SHARE_CRED;
-        const savedGroup = envVars.GROUP_CRED;
-        const savedName = envVars.GROUP_NAME;
-        
-        if (savedShare && savedGroup) {
-          // If we have saved credentials, go directly to Signer
-          setSignerData({
-            share: savedShare,
-            groupCredential: savedGroup,
-            name: savedName || 'Saved Share'
-          });
-        }
-        // If no saved credentials, we'll show Configure page (default state)
-      } catch (error) {
-        console.error('Error initializing app:', error);
-        // On error, default to Configure page (default state)
-      } finally {
-        setInitializing(false);
-      }
-    };
-
     initializeApp();
   }, []);
+
+  const initializeApp = async () => {
+    try {
+      // First check authentication status
+      const authResponse = await fetch('/api/auth/status');
+      const authStatus = await authResponse.json();
+      
+      // If auth is disabled, we can proceed normally
+      if (!authStatus.enabled) {
+        setAuthState({ isAuthenticated: true, authEnabled: false });
+        await loadAppData();
+      } else {
+        // Auth is enabled, check if we have a valid session
+        setAuthState(prev => ({ ...prev, authEnabled: true }));
+        
+        // Try to make an authenticated request to see if we're already logged in
+        const testResponse = await fetch('/api/status');
+        if (testResponse.ok) {
+          // Already authenticated
+          setAuthState(prev => ({ ...prev, isAuthenticated: true }));
+          await loadAppData();
+        } else {
+          // Need to authenticate
+          setAuthState(prev => ({ ...prev, isAuthenticated: false }));
+        }
+      }
+    } catch (error) {
+      console.error('Error checking authentication:', error);
+      // On error, assume we need to authenticate if auth is enabled
+      const defaultAuthEnabled = true; // Default to secure
+      setAuthState({ isAuthenticated: !defaultAuthEnabled, authEnabled: defaultAuthEnabled });
+    } finally {
+      setInitializing(false);
+    }
+  };
+
+  const loadAppData = async () => {
+    try {
+      // Fetch environment variables from server
+      const response = await fetch('/api/env', {
+        headers: getAuthHeaders()
+      });
+      
+      if (!response.ok) {
+        throw new Error('Failed to fetch environment variables');
+      }
+      
+      const envVars = await response.json();
+      
+      const savedShare = envVars.SHARE_CRED;
+      const savedGroup = envVars.GROUP_CRED;
+      const savedName = envVars.GROUP_NAME;
+      
+      if (savedShare && savedGroup) {
+        // If we have saved credentials, go directly to Signer
+        setSignerData({
+          share: savedShare,
+          groupCredential: savedGroup,
+          name: savedName || 'Saved Share'
+        });
+      }
+      // If no saved credentials, we'll show Configure page (default state)
+    } catch (error) {
+      console.error('Error loading app data:', error);
+      // On error, default to Configure page (default state)
+    }
+  };
+
+  const getAuthHeaders = (): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    if (authState.sessionId) {
+      headers['X-Session-ID'] = authState.sessionId;
+    }
+    return headers;
+  };
+
+  const handleLogin = async (sessionId: string, userId: string) => {
+    setAuthState({
+      isAuthenticated: true,
+      sessionId,
+      userId,
+      authEnabled: true
+    });
+    
+    // Now load the app data
+    await loadAppData();
+  };
+
+  const handleLogout = async () => {
+    try {
+      // Stop signer first
+      await signerRef.current?.stopSigner().catch(console.error);
+      
+      // Call logout endpoint
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: getAuthHeaders()
+      });
+    } catch (error) {
+      console.error('Logout error:', error);
+    } finally {
+      // Reset state
+      setAuthState({
+        isAuthenticated: false,
+        authEnabled: true
+      });
+      setSignerData(null);
+    }
+  };
 
   const handleKeysetCreated = (data: { groupCredential: string; shareCredentials: string[]; name: string }) => {
     // When configuration is complete, go directly to Signer
@@ -79,11 +172,35 @@ const App: React.FC = () => {
     setActiveTab(value);
   };
 
+  // Show loading state while initializing
+  if (initializing) {
+    return (
+      <PageLayout>
+        <AppHeader subtitle="Frostr keyset manager and remote signer." />
+        
+        <ContentCard>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-blue-300">Loading...</div>
+          </div>
+        </ContentCard>
+      </PageLayout>
+    );
+  }
+
+  // Show login screen if authentication is required and user is not authenticated
+  if (authState.authEnabled && !authState.isAuthenticated) {
+    return <Login onLogin={handleLogin} authEnabled={authState.authEnabled} />;
+  }
+
   // Show signer view when share is loaded
   if (signerData) {
     return (
       <PageLayout>
-        <AppHeader />
+        <AppHeader 
+          authEnabled={authState.authEnabled}
+          userId={authState.userId}
+          onLogout={authState.authEnabled ? handleLogout : undefined}
+        />
         
         <ContentCard
           title="Signer"
@@ -116,6 +233,7 @@ const App: React.FC = () => {
               <Signer 
                 initialData={signerData} 
                 ref={signerRef}
+                authHeaders={getAuthHeaders()}
               />
             </TabsContent>
             
@@ -125,6 +243,7 @@ const App: React.FC = () => {
                 initialGroupCredential={signerData?.groupCredential}
                 defaultThreshold={signerData?.threshold}
                 defaultTotalShares={signerData?.totalShares}
+                authHeaders={getAuthHeaders()}
               />
             </TabsContent>
           </Tabs>
@@ -133,28 +252,22 @@ const App: React.FC = () => {
     );
   }
 
-  // Show loading state while initializing
-  if (initializing) {
-    return (
-      <PageLayout>
-        <AppHeader subtitle="Frostr keyset manager and remote signer." />
-        
-        <ContentCard>
-          <div className="flex items-center justify-center py-12">
-            <div className="text-blue-300">Loading...</div>
-          </div>
-        </ContentCard>
-      </PageLayout>
-    );
-  }
-
   // Show Configure view (default when no credentials)
   return (
     <PageLayout>
-      <AppHeader subtitle="Frostr keyset manager and remote signer." />
+      <AppHeader 
+        subtitle="Frostr keyset manager and remote signer." 
+        authEnabled={authState.authEnabled}
+        userId={authState.userId}
+        onLogout={authState.authEnabled ? handleLogout : undefined}
+      />
 
       <ContentCard>
-        <Configure onKeysetCreated={handleKeysetCreated} onBack={() => {}} />
+        <Configure 
+          onKeysetCreated={handleKeysetCreated} 
+          onBack={() => {}} 
+          authHeaders={getAuthHeaders()}
+        />
       </ContentCard>
     </PageLayout>
   )

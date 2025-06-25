@@ -30,6 +30,7 @@ export interface SignerProps {
     threshold?: number;
     totalShares?: number;
   };
+  authHeaders?: Record<string, string>;
 }
 
 // Add CSS for the pulse animation
@@ -66,11 +67,11 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
     const shareDetails = getShareDetailsWithGroup(shareCredential, groupCredential);
 
     return {
-      index: shareDetails.idx,
+      index: shareDetails.idx || 0,
       pubkey: realPubkey || 'Loading...', // Use real pubkey if available
-      shareName: shareName || `Share ${shareDetails.idx}`,
-      threshold: shareDetails.threshold,
-      totalShares: shareDetails.totalMembers
+      shareName: shareName || `Share ${shareDetails.idx || 0}`,
+      threshold: shareDetails.threshold || 0,
+      totalShares: shareDetails.totalMembers || 0
     };
   } catch (error) {
     console.error('Error getting share info:', error);
@@ -78,7 +79,7 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
   }
 };
 
-const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
+const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {} }, ref) => {
   const [isSignerRunning, setIsSignerRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [signerSecret, setSignerSecret] = useState("");
@@ -204,7 +205,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
   // Function to check server status
   const checkServerStatus = useCallback(async () => {
     try {
-      const response = await fetch('/api/status');
+      const response = await fetch('/api/status', {
+        headers: authHeaders
+      });
       const status = await response.json();
       setServerStatus(status);
       
@@ -248,7 +251,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
 
     const fetchSelfPubkey = async () => {
       try {
-        const response = await fetch('/api/peers/self');
+        const response = await fetch('/api/peers/self', {
+        headers: authHeaders
+      });
         if (response.ok) {
           const data = await response.json();
           setRealSelfPubkey(data.pubkey);
@@ -317,7 +322,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
   useEffect(() => {
     const fetchEnvData = async () => {
       try {
-        const response = await fetch('/api/env');
+        const response = await fetch('/api/env', {
+        headers: authHeaders
+      });
         const envVars = await response.json();
         
         // Set values from environment variables
@@ -501,6 +508,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
+            ...authHeaders
           },
           body: JSON.stringify(updateData)
         });
@@ -577,6 +585,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders
         },
         body: JSON.stringify({
           RELAYS: JSON.stringify(relays)
@@ -655,7 +664,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
               </div>
               <div className="text-gray-400">•</div>
               <div className="text-gray-300 text-sm">
-                Threshold: <span className="text-blue-400">{shareInfo.threshold}</span>/<span className="text-blue-400">{shareInfo.totalShares}</span>
+                Threshold: <span className="text-blue-400">{shareInfo.threshold}</span>/<span className="text-blue-400">{shareInfo.totalShares || '?'}</span>
               </div>
             </div>
             <div className="mt-2">

@@ -15,6 +15,7 @@ interface RecoverProps {
   initialGroupCredential?: string;
   defaultThreshold?: number;
   defaultTotalShares?: number;
+  authHeaders?: Record<string, string>;
 }
 
 // Helper function to save share data to localStorage
@@ -71,7 +72,8 @@ const Recover: React.FC<RecoverProps> = ({
   initialShare,
   initialGroupCredential,
   defaultThreshold = 2,
-  defaultTotalShares = 3
+  defaultTotalShares = 3,
+  authHeaders = {}
 }) => {
   // State for t of n shares
   const [sharesInputs, setSharesInputs] = useState<string[]>([initialShare || ""]);
@@ -136,7 +138,9 @@ const Recover: React.FC<RecoverProps> = ({
         // If no localStorage data, try server API
         if (!shares || shares.length === 0) {
           try {
-            const response = await fetch('/api/shares');
+            const response = await fetch('/api/shares', {
+              headers: authHeaders
+            });
             if (response.ok) {
               const serverShares = await response.json();
               if (Array.isArray(serverShares)) {
@@ -384,6 +388,7 @@ const Recover: React.FC<RecoverProps> = ({
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...authHeaders
         },
         body: JSON.stringify({
           groupCredential,

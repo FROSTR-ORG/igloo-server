@@ -17,6 +17,11 @@ export interface ServerBifrostNode {
   // Add other properties/methods as needed
 }
 
+export interface AuthContext {
+  userId?: string;
+  authenticated: boolean;
+}
+
 export interface RouteContext {
   node: ServerBifrostNode | null;
   peerStatuses: Map<string, PeerStatus>;
@@ -24,6 +29,7 @@ export interface RouteContext {
   addServerLog: (type: string, message: string, data?: any) => void;
   broadcastEvent: (event: { type: string; message: string; data?: any; timestamp: string; id: string }) => void;
   updateNode?: (newNode: ServerBifrostNode | null) => void;
+  auth?: AuthContext;
 }
 
 export interface ApiResponse {
