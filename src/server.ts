@@ -498,6 +498,39 @@ if (CONST.hasCredentials()) {
 // Helper functions for .env file management
 const ENV_FILE_PATH = '.env'
 
+// Security: Whitelist of allowed environment variable keys
+const ALLOWED_ENV_KEYS = new Set([
+  'SHARE_CRED',    // Share credential for signing
+  'GROUP_CRED',    // Group credential for signing
+  'RELAYS'         // Relay URLs configuration
+]);
+
+// Validate environment variable keys against whitelist
+function validateEnvKeys(keys: string[]): { validKeys: string[]; invalidKeys: string[] } {
+  const validKeys = keys.filter(key => ALLOWED_ENV_KEYS.has(key));
+  const invalidKeys = keys.filter(key => !ALLOWED_ENV_KEYS.has(key));
+  return { validKeys, invalidKeys };
+}
+
+// Filter environment object to only include whitelisted keys
+function filterEnvObject(env: Record<string, string>): { 
+  filteredEnv: Record<string, string>; 
+  rejectedKeys: string[] 
+} {
+  const filteredEnv: Record<string, string> = {};
+  const rejectedKeys: string[] = [];
+  
+  for (const [key, value] of Object.entries(env)) {
+    if (ALLOWED_ENV_KEYS.has(key)) {
+      filteredEnv[key] = value;
+    } else {
+      rejectedKeys.push(key);
+    }
+  }
+  
+  return { filteredEnv, rejectedKeys };
+}
+
 function parseEnvFile(content: string): Record<string, string> {
   const env: Record<string, string> = {}
   const lines = content.split('\n')
@@ -1092,6 +1125,90 @@ serve({
       }
     }
 
+    // API endpoints for share management
+    if (url.pathname.startsWith('/api/shares')) {
+      try {
+        switch (url.pathname) {
+          case '/api/shares':
+            if (req.method === 'GET') {
+              // Return stored shares (for now, we'll use the current env credentials as an example)
+              const env = readEnvFile();
+              const shares = [];
+              
+              // If we have both credentials in env, return them as a share
+              if (env.SHARE_CRED && env.GROUP_CRED) {
+                try {
+                  // Validate credentials before returning
+                  const shareValidation = validateShare(env.SHARE_CRED);
+                  const groupValidation = validateGroup(env.GROUP_CRED);
+                  
+                  if (shareValidation.isValid && groupValidation.isValid) {
+                    shares.push({
+                      shareCredential: env.SHARE_CRED,
+                      groupCredential: env.GROUP_CRED,
+                      savedAt: new Date().toISOString(),
+                      id: 'env-stored-share',
+                      source: 'environment'
+                    });
+                  }
+                } catch (error) {
+                  // Invalid credentials, skip
+                }
+              }
+              
+              return Response.json(shares, { headers });
+            }
+            
+            if (req.method === 'POST') {
+              // Save share data (for future enhancement - could store in a file or database)
+              const body = await req.json();
+              const { shareCredential, groupCredential } = body;
+              
+              if (!shareCredential || !groupCredential) {
+                return Response.json({
+                  success: false,
+                  error: 'Missing shareCredential or groupCredential'
+                }, { status: 400, headers });
+              }
+              
+              // Validate credentials
+              const shareValidation = validateShare(shareCredential);
+              const groupValidation = validateGroup(groupCredential);
+              
+              if (!shareValidation.isValid || !groupValidation.isValid) {
+                return Response.json({
+                  success: false,
+                  error: 'Invalid credentials provided'
+                }, { status: 400, headers });
+              }
+              
+              // For now, we'll save to the env file (in a real app, you'd use a database)
+              const env = readEnvFile();
+              env.SHARE_CRED = shareCredential;
+              env.GROUP_CRED = groupCredential;
+              
+              if (writeEnvFile(env)) {
+                return Response.json({
+                  success: true,
+                  message: 'Share saved successfully'
+                }, { headers });
+              } else {
+                return Response.json({
+                  success: false,
+                  error: 'Failed to save share'
+                }, { status: 500, headers });
+              }
+            }
+            break;
+        }
+        
+        return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
+      } catch (error) {
+        console.error('Shares API Error:', error);
+        return Response.json({ error: 'Internal server error' }, { status: 500, headers });
+      }
+    }
+
     // API endpoints for .env management
     if (url.pathname.startsWith('/api/env')) {
       try {
@@ -1106,11 +1223,28 @@ serve({
               const body = await req.json()
               const env = readEnvFile()
               
-              // Check if we're updating credentials
-              const updatingCredentials = 'SHARE_CRED' in body || 'GROUP_CRED' in body
+              // Security: Validate and filter incoming environment variables
+              const { filteredEnv, rejectedKeys } = filterEnvObject(body);
               
-              // Update environment variables
-              Object.assign(env, body)
+              if (rejectedKeys.length > 0) {
+                console.warn(`Rejected unauthorized environment variable keys: ${rejectedKeys.join(', ')}`);
+                addServerLog('warn', `Rejected unauthorized environment variable keys: ${rejectedKeys.join(', ')}`);
+              }
+              
+              // Only proceed if we have valid keys to update
+              if (Object.keys(filteredEnv).length === 0) {
+                return Response.json({ 
+                  success: false, 
+                  message: 'No valid environment variables provided',
+                  rejectedKeys 
+                }, { status: 400, headers });
+              }
+              
+              // Check if we're updating credentials
+              const updatingCredentials = 'SHARE_CRED' in filteredEnv || 'GROUP_CRED' in filteredEnv
+              
+              // Update environment variables (only whitelisted ones)
+              Object.assign(env, filteredEnv)
               
               if (writeEnvFile(env)) {
                 // If credentials were updated, recreate the node
@@ -1189,7 +1323,15 @@ serve({
                   }
                 }
                 
-                return Response.json({ success: true, message: 'Environment variables updated' }, { headers })
+                const responseMessage = rejectedKeys.length > 0 
+                  ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
+                  : 'Environment variables updated';
+                
+                return Response.json({ 
+                  success: true, 
+                  message: responseMessage,
+                  rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined
+                }, { headers })
               } else {
                 return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers })
               }
@@ -1199,13 +1341,39 @@ serve({
           case '/api/env/delete':
             if (req.method === 'POST') {
               const { keys } = await req.json()
+              
+              // Validate that keys is an array
+              if (!Array.isArray(keys)) {
+                return Response.json({ 
+                  success: false, 
+                  message: 'Keys must be provided as an array' 
+                }, { status: 400, headers });
+              }
+              
               const env = readEnvFile()
               
-              // Check if we're deleting credentials
-              const deletingCredentials = keys.includes('SHARE_CRED') || keys.includes('GROUP_CRED')
+              // Security: Validate keys against whitelist
+              const { validKeys, invalidKeys } = validateEnvKeys(keys);
               
-              // Delete specified keys
-              for (const key of keys) {
+              if (invalidKeys.length > 0) {
+                console.warn(`Rejected unauthorized deletion of environment variable keys: ${invalidKeys.join(', ')}`);
+                addServerLog('warn', `Rejected unauthorized deletion of environment variable keys: ${invalidKeys.join(', ')}`);
+              }
+              
+              // Only proceed if we have valid keys to delete
+              if (validKeys.length === 0) {
+                return Response.json({ 
+                  success: false, 
+                  message: 'No valid environment variables provided for deletion',
+                  rejectedKeys: invalidKeys 
+                }, { status: 400, headers });
+              }
+              
+              // Check if we're deleting credentials (only from valid keys)
+              const deletingCredentials = validKeys.includes('SHARE_CRED') || validKeys.includes('GROUP_CRED')
+              
+              // Delete only whitelisted keys
+              for (const key of validKeys) {
                 delete env[key]
               }
               
@@ -1223,7 +1391,16 @@ serve({
                   }
                 }
                 
-                return Response.json({ success: true, message: 'Environment variables deleted' }, { headers })
+                const responseMessage = invalidKeys.length > 0 
+                  ? `Environment variables deleted. Rejected unauthorized keys: ${invalidKeys.join(', ')}`
+                  : 'Environment variables deleted';
+                
+                return Response.json({ 
+                  success: true, 
+                  message: responseMessage,
+                  deletedKeys: validKeys,
+                  rejectedKeys: invalidKeys.length > 0 ? invalidKeys : undefined
+                }, { headers })
               } else {
                 return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers })
               }

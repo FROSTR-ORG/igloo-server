@@ -17,135 +17,53 @@ interface RecoverProps {
   defaultTotalShares?: number;
 }
 
-// Add utility function to find matching group at the component level
-const findMatchingGroup = async (shareValue: string) => {
-  if (!shareValue || !shareValue.trim()) return null;
-  
+// Helper function to save share data to localStorage
+const saveShareToStorage = (shareCredential: string, groupCredential: string) => {
   try {
-    const decodedShare = decodeShare(shareValue);
-    // Try to find a matching group in localStorage (or indexedDB, or a custom clientShareManager if available)
-    // This example uses localStorage for simplicity, but you may want to use a more robust store
-    const sharesRaw = localStorage.getItem('igloo-shares');
-    if (sharesRaw) {
-      const shares = JSON.parse(sharesRaw);
-      if (Array.isArray(shares)) {
-        // Look for a share with matching binder_sn and a groupCredential
-        const match = shares.find((saved: any) => {
-          if (saved.metadata && saved.metadata.binder_sn === decodedShare.binder_sn) {
-            return saved.groupCredential;
-          }
-          if (saved.shareCredential) {
-            try {
-              const savedDecoded = decodeShare(saved.shareCredential);
-              return savedDecoded.binder_sn === decodedShare.binder_sn && saved.groupCredential;
-            } catch {}
-          }
-          if (saved.id && decodedShare.binder_sn) {
-            const binderPrefix = decodedShare.binder_sn.substring(0, 8);
-            return saved.id.includes(binderPrefix) && saved.groupCredential;
-          }
-          return false;
-        });
-        if (match && match.groupCredential) {
-          return match.groupCredential;
-        }
+    const existingRaw = localStorage.getItem('igloo-shares');
+    let existingShares = [];
+    
+    if (existingRaw) {
+      try {
+        existingShares = JSON.parse(existingRaw);
+      } catch (error) {
+        console.warn('Failed to parse existing shares, starting fresh:', error);
+        existingShares = [];
       }
     }
-  } catch (error) {
-    // Silently ignore errors
-  }
-  return null;
-};
-
-// Add this helper function after the findMatchingGroup function
-const decodeGroupThresholdAndShares = (
-  groupCredential: string,
-  defaultThreshold: number,
-  defaultTotalShares: number,
-  debugEnabled = false
-): { threshold: number; totalShares: number } => {
-  try {
-    // TODO: Replace with server API call to decode group
-    // const response = await fetch('/api/decode-group', {
-    //   method: 'POST',
-    //   body: JSON.stringify({ groupCredential })
-    // });
-    // const decodedGroup = await response.json();
-    // const threshold = decodedGroup?.threshold ?? defaultThreshold;
-    // const totalShares = decodedGroup?.commits?.length ?? defaultTotalShares;
     
-    // Mock decoded values for UI demonstration
-    return { threshold: defaultThreshold, totalShares: defaultTotalShares };
-  } catch (error) {
-    if (debugEnabled) {
-      console.error("Error decoding group for threshold/totalShares:", error);
-    }
-    return { threshold: defaultThreshold, totalShares: defaultTotalShares };
-  }
-};
-
-// Helper function to handle group credential processing and state updates
-const processAndSetGroupCredential = (
-  groupCredential: string,
-  defaultThreshold: number,
-  defaultTotalShares: number,
-  options: {
-    setGroupCredential: (value: string) => void;
-    setIsGroupValid: (valid: boolean) => void;
-    setGroupError: (error: string | undefined) => void;
-    setCurrentThreshold: (threshold: number) => void;
-    setCurrentTotalShares: (totalShares: number) => void;
-    setIsGroupAutofilled?: (autofilled: boolean) => void;
-    autofilledTimeoutRef?: React.MutableRefObject<number | null>;
-    showAutofilled?: boolean;
-  }
-) => {
-  const { 
-    setGroupCredential, 
-    setIsGroupValid, 
-    setGroupError, 
-    setCurrentThreshold, 
-    setCurrentTotalShares,
-    setIsGroupAutofilled,
-    autofilledTimeoutRef,
-    showAutofilled = false
-  } = options;
-
-  setGroupCredential(groupCredential);
-  
-  // TODO: Replace with server API call for validation
-  // const response = await fetch('/api/validate-group', {
-  //   method: 'POST',
-  //   body: JSON.stringify({ groupCredential })
-  // });
-  // const validation = await response.json();
-  
-  // Mock validation for UI demonstration
-  const validation = validateGroup(groupCredential);
-  
-  setIsGroupValid(validation.isValid);
-  setGroupError(validation.message);
-  
-  // Decode group to set currentThreshold and currentTotalShares
-  if (validation.isValid) {
-    const { threshold, totalShares } = decodeGroupThresholdAndShares(
+    // Create new share entry
+    const newShare = {
+      shareCredential,
       groupCredential,
-      defaultThreshold,
-      defaultTotalShares
+      savedAt: new Date().toISOString(),
+      id: `share-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+    };
+    
+    // Check if this exact combination already exists
+    const existingIndex = existingShares.findIndex((s: any) => 
+      s.shareCredential === shareCredential && s.groupCredential === groupCredential
     );
-    setCurrentThreshold(threshold);
-    setCurrentTotalShares(totalShares);
-  }
-
-  // Show auto-detection indicator if requested
-  if (showAutofilled && setIsGroupAutofilled && autofilledTimeoutRef) {
-    setIsGroupAutofilled(true);
-    if (autofilledTimeoutRef.current) {
-      clearTimeout(autofilledTimeoutRef.current);
+    
+    if (existingIndex >= 0) {
+      // Update existing entry with new timestamp
+      existingShares[existingIndex] = newShare;
+    } else {
+      // Add new entry
+      existingShares.push(newShare);
     }
-    autofilledTimeoutRef.current = window.setTimeout(() => {
-      setIsGroupAutofilled(false);
-    }, 5000);
+    
+    // Keep only the most recent 10 shares to avoid localStorage bloat
+    if (existingShares.length > 10) {
+      existingShares.sort((a: any, b: any) => 
+        new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime()
+      );
+      existingShares = existingShares.slice(0, 10);
+    }
+    
+    localStorage.setItem('igloo-shares', JSON.stringify(existingShares));
+  } catch (error) {
+    console.warn('Failed to save share to localStorage:', error);
   }
 };
 
@@ -183,72 +101,56 @@ const Recover: React.FC<RecoverProps> = ({
   // Add state for dynamic total shares
   const [currentTotalShares, setCurrentTotalShares] = useState<number>(defaultTotalShares);
 
-  // Helper function to process group credential and update state (within component scope)
-  const processGroupCredential = useCallback((groupCred: string, showAutofilled = false) => {
-    processAndSetGroupCredential(groupCred, defaultThreshold, defaultTotalShares, {
-      setGroupCredential,
-      setIsGroupValid,
-      setGroupError,
-      setCurrentThreshold,
-      setCurrentTotalShares,
-      setIsGroupAutofilled,
-      autofilledTimeoutRef,
-      showAutofilled
-    });
-  }, [defaultThreshold, defaultTotalShares]);
-
   // Validate the shares form
   useEffect(() => {
     const validSharesCount = sharesValidity.filter(validity => validity.isValid).length;
     setSharesFormValid(validSharesCount >= currentThreshold && isGroupValid);
   }, [sharesValidity, currentThreshold, isGroupValid]);
 
-  // Add useEffect to check for initialShare changes and extract from it
+  // Auto-detect shares from storage
   useEffect(() => {
-    if (initialShare) {
-      // Update the share input UI
-      setSharesInputs([initialShare]);
-      const validation = validateShare(initialShare);
-      setSharesValidity([validation]);
+    const autoDetectShares = async () => {
+      // If we already have initial data, don't auto-detect
+      if (initialShare || initialGroupCredential) {
+        return;
+      }
       
-      // Use the utility function to find matching group
-      const populateGroup = async () => {
-        const matchingGroup = await findMatchingGroup(initialShare);
-        
-        if (matchingGroup) {
-          processGroupCredential(matchingGroup, true);
-        }
-      };
-      
-      populateGroup();
-    }
-    
-    // Handle initialGroupCredential if provided
-    if (initialGroupCredential) {
-      processGroupCredential(initialGroupCredential, false);
-    }
-  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, processGroupCredential]);
-
-  // Add useEffect to check for stored shares on component mount
-  useEffect(() => {
-    const autoDetectGroupFromStorage = async () => {
-      // If we already have shares or group, no need to auto-detect
+      // If we already have user input, don't override
       if (sharesInputs.some(s => s.trim()) || groupCredential.trim()) {
         return;
       }
       
       try {
-        // TODO: Replace with server API call to get shares
-        // const response = await fetch('/api/shares');
-        // const shares = await response.json();
+        // First try localStorage for client-side storage
+        const sharesRaw = localStorage.getItem('igloo-shares');
+        let shares = [];
         
-        // Mock shares for UI demonstration
-        const shares: any[] = [];
+        if (sharesRaw) {
+          try {
+            shares = JSON.parse(sharesRaw);
+          } catch (error) {
+            console.warn('Failed to parse localStorage shares:', error);
+          }
+        }
         
-
+        // If no localStorage data, try server API
+        if (!shares || shares.length === 0) {
+          try {
+            const response = await fetch('/api/shares');
+            if (response.ok) {
+              const serverShares = await response.json();
+              if (Array.isArray(serverShares)) {
+                shares = serverShares;
+              }
+            }
+          } catch (error) {
+            // Server API might not exist yet, that's okay
+            console.debug('Server shares API not available:', error);
+          }
+        }
         
         if (shares && Array.isArray(shares) && shares.length > 0) {
-          // Sort by savedAt date if available
+          // Sort by savedAt date if available, most recent first
           const sortedShares = [...shares].sort((a, b) => {
             if (a.savedAt && b.savedAt) {
               return new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime();
@@ -256,40 +158,84 @@ const Recover: React.FC<RecoverProps> = ({
             return 0;
           });
           
-          // Find the most recent share with both group and share
-          const firstValidShare = sortedShares.find(s => 
+          // Find the most recent share with both group and share credentials
+          const validShare = sortedShares.find(s => 
             s.shareCredential && s.shareCredential.trim() && 
             s.groupCredential && s.groupCredential.trim()
           );
           
-          if (firstValidShare) {
-
+          if (validShare) {
+            // Validate before using
+            const shareValidation = validateShare(validShare.shareCredential);
+            const groupValidation = validateGroup(validShare.groupCredential);
             
-            // Set the share
-            if (firstValidShare.shareCredential) {
-              const shareValidation = validateShare(firstValidShare.shareCredential);
-              if (shareValidation.isValid) {
-                setSharesInputs([firstValidShare.shareCredential]);
-                setSharesValidity([shareValidation]);
+            if (shareValidation.isValid && groupValidation.isValid) {
+              // Set the share
+              setSharesInputs([validShare.shareCredential]);
+              setSharesValidity([shareValidation]);
+              
+              // Set the group with auto-detection indicator
+              setGroupCredential(validShare.groupCredential);
+              setIsGroupValid(true);
+              setGroupError(undefined);
+              setIsGroupAutofilled(true);
+              
+              // Try to decode group for threshold/total shares
+              try {
+                const decodedGroup = decodeGroup(validShare.groupCredential);
+                setCurrentThreshold(decodedGroup.threshold);
+                setCurrentTotalShares(decodedGroup.commits.length);
+              } catch (error) {
+                setCurrentThreshold(defaultThreshold);
+                setCurrentTotalShares(defaultTotalShares);
               }
-            }
-            
-            // Set the group
-            if (firstValidShare.groupCredential) {
-              const groupValidation = validateGroup(firstValidShare.groupCredential);
-              if (groupValidation.isValid) {
-                processGroupCredential(firstValidShare.groupCredential, true);
+              
+              // Clear auto-detection indicator after 5 seconds
+              if (autofilledTimeoutRef.current) {
+                clearTimeout(autofilledTimeoutRef.current);
               }
+              autofilledTimeoutRef.current = window.setTimeout(() => {
+                setIsGroupAutofilled(false);
+              }, 5000);
             }
           }
         }
       } catch (error) {
-        // Silently handle error
+        console.warn('Auto-detection failed:', error);
       }
     };
     
-    autoDetectGroupFromStorage();
-  }, [defaultThreshold, defaultTotalShares, groupCredential, sharesInputs, processGroupCredential]);
+    autoDetectShares();
+  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, sharesInputs, groupCredential]);
+
+  // Handle initialShare and initialGroupCredential
+  useEffect(() => {
+    if (initialShare) {
+      setSharesInputs([initialShare]);
+      const validation = validateShare(initialShare);
+      setSharesValidity([validation]);
+    }
+    
+    if (initialGroupCredential) {
+      setGroupCredential(initialGroupCredential);
+      const validation = validateGroup(initialGroupCredential);
+      setIsGroupValid(validation.isValid);
+      setGroupError(validation.message);
+      
+      // Try to decode group to get threshold and total shares
+      if (validation.isValid) {
+        try {
+          const decodedGroup = decodeGroup(initialGroupCredential);
+          setCurrentThreshold(decodedGroup.threshold);
+          setCurrentTotalShares(decodedGroup.commits.length);
+        } catch (error) {
+          // If decode fails, use defaults
+          setCurrentThreshold(defaultThreshold);
+          setCurrentTotalShares(defaultTotalShares);
+        }
+      }
+    }
+  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares]);
 
   // Handle adding more share inputs
   const addShareInput = () => {
@@ -317,13 +263,10 @@ const Recover: React.FC<RecoverProps> = ({
     
     const validation = validateShare(value);
     
-    // Additional validation - try to decode with mock decoder if the basic validation passes
+    // Additional validation - try to decode if the basic validation passes
     if (validation.isValid && value.trim()) {
       try {
-        // If this doesn't throw, it's a valid share
         const decodedShare = decodeShare(value);
-        
-
         
         // Additional structure validation
         if (typeof decodedShare.idx !== 'number' || 
@@ -339,27 +282,16 @@ const Recover: React.FC<RecoverProps> = ({
           return;
         }
         
-        // Auto-populate group if not already set
-        if (!groupCredential.trim()) {
-          // Use the utility function for group lookup
-          findMatchingGroup(value).then(matchingGroup => {
-            if (matchingGroup) {
-              // Validate group before using
-              const groupValid = validateGroup(matchingGroup);
-              if (groupValid.isValid) {
-                processGroupCredential(matchingGroup, true);
-              }
-            }
-          });
-        }
-        
         // Update share validity
         const newSharesValidity = [...sharesValidity];
         newSharesValidity[index] = validation;
         setSharesValidity(newSharesValidity);
-      } catch (error) {
-        // Silently handle decoding error
         
+        // Save valid share to localStorage for future auto-detection
+        if (groupCredential && isGroupValid) {
+          saveShareToStorage(value, groupCredential);
+        }
+      } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Invalid share structure';
         const newSharesValidity = [...sharesValidity];
         newSharesValidity[index] = { isValid: false, message: errorMessage };
@@ -370,8 +302,8 @@ const Recover: React.FC<RecoverProps> = ({
       newSharesValidity[index] = validation;
       setSharesValidity(newSharesValidity);
       if (!validation.isValid) {
-        setCurrentThreshold(defaultThreshold); // Revert to default if basic validation fails
-        setCurrentTotalShares(defaultTotalShares); // Revert to default
+        setCurrentThreshold(defaultThreshold);
+        setCurrentTotalShares(defaultTotalShares);
       }
     }
   };
@@ -383,10 +315,9 @@ const Recover: React.FC<RecoverProps> = ({
     
     const validation = validateGroup(value);
     
-    // Try deeper validation with mock decoder if basic validation passes
+    // Try deeper validation if basic validation passes
     if (validation.isValid && value.trim()) {
       try {
-        // If this doesn't throw, it's a valid group
         const decodedGroup = decodeGroup(value);
         
         // Additional structure validation
@@ -396,22 +327,26 @@ const Recover: React.FC<RecoverProps> = ({
             decodedGroup.commits.length === 0) {
           setIsGroupValid(false);
           setGroupError('Group credential has invalid internal structure');
-          setCurrentThreshold(defaultThreshold); // Revert to default if structure is bad
-          setCurrentTotalShares(defaultTotalShares); // Revert to default
+          setCurrentThreshold(defaultThreshold);
+          setCurrentTotalShares(defaultTotalShares);
           return;
         }
         
-        // Set the dynamic threshold
+        // Set the dynamic threshold and total shares
         setCurrentThreshold(decodedGroup.threshold);
-        // Set dynamic total shares
         setCurrentTotalShares(decodedGroup.commits.length);
         setIsGroupValid(true);
         setGroupError(undefined);
+        
+        // Save to localStorage if we have a valid share as well
+        const validShares = sharesInputs.filter((_, index) => sharesValidity[index]?.isValid);
+        if (validShares.length > 0) {
+          validShares.forEach(share => saveShareToStorage(share, value));
+        }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Invalid group structure';
         setIsGroupValid(false);
         
-        // If the error appears to be related to bech32m decode
         if (errorMessage.includes('malformed') || 
             errorMessage.includes('decode') || 
             errorMessage.includes('bech32')) {
@@ -419,15 +354,15 @@ const Recover: React.FC<RecoverProps> = ({
         } else {
           setGroupError(`Invalid group: ${errorMessage}`);
         }
-        setCurrentThreshold(defaultThreshold); // Revert to default on decode error
-        setCurrentTotalShares(defaultTotalShares); // Revert to default
+        setCurrentThreshold(defaultThreshold);
+        setCurrentTotalShares(defaultTotalShares);
       }
     } else {
       setIsGroupValid(validation.isValid);
       setGroupError(validation.message);
       if (!validation.isValid) {
-        setCurrentThreshold(defaultThreshold); // Revert to default if basic validation fails
-        setCurrentTotalShares(defaultTotalShares); // Revert to default
+        setCurrentThreshold(defaultThreshold);
+        setCurrentTotalShares(defaultTotalShares);
       }
     }
   };
