@@ -9,7 +9,7 @@ export function AppHeader({ subtitle }: AppHeaderProps) {
     <>
       <div className="flex items-center justify-center mb-8">
         <img src="/assets/frostr-logo-transparent.png" alt="Frostr Logo" className="w-12 h-12 mr-2" />
-        <h1 className="text-4xl font-bold font-orbitron bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo</h1>
+        <h1 className="text-4xl font-bold font-orbitron bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo Server</h1>
       </div>
       
       {subtitle && (

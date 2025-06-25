@@ -7,8 +7,7 @@ import {
   validateShare,
   validateGroup,
   decodeShare,
-  decodeGroup,
-  recoverSecretKeyFromCredentials
+  decodeGroup
 } from '@frostr/igloo-core';
 
 interface RecoverProps {
@@ -445,27 +444,51 @@ const Recover: React.FC<RecoverProps> = ({
       const validShareCredentials = sharesInputs
         .filter((_, index) => sharesValidity[index].isValid);
 
-      // Recover the secret key using credentials directly
-      const nsec = recoverSecretKeyFromCredentials(groupCredential, validShareCredentials);
+      // Call server API for recovery
+      const response = await fetch('/api/recover', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          groupCredential,
+          shareCredentials: validShareCredentials
+        })
+      });
 
-              setResult({
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.error || 'Recovery failed');
+      }
+
+      if (result.success) {
+        setResult({
           success: true,
           message: (
             <div>
               <div className="mb-3 text-green-200 font-medium">
-                Successfully recovered NSEC using {validShareCredentials.length} shares
+                Successfully recovered NSEC using {result.details.sharesUsed} shares
               </div>
-            <div className="space-y-3">
-              <div>
-                <div className="text-sm font-medium mb-1">Recovered NSEC:</div>
-                <div className="bg-gray-800/50 p-2 rounded text-xs break-all">
-                  {nsec}
+              <div className="space-y-3">
+                <div>
+                  <div className="text-sm font-medium mb-1">Recovered NSEC:</div>
+                  <div className="bg-gray-800/50 p-2 rounded text-xs break-all">
+                    {result.nsec}
+                  </div>
                 </div>
+                {result.details.invalidShares && (
+                  <div className="text-sm text-orange-300">
+                    Note: {result.details.invalidShares.length} invalid shares were ignored
+                  </div>
+                )}
               </div>
             </div>
-          </div>
-        )
-      });
+          )
+        });
+      } else {
+        throw new Error(result.error || 'Recovery failed');
+      }
     } catch (error) {
       setResult({
         success: false,
@@ -532,7 +555,7 @@ const Recover: React.FC<RecoverProps> = ({
                   <Button
                     type="button"
                     onClick={() => removeShareInput(index)}
-                    className="bg-red-900/30 hover:bg-red-800/50 text-red-300 px-2"
+                    className="bg-red-900/30 hover:bg-red-800/50 text-red-200 hover:text-red-100 px-2"
                     disabled={isProcessing || sharesInputs.length <= 1}
                   >
                     ✕
@@ -543,7 +566,7 @@ const Recover: React.FC<RecoverProps> = ({
                 <Button
                   type="button"
                   onClick={addShareInput}
-                  className="w-full mt-2 bg-blue-600/30 hover:bg-blue-700/30"
+                  className="w-full mt-2 bg-blue-600/30 hover:bg-blue-700/30 text-blue-200 hover:text-blue-100"
                   disabled={isProcessing}
                 >
                   Add Share Input ({sharesInputs.length}/{currentThreshold})
@@ -555,7 +578,7 @@ const Recover: React.FC<RecoverProps> = ({
           <div className="mt-6">
             <Button 
               type="submit"
-              className="w-full py-5 bg-green-600 hover:bg-green-700 transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-5 bg-green-600 hover:bg-green-700 text-white hover:text-gray-100 transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isProcessing || !sharesFormValid}
             >
               {isProcessing ? "Processing..." : "Recover NSEC"}
