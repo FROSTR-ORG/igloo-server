@@ -1,5 +1,5 @@
 import { serve }                from 'bun'
-import { createAndConnectNode, createConnectedNode } from '@frostr/igloo-core'
+import { createAndConnectNode, createConnectedNode, decodeGroup, decodeShare } from '@frostr/igloo-core'
 import { NostrRelay }           from './class/relay.js'
 import { readFileSync, writeFileSync, existsSync } from 'fs'
 import { join } from 'path'
@@ -10,6 +10,53 @@ import * as CONST   from './const.js'
 const index_page  = Bun.file('static/index.html')
 const style_file  = Bun.file('static/styles.css')
 const script_file = Bun.file('static/app.js')
+
+// Utility functions for peer management
+const normalizePubkey = (pubkey: string): string => {
+  const trimmed = pubkey.trim().toLowerCase();
+  // Remove 02/03 prefix for igloo-core compatibility
+  if (trimmed.startsWith('02') || trimmed.startsWith('03')) {
+    return trimmed.slice(2);
+  }
+  return trimmed;
+};
+
+const comparePubkeys = (pubkey1: string, pubkey2: string): boolean => {
+  // Normalize both pubkeys by removing prefixes for comparison
+  const normalized1 = normalizePubkey(pubkey1);
+  const normalized2 = normalizePubkey(pubkey2);
+  return normalized1 === normalized2;
+};
+
+const extractSelfPubkeyFromCredentials = (
+  groupCredential: string,
+  shareCredential: string
+) => {
+  try {
+    const decodedGroup = decodeGroup(groupCredential);
+    const decodedShare = decodeShare(shareCredential);
+    
+    // Find the corresponding commit in the group
+    const commit = decodedGroup.commits.find(c => c.idx === decodedShare.idx);
+    
+    if (commit) {
+      return {
+        pubkey: commit.pubkey,
+        warnings: [] as string[]
+      };
+    }
+    
+    return {
+      pubkey: null,
+      warnings: ['Could not find matching commit for share index']
+    };
+  } catch (error) {
+    return {
+      pubkey: null,
+      warnings: [error instanceof Error ? error.message : 'Unknown error extracting pubkey']
+    };
+  }
+};
 
 // Helper function to get valid relay URLs
 function getValidRelays(envRelays?: string): string[] {
@@ -68,6 +115,17 @@ const relay  = new NostrRelay()
 
 // Event streaming for frontend
 const eventStreams = new Set<ReadableStreamDefaultController>();
+
+// Peer status tracking
+interface PeerStatus {
+  pubkey: string;
+  online: boolean;
+  lastSeen?: Date;
+  latency?: number;
+  lastPingAttempt?: Date;
+}
+
+let peerStatuses = new Map<string, PeerStatus>();
 
 // Helper function to safely serialize data with circular reference handling
 function safeStringify(obj: any, maxDepth = 3): string {
@@ -213,6 +271,64 @@ function setupNodeEventListeners(node: any) {
         const tag = messageData.tag;
 
         if (typeof tag === 'string') {
+          // Handle peer status updates for ping messages
+          if (tag === '/ping/req' || tag === '/ping/res') {
+            // Extract pubkey from env.pubkey (Nostr event structure)
+            let fromPubkey: string | undefined = undefined;
+            
+            if ('env' in messageData && typeof messageData.env === 'object' && messageData.env !== null) {
+              const env = messageData.env as any;
+              if ('pubkey' in env && typeof env.pubkey === 'string') {
+                fromPubkey = env.pubkey;
+              }
+            }
+            
+            // Fallback: check for direct 'from' field
+            if (!fromPubkey && 'from' in messageData && typeof messageData.from === 'string') {
+              fromPubkey = messageData.from;
+            }
+            
+            if (fromPubkey) {
+              const normalizedPubkey = normalizePubkey(fromPubkey);
+              
+              // Calculate latency for responses
+              let latency: number | undefined = undefined;
+              if (tag === '/ping/res') {
+                if ('latency' in messageData && typeof messageData.latency === 'number') {
+                  latency = messageData.latency;
+                } else if ('timestamp' in messageData && typeof messageData.timestamp === 'number') {
+                  latency = Date.now() - messageData.timestamp;
+                }
+              }
+              
+              // Update peer status - use normalized key but preserve original pubkey format
+              const existingStatus = peerStatuses.get(normalizedPubkey);
+              const updatedStatus: PeerStatus = {
+                pubkey: existingStatus?.pubkey || fromPubkey, // Preserve the original format if we have it
+                online: true,
+                lastSeen: new Date(),
+                latency: latency || existingStatus?.latency,
+                lastPingAttempt: existingStatus?.lastPingAttempt
+              };
+              
+              peerStatuses.set(normalizedPubkey, updatedStatus);
+              
+              // Broadcast peer status update to frontend
+              broadcastEvent({
+                type: 'peer-status',
+                message: `Peer ${tag === '/ping/req' ? 'ping request' : 'ping response'} from ${fromPubkey.slice(0, 16)}...`,
+                data: {
+                  pubkey: fromPubkey,
+                  status: updatedStatus,
+                  eventType: tag
+                },
+                timestamp: new Date().toLocaleTimeString(),
+                id: Math.random().toString(36).substr(2, 9)
+              });
+              
+            }
+          }
+
           const eventInfo = EVENT_MAPPINGS[tag as keyof typeof EVENT_MAPPINGS];
           if (eventInfo) {
             addServerLog(eventInfo.type, eventInfo.message, msg);
@@ -569,6 +685,242 @@ serve({
             'Access-Control-Allow-Methods': 'GET',
           }
         });
+      }
+    }
+
+    // API endpoints for peer management
+    if (url.pathname.startsWith('/api/peers')) {
+      try {
+        switch (url.pathname) {
+          case '/api/peers':
+            if (req.method === 'GET') {
+              // Get all peers from group credential
+              const env = readEnvFile();
+              if (!env.GROUP_CRED) {
+                return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+              }
+              
+              try {
+                const decodedGroup = decodeGroup(env.GROUP_CRED);
+                const allPeers = decodedGroup.commits.map(commit => commit.pubkey);
+                
+                // Filter out self if we have share credential
+                let filteredPeers = allPeers;
+                if (env.SHARE_CRED) {
+                  const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+                  if (selfPubkeyResult.pubkey) {
+                    filteredPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                  }
+                }
+                
+                // Get current status for each peer
+                const peersWithStatus = filteredPeers.map(pubkey => {
+                  const normalizedPubkey = normalizePubkey(pubkey);
+                  const status = peerStatuses.get(normalizedPubkey);
+                  return {
+                    pubkey,
+                    online: status?.online || false,
+                    lastSeen: status?.lastSeen?.toISOString(),
+                    latency: status?.latency,
+                    lastPingAttempt: status?.lastPingAttempt?.toISOString()
+                  };
+                });
+                
+                return Response.json({ 
+                  peers: peersWithStatus,
+                  total: peersWithStatus.length,
+                  online: peersWithStatus.filter(p => p.online).length
+                }, { headers });
+              } catch (error) {
+                return Response.json({ error: 'Failed to decode group credential' }, { status: 400, headers });
+              }
+            }
+            break;
+
+          case '/api/peers/self':
+            if (req.method === 'GET') {
+              const env = readEnvFile();
+              if (!env.GROUP_CRED || !env.SHARE_CRED) {
+                return Response.json({ error: 'Missing credentials' }, { status: 400, headers });
+              }
+              
+              const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+              if (selfPubkeyResult.pubkey) {
+                return Response.json({ 
+                  pubkey: selfPubkeyResult.pubkey,
+                  warnings: selfPubkeyResult.warnings 
+                }, { headers });
+              } else {
+                return Response.json({ 
+                  error: 'Could not extract self pubkey',
+                  warnings: selfPubkeyResult.warnings 
+                }, { status: 400, headers });
+              }
+            }
+            break;
+
+          case '/api/peers/ping':
+            if (req.method === 'POST') {
+              if (!node) {
+                return Response.json({ error: 'Node not available' }, { status: 503, headers });
+              }
+              
+              const { target } = await req.json();
+              
+              if (target === 'all') {
+                // Ping all peers
+                const env = readEnvFile();
+                if (!env.GROUP_CRED) {
+                  return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+                }
+                
+                try {
+                  const decodedGroup = decodeGroup(env.GROUP_CRED);
+                  let allPeers = decodedGroup.commits.map(commit => commit.pubkey);
+                  
+                  // Filter out self if we have share credential
+                  if (env.SHARE_CRED) {
+                    const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+                    if (selfPubkeyResult.pubkey) {
+                      allPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
+                    }
+                  }
+                  
+                  const pingPromises = allPeers.map(async (pubkey) => {
+                     const normalizedPubkey = normalizePubkey(pubkey);
+                     try {
+                       const startTime = Date.now();
+                       const result = await Promise.race([
+                         node.req.ping(normalizedPubkey),
+                         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                       ]);
+                       
+                       const latency = Date.now() - startTime;
+                      
+                       if ((result as any).ok) {
+                         const updatedStatus: PeerStatus = {
+                           pubkey,
+                           online: true,
+                           lastSeen: new Date(),
+                           latency
+                         };
+                         peerStatuses.set(normalizedPubkey, updatedStatus);
+                         
+                         // Broadcast successful ping
+                         broadcastEvent({
+                           type: 'peer-ping',
+                           message: `Successfully pinged ${pubkey.slice(0, 16)}... (${latency}ms)`,
+                           data: { pubkey, status: updatedStatus, success: true },
+                           timestamp: new Date().toLocaleTimeString(),
+                           id: Math.random().toString(36).substr(2, 9)
+                         });
+                         
+                         return { pubkey, success: true, latency };
+                       } else {
+                         const updatedStatus: PeerStatus = {
+                           pubkey,
+                           online: false,
+                           lastPingAttempt: new Date()
+                         };
+                         peerStatuses.set(normalizedPubkey, updatedStatus);
+                         return { pubkey, success: false, error: 'Timeout' };
+                       }
+                       } catch (error) {
+                       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                       const updatedStatus: PeerStatus = {
+                         pubkey,
+                         online: false,
+                         lastPingAttempt: new Date()
+                       };
+                       peerStatuses.set(normalizedPubkey, updatedStatus);
+                       return { pubkey, success: false, error: errorMessage };
+                     }
+                  });
+                  
+                  const results = await Promise.all(pingPromises);
+                  return Response.json({ results }, { headers });
+                } catch (error) {
+                  return Response.json({ error: 'Failed to ping peers' }, { status: 500, headers });
+                }
+              } else if (typeof target === 'string') {
+                // Ping specific peer
+                const normalizedPubkey = normalizePubkey(target);
+                
+                try {
+                  const startTime = Date.now();
+                  const result = await Promise.race([
+                    node.req.ping(normalizedPubkey),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000))
+                  ]);
+                  
+                  const latency = Date.now() - startTime;
+                  
+                  if ((result as any).ok) {
+                    const updatedStatus: PeerStatus = {
+                      pubkey: target,
+                      online: true,
+                      lastSeen: new Date(),
+                      latency
+                    };
+                    peerStatuses.set(normalizedPubkey, updatedStatus);
+                    
+                    // Broadcast successful ping
+                    broadcastEvent({
+                      type: 'peer-ping',
+                      message: `Successfully pinged ${target.slice(0, 16)}... (${latency}ms)`,
+                      data: { pubkey: target, status: updatedStatus, success: true },
+                      timestamp: new Date().toLocaleTimeString(),
+                      id: Math.random().toString(36).substr(2, 9)
+                    });
+                    
+                    return Response.json({ 
+                      pubkey: target, 
+                      success: true, 
+                      latency,
+                      status: updatedStatus 
+                    }, { headers });
+                  } else {
+                    const updatedStatus: PeerStatus = {
+                      pubkey: target,
+                      online: false,
+                      lastPingAttempt: new Date()
+                    };
+                    peerStatuses.set(normalizedPubkey, updatedStatus);
+                    
+                    return Response.json({ 
+                      pubkey: target, 
+                      success: false, 
+                      error: 'Timeout',
+                      status: updatedStatus 
+                    }, { headers });
+                  }
+                } catch (error) {
+                  const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+                  const updatedStatus: PeerStatus = {
+                    pubkey: target,
+                    online: false,
+                    lastPingAttempt: new Date()
+                  };
+                  peerStatuses.set(normalizedPubkey, updatedStatus);
+                  
+                  return Response.json({ 
+                    pubkey: target, 
+                    success: false, 
+                    error: errorMessage,
+                    status: updatedStatus 
+                  }, { headers });
+                }
+              } else {
+                return Response.json({ error: 'Invalid target parameter' }, { status: 400, headers });
+              }
+            }
+            break;
+        }
+        
+        return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
+      } catch (error) {
+        console.error('Peer API Error:', error);
+        return Response.json({ error: 'Internal server error' }, { status: 500, headers });
       }
     }
 

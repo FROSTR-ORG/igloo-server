@@ -101,27 +101,23 @@ const pulseStyle = `
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
 
-// Helper function to extract share information - placeholder
-const getShareInfo = (groupCredential: string, shareCredential: string, shareName?: string) => {
+// Helper function to extract share information
+const getShareInfo = (groupCredential: string, shareCredential: string, shareName?: string, realPubkey?: string) => {
   try {
     if (!groupCredential || !shareCredential) return null;
 
-    // TODO: Replace with server API call to decode credentials
-    // const response = await fetch('/api/decode-credentials', {
-    //   method: 'POST',
-    //   body: JSON.stringify({ groupCredential, shareCredential })
-    // });
-    // const decodedData = await response.json();
+    // Decode group to get threshold and total shares (using mock for now)
+    const mockDecodedGroup = decodeGroup(groupCredential);
 
-    // Mock share info for UI demonstration
     return {
-      index: 1,
-      pubkey: 'mock_pubkey_' + Date.now(),
-      shareName: shareName || 'Mock Share',
-      threshold: 2,
-      totalShares: 3
+      index: 1, // Would come from decoded share
+      pubkey: realPubkey || 'Loading...', // Use real pubkey if available
+      shareName: shareName || 'Share 1',
+      threshold: mockDecodedGroup.threshold,
+      totalShares: mockDecodedGroup.commits.length
     };
   } catch (error) {
+    console.error('Error getting share info:', error);
     return null;
   }
 };
@@ -155,6 +151,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     share: false
   });
   const [logs, setLogs] = useState<LogEntryData[]>([]);
+  const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
 
   // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
@@ -290,6 +287,28 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     return () => clearInterval(interval);
   }, [checkServerStatus]);
 
+  // Fetch real self pubkey when signer is running
+  useEffect(() => {
+    if (!isSignerRunning || !isGroupValid || !isShareValid) {
+      setRealSelfPubkey(null);
+      return;
+    }
+
+    const fetchSelfPubkey = async () => {
+      try {
+        const response = await fetch('/api/peers/self');
+        if (response.ok) {
+          const data = await response.json();
+          setRealSelfPubkey(data.pubkey);
+        }
+      } catch (error) {
+        console.debug('Error fetching self pubkey:', error);
+      }
+    };
+
+    fetchSelfPubkey();
+  }, [isSignerRunning, isGroupValid, isShareValid]);
+
   // Connect to server event stream
   useEffect(() => {
     const eventSource = new EventSource('/api/events');
@@ -297,15 +316,37 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     eventSource.onmessage = (event) => {
       try {
         const logEntry = JSON.parse(event.data);
+        console.debug('[SSE] Received event:', logEntry.type, logEntry.message);
+        
         // Add the server log entry to our local logs
         setLogs(prev => [...prev, logEntry]);
+        
+        // Dispatch custom events for peer status updates
+        if (logEntry.type === 'peer-status' && logEntry.data) {
+          console.debug('[Signer] Dispatching peerStatusUpdate event:', logEntry.data);
+          window.dispatchEvent(new CustomEvent('peerStatusUpdate', {
+            detail: logEntry.data
+          }));
+        }
+        
+        if (logEntry.type === 'peer-ping' && logEntry.data) {
+          console.debug('[Signer] Dispatching peerPingUpdate event:', logEntry.data);
+          window.dispatchEvent(new CustomEvent('peerPingUpdate', {
+            detail: logEntry.data
+          }));
+        }
+        
+        // Log all bifrost ping events for debugging
+        if (logEntry.type === 'bifrost' && logEntry.message.includes('Ping')) {
+          console.debug('[Ping Activity]', logEntry.message, logEntry.data);
+        }
       } catch (error) {
         console.error('Error parsing server event:', error);
       }
     };
     
     eventSource.onerror = (error) => {
-      console.error('EventSource error:', error);
+      console.error('[PeerList] EventSource connection error:', error);
       // The connection will automatically retry
     };
     
@@ -657,7 +698,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
 
       {/* Share Information Header */}
       {(() => {
-        const shareInfo = getShareInfo(groupCredential, signerSecret, signerName || initialData?.name);
+        const shareInfo = getShareInfo(groupCredential, signerSecret, signerName || initialData?.name, realSelfPubkey || undefined);
         return shareInfo && isGroupValid && isShareValid ? (
           <div className="border border-blue-800/30 rounded-lg p-4">
             <div className="flex items-center gap-3">
