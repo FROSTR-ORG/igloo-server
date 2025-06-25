@@ -29011,12 +29011,9 @@ This is likely a complex object from the Bifrost node containing circular refere
       if (!isSignerRunning) return;
       const handlePeerStatusUpdate = (event) => {
         const { pubkey, status } = event.detail;
-        console.debug("[PeerList] Received peer status update:", { pubkey, status });
-        console.debug("[PeerList] Current peers:", peers.map((p) => ({ pubkey: p.pubkey, online: p.online })));
         setPeers((prev) => {
           const updated = prev.map((peer) => {
             if (peer.pubkey === pubkey) {
-              console.debug("[PeerList] Exact match found for:", pubkey);
               return {
                 ...peer,
                 online: Boolean(status.online),
@@ -29028,7 +29025,6 @@ This is likely a complex object from the Bifrost node containing circular refere
             const peerWithout02 = peer.pubkey.startsWith("02") ? peer.pubkey.slice(2) : peer.pubkey;
             const pingWithout02 = pubkey.startsWith("02") ? pubkey.slice(2) : pubkey;
             if (peerWithout02 === pingWithout02) {
-              console.debug("[PeerList] Match found after normalizing:", { peer: peer.pubkey, ping: pubkey });
               return {
                 ...peer,
                 online: Boolean(status.online),
@@ -29039,13 +29035,11 @@ This is likely a complex object from the Bifrost node containing circular refere
             }
             return peer;
           });
-          console.debug("[PeerList] Updated peers:", updated.map((p) => ({ pubkey: p.pubkey, online: p.online })));
           return updated;
         });
       };
       const handlePeerPingUpdate = (event) => {
         const { pubkey, status } = event.detail;
-        console.debug("[PeerList] Received peer ping update:", { pubkey, status });
         setPeers((prev) => {
           const updated = prev.map((peer) => {
             if (peer.pubkey === pubkey) {
@@ -29073,21 +29067,17 @@ This is likely a complex object from the Bifrost node containing circular refere
           return updated;
         });
       };
-      console.debug("[PeerList] Setting up event listeners");
       window.addEventListener("peerStatusUpdate", handlePeerStatusUpdate);
       window.addEventListener("peerPingUpdate", handlePeerPingUpdate);
       return () => {
-        console.debug("[PeerList] Cleaning up event listeners");
         window.removeEventListener("peerStatusUpdate", handlePeerStatusUpdate);
         window.removeEventListener("peerPingUpdate", handlePeerPingUpdate);
       };
     }, [isSignerRunning]);
     const handlePingPeer = (0, import_react7.useCallback)(async (peerPubkey) => {
       if (!isSignerRunning) {
-        console.debug("[PeerList] Individual ping skipped - signer not running");
         return;
       }
-      console.debug("[PeerList] Starting individual ping to:", peerPubkey);
       setPingingPeers((prev) => new Set(prev).add(peerPubkey));
       try {
         const response = await fetch("/api/peers/ping", {
@@ -29096,7 +29086,6 @@ This is likely a complex object from the Bifrost node containing circular refere
           body: JSON.stringify({ target: peerPubkey })
         });
         const result = await response.json();
-        console.debug("[PeerList] Individual ping result:", result);
         if (result.status) {
           setPeers((prev) => prev.map(
             (peer) => peer.pubkey === peerPubkey ? {
@@ -29120,10 +29109,8 @@ This is likely a complex object from the Bifrost node containing circular refere
     }, [isSignerRunning]);
     const pingAllPeers = (0, import_react7.useCallback)(async () => {
       if (!isSignerRunning || peers.length === 0) {
-        console.debug("[PeerList] Ping all skipped:", { isSignerRunning, peerCount: peers.length });
         return;
       }
-      console.debug("[PeerList] Starting ping all for", peers.length, "peers");
       try {
         const response = await fetch("/api/peers/ping", {
           method: "POST",
@@ -29131,7 +29118,6 @@ This is likely a complex object from the Bifrost node containing circular refere
           body: JSON.stringify({ target: "all" })
         });
         const result = await response.json();
-        console.debug("[PeerList] Ping all result:", result);
         await fetchPeers();
       } catch (error2) {
         console.warn("[PeerList] Ping all failed:", error2);
@@ -29141,7 +29127,6 @@ This is likely a complex object from the Bifrost node containing circular refere
       if (!isSignerRunning) return;
       setIsRefreshing(true);
       try {
-        console.debug("[PeerList] Refreshing peer list and pinging all peers");
         await Promise.all([
           fetchPeers(),
           pingAllPeers()
@@ -29161,21 +29146,6 @@ This is likely a complex object from the Bifrost node containing circular refere
     };
     const actions = /* @__PURE__ */ (0, import_jsx_runtime15.jsxs)("div", { className: "flex items-center gap-2", children: [
       /* @__PURE__ */ (0, import_jsx_runtime15.jsx)("span", { className: "text-xs text-gray-500 italic", children: isExpanded ? "Click to collapse" : "Click to expand" }),
-      /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
-        Button,
-        {
-          variant: "ghost",
-          size: "sm",
-          onClick: (e) => {
-            e.stopPropagation();
-            console.debug("[PeerList] Manual ping all triggered");
-            pingAllPeers();
-          },
-          className: "text-xs px-2 py-1 h-7 text-blue-400 hover:text-blue-300 hover:bg-blue-900/30",
-          disabled: !isSignerRunning || disabled || peers.length === 0,
-          children: "Ping All"
-        }
-      ),
       /* @__PURE__ */ (0, import_jsx_runtime15.jsx)(
         IconButton,
         {

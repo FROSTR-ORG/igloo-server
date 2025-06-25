@@ -831,10 +831,6 @@ html {
   height: 1.5rem;
 }
 
-.h-7{
-  height: 1.75rem;
-}
-
 .h-8{
   height: 2rem;
 }
@@ -1504,11 +1500,6 @@ html {
 .py-0\.5{
   padding-top: 0.125rem;
   padding-bottom: 0.125rem;
-}
-
-.py-1{
-  padding-top: 0.25rem;
-  padding-bottom: 0.25rem;
 }
 
 .py-1\.5{

@@ -159,7 +159,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
   // Expose the stopSigner method to parent components through ref
   useImperativeHandle(ref, () => ({
     stopSigner: async () => {
-      console.log('External stopSigner method called');
       if (isSignerRunning) {
         await handleStopSigner();
       }
@@ -265,10 +264,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
         // No need for client-side logging here
       }
       
-      // Debug logging for troubleshooting
-      if (!nowRunning && status.hasCredentials) {
-        console.log('Server has credentials but node is not active. Status:', status);
-        }
+
       } catch (error) {
       console.error('Error checking server status:', error);
       // If we can't reach the server, assume signer is not running
@@ -302,7 +298,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
           setRealSelfPubkey(data.pubkey);
         }
       } catch (error) {
-        console.debug('Error fetching self pubkey:', error);
+        // Silently ignore errors fetching self pubkey
       }
     };
 
@@ -316,29 +312,21 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     eventSource.onmessage = (event) => {
       try {
         const logEntry = JSON.parse(event.data);
-        console.debug('[SSE] Received event:', logEntry.type, logEntry.message);
         
         // Add the server log entry to our local logs
         setLogs(prev => [...prev, logEntry]);
         
         // Dispatch custom events for peer status updates
         if (logEntry.type === 'peer-status' && logEntry.data) {
-          console.debug('[Signer] Dispatching peerStatusUpdate event:', logEntry.data);
           window.dispatchEvent(new CustomEvent('peerStatusUpdate', {
             detail: logEntry.data
           }));
         }
         
         if (logEntry.type === 'peer-ping' && logEntry.data) {
-          console.debug('[Signer] Dispatching peerPingUpdate event:', logEntry.data);
           window.dispatchEvent(new CustomEvent('peerPingUpdate', {
             detail: logEntry.data
           }));
-        }
-        
-        // Log all bifrost ping events for debugging
-        if (logEntry.type === 'bifrost' && logEntry.message.includes('Ping')) {
-          console.debug('[Ping Activity]', logEntry.message, logEntry.data);
         }
       } catch (error) {
         console.error('Error parsing server event:', error);
@@ -346,7 +334,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
     };
     
     eventSource.onerror = (error) => {
-      console.error('[PeerList] EventSource connection error:', error);
+      console.error('EventSource connection error:', error);
       // The connection will automatically retry
     };
     
@@ -425,7 +413,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
           }
         } else {
           // If no RELAYS environment variable exists, save the default
-          console.log('No RELAYS found in env, saving default relay');
           saveRelaysToEnv([DEFAULT_RELAY]);
         }
       } catch (error) {
@@ -552,7 +539,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
       if (group !== undefined) updateData.GROUP_CRED = group;
       
       if (Object.keys(updateData).length > 0) {
-        console.log('Saving credentials to env:', Object.keys(updateData));
         await fetch('/api/env', {
           method: 'POST',
           headers: {
@@ -560,7 +546,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
           },
           body: JSON.stringify(updateData)
         });
-        console.log('Credentials saved successfully');
       }
     } catch (error) {
       console.error('Error saving credentials to env:', error);
