@@ -404,8 +404,18 @@ function setupNodeEventListeners(node: any) {
   });
 }
 
+// Local type for the Bifrost node as used in the server
+interface ServerBifrostNode {
+  on: (event: string, callback: (...args: unknown[]) => void) => void;
+  req: {
+    ping: (pubkey: string) => Promise<unknown>;
+    // Add other req methods if needed
+  };
+  // Add other properties/methods as needed
+}
+
 // Create and connect the Bifrost node using igloo-core only if credentials are available
-let node: any = null
+let node: ServerBifrostNode | null = null
 if (CONST.hasCredentials()) {
   addServerLog('info', 'Creating and connecting node...');
   try {
@@ -431,7 +441,7 @@ if (CONST.hasCredentials()) {
         });
         
         if (result.node) {
-          node = result.node;
+          node = result.node as unknown as ServerBifrostNode;
           setupNodeEventListeners(node);
           addServerLog('info', 'Node connected and ready');
           
@@ -456,13 +466,13 @@ if (CONST.hasCredentials()) {
           addServerLog('info', 'All enhanced attempts failed, trying basic connection...');
           
           try {
-            node = await createAndConnectNode({
+            const basicNode = await createAndConnectNode({
               group: CONST.GROUP_CRED!,
               share: CONST.SHARE_CRED!,
               relays
             });
-            
-            if (node) {
+            if (basicNode) {
+              node = basicNode as unknown as ServerBifrostNode;
               setupNodeEventListeners(node);
               addServerLog('info', 'Node connected and ready (basic mode)');
             }
@@ -769,13 +779,18 @@ serve({
                      const normalizedPubkey = normalizePubkey(pubkey);
                      try {
                        const startTime = Date.now();
-                       const result = await Promise.race([
-                         node.req.ping(normalizedPubkey),
-                         new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
-                       ]);
+                       let result;
+                       if (node) {
+                         result = await Promise.race([
+                           node.req.ping(normalizedPubkey),
+                           new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
+                         ]);
+                       } else {
+                         throw new Error('Node not available');
+                       }
                        
                        const latency = Date.now() - startTime;
-                      
+                       
                        if ((result as any).ok) {
                          const updatedStatus: PeerStatus = {
                            pubkey,
@@ -827,10 +842,15 @@ serve({
                 
                 try {
                   const startTime = Date.now();
-                  const result = await Promise.race([
-                    node.req.ping(normalizedPubkey),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
-                  ]);
+                  let result;
+                  if (node) {
+                    result = await Promise.race([
+                      node.req.ping(normalizedPubkey),
+                      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), PING_TIMEOUT_MS))
+                    ]);
+                  } else {
+                    throw new Error('Node not available');
+                  }
                   
                   const latency = Date.now() - startTime;
                   
@@ -960,7 +980,7 @@ serve({
                           });
                           
                           if (result.node) {
-                            node = result.node;
+                            node = result.node as unknown as ServerBifrostNode;
                             setupNodeEventListeners(node);
                             addServerLog('info', 'Node connected and ready');
                             
@@ -975,13 +995,13 @@ serve({
                           if (apiConnectionAttempts === apiMaxAttempts) {
                             addServerLog('info', 'Enhanced node creation failed, using basic connection...');
                             
-                            node = await createAndConnectNode({
+                            const basicNode = await createAndConnectNode({
                               group: env.GROUP_CRED,
                               share: env.SHARE_CRED,
                               relays: nodeRelays
                             });
-                            
-                            if (node) {
+                            if (basicNode) {
+                              node = basicNode as unknown as ServerBifrostNode;
                               setupNodeEventListeners(node);
                               addServerLog('info', 'Node connected and ready (basic mode)');
                             }

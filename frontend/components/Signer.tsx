@@ -13,7 +13,8 @@ import {
   decodeShare, 
   decodeGroup, 
   createConnectedNode,
-  getShareDetailsWithGroup
+  getShareDetailsWithGroup,
+  cleanupBifrostNode
 } from '@frostr/igloo-core'
 
 // Define types locally
@@ -189,7 +190,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData }, ref) => {
 
       try {
         // Use igloo-core's cleanup - it handles the manual cleanup internally
-        // cleanupBifrostNode(nodeRef.current);
+        cleanupBifrostNode(nodeRef.current);
       } catch (error) {
         console.error('Unexpected error during cleanup:', error);
       } finally {

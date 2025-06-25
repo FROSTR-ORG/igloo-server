@@ -3,6 +3,13 @@ import { Button } from "./ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card"
 import { InputWithValidation } from "./ui/input-with-validation"
 import { HelpCircle } from "lucide-react"
+import {
+  validateShare,
+  validateGroup,
+  decodeShare,
+  decodeGroup,
+  recoverSecretKeyFromCredentials
+} from '@frostr/igloo-core';
 
 interface RecoverProps {
   initialShare?: string;
@@ -11,63 +18,43 @@ interface RecoverProps {
   defaultTotalShares?: number;
 }
 
-
-
-// Mock validation functions
-const validateShare = (share: string) => ({
-  isValid: share.trim().length > 0 && share.startsWith('bfshare'),
-  message: share.trim().length === 0 ? 'Share is required' : 
-           !share.startsWith('bfshare') ? 'Share must start with "bfshare"' : undefined
-});
-
-const validateGroup = (group: string) => ({
-  isValid: group.trim().length > 0 && group.startsWith('bfgroup'),
-  message: group.trim().length === 0 ? 'Group credential is required' : 
-           !group.startsWith('bfgroup') ? 'Group credential must start with "bfgroup"' : undefined
-});
-
-const decodeShare = (share: string) => ({
-  idx: 1,
-  seckey: `mock_seckey_${Date.now()}`,
-  binder_sn: `mock_binder_${Date.now()}`,
-  hidden_sn: `mock_hidden_${Date.now()}`
-});
-
-const decodeGroup = (group: string) => ({
-  threshold: 2,
-  group_pk: `mock_group_pk_${Date.now()}`,
-  commits: [
-    { idx: 1, pubkey: `mock_pubkey_1_${Date.now()}`, hidden_pn: 'mock_hidden_1', binder_pn: 'mock_binder_1' },
-    { idx: 2, pubkey: `mock_pubkey_2_${Date.now()}`, hidden_pn: 'mock_hidden_2', binder_pn: 'mock_binder_2' }
-  ]
-});
-
-const recoverSecretKeyFromCredentials = (groupCredential: string, shareCredentials: string[]) => {
-  // Mock recovery - would be replaced with server API call
-  return `nsec1${'a'.repeat(59)}mock_recovered_${Date.now()}`;
-};
-
 // Add utility function to find matching group at the component level
 const findMatchingGroup = async (shareValue: string) => {
   if (!shareValue || !shareValue.trim()) return null;
   
   try {
-    // TODO: Replace with server API call to find matching group
-    // const response = await fetch('/api/find-matching-group', {
-    //   method: 'POST',
-    //   body: JSON.stringify({ shareValue })
-    // });
-    // const matchingGroup = await response.json();
-    // return matchingGroup?.groupCredential || null;
-    
-
-    
-    // Mock matching group for UI demonstration
-    return null; // No matching group found for now
+    const decodedShare = decodeShare(shareValue);
+    // Try to find a matching group in localStorage (or indexedDB, or a custom clientShareManager if available)
+    // This example uses localStorage for simplicity, but you may want to use a more robust store
+    const sharesRaw = localStorage.getItem('igloo-shares');
+    if (sharesRaw) {
+      const shares = JSON.parse(sharesRaw);
+      if (Array.isArray(shares)) {
+        // Look for a share with matching binder_sn and a groupCredential
+        const match = shares.find((saved: any) => {
+          if (saved.metadata && saved.metadata.binder_sn === decodedShare.binder_sn) {
+            return saved.groupCredential;
+          }
+          if (saved.shareCredential) {
+            try {
+              const savedDecoded = decodeShare(saved.shareCredential);
+              return savedDecoded.binder_sn === decodedShare.binder_sn && saved.groupCredential;
+            } catch {}
+          }
+          if (saved.id && decodedShare.binder_sn) {
+            const binderPrefix = decodedShare.binder_sn.substring(0, 8);
+            return saved.id.includes(binderPrefix) && saved.groupCredential;
+          }
+          return false;
+        });
+        if (match && match.groupCredential) {
+          return match.groupCredential;
+        }
+      }
+    }
   } catch (error) {
-    // Silently handle error
+    // Silently ignore errors
   }
-  
   return null;
 };
 

@@ -167,95 +167,53 @@ const PeerList: React.FC<PeerListProps> = ({
     };
   }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers]);
 
-    // Listen for peer status updates via custom events from the main SSE connection
+  // Unified handler for peer status and ping updates
+  const handlePeerUpdate = (event: CustomEvent) => {
+    const { pubkey, status } = event.detail;
+    setPeers(prev => {
+      const updated = prev.map(peer => {
+        // Try exact match first
+        if (peer.pubkey === pubkey) {
+          return {
+            ...peer,
+            online: Boolean(status.online),
+            lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
+            latency: status.latency ? Number(status.latency) : peer.latency,
+            lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
+          } as PeerStatus;
+        }
+        // Try match without 02 prefix
+        const peerWithout02 = peer.pubkey.startsWith('02') ? peer.pubkey.slice(2) : peer.pubkey;
+        const pingWithout02 = pubkey.startsWith('02') ? pubkey.slice(2) : pubkey;
+        if (peerWithout02 === pingWithout02) {
+          return {
+            ...peer,
+            online: Boolean(status.online),
+            lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
+            latency: status.latency ? Number(status.latency) : peer.latency,
+            lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
+          } as PeerStatus;
+        }
+        return peer;
+      });
+      return updated;
+    });
+  };
+
+  // Listen for peer status and ping updates via custom events from the main SSE connection
   useEffect(() => {
     if (!isSignerRunning) return;
 
-         const handlePeerStatusUpdate = (event: CustomEvent) => {
-       const { pubkey, status } = event.detail;
-       
-       setPeers(prev => {
-         const updated = prev.map(peer => {
-           // Try exact match first
-           if (peer.pubkey === pubkey) {
-             return {
-               ...peer,
-               online: Boolean(status.online),
-               lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
-               latency: status.latency ? Number(status.latency) : peer.latency,
-               lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
-             } as PeerStatus;
-           }
-           
-           // Try match without 02 prefix
-           const peerWithout02 = peer.pubkey.startsWith('02') ? peer.pubkey.slice(2) : peer.pubkey;
-           const pingWithout02 = pubkey.startsWith('02') ? pubkey.slice(2) : pubkey;
-           
-           if (peerWithout02 === pingWithout02) {
-             return {
-               ...peer,
-               online: Boolean(status.online),
-               lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
-               latency: status.latency ? Number(status.latency) : peer.latency,
-               lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
-             } as PeerStatus;
-           }
-           
-           return peer;
-         });
-         
-         return updated;
-       });
-     };
-
-         const handlePeerPingUpdate = (event: CustomEvent) => {
-       const { pubkey, status } = event.detail;
-       
-       setPeers(prev => {
-         const updated = prev.map(peer => {
-           // Try exact match first
-           if (peer.pubkey === pubkey) {
-             return {
-               ...peer,
-               online: Boolean(status.online),
-               lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
-               latency: status.latency ? Number(status.latency) : peer.latency,
-               lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
-             } as PeerStatus;
-           }
-           
-           // Try match without 02 prefix
-           const peerWithout02 = peer.pubkey.startsWith('02') ? peer.pubkey.slice(2) : peer.pubkey;
-           const pingWithout02 = pubkey.startsWith('02') ? pubkey.slice(2) : pubkey;
-           
-           if (peerWithout02 === pingWithout02) {
-             return {
-               ...peer,
-               online: Boolean(status.online),
-               lastSeen: status.lastSeen ? new Date(status.lastSeen) : peer.lastSeen,
-               latency: status.latency ? Number(status.latency) : peer.latency,
-               lastPingAttempt: status.lastPingAttempt ? new Date(status.lastPingAttempt) : peer.lastPingAttempt
-             } as PeerStatus;
-           }
-           
-           return peer;
-         });
-         
-         return updated;
-       });
-     };
-
-         // Listen for custom events dispatched by the main SSE handler
-     window.addEventListener('peerStatusUpdate', handlePeerStatusUpdate as EventListener);
-     window.addEventListener('peerPingUpdate', handlePeerPingUpdate as EventListener);
-     
-     return () => {
-       window.removeEventListener('peerStatusUpdate', handlePeerStatusUpdate as EventListener);
-       window.removeEventListener('peerPingUpdate', handlePeerPingUpdate as EventListener);
-     };
+    window.addEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
+    window.addEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
+    
+    return () => {
+      window.removeEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
+      window.removeEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
+    };
   }, [isSignerRunning]);
 
-    // Ping individual peer
+  // Ping individual peer
   const handlePingPeer = useCallback(async (peerPubkey: string) => {
     if (!isSignerRunning) {
       return;
