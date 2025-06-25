@@ -1,12 +1,12 @@
 services:
 
-  permafrost:
+  igloo-server:
     build          : ./
     env_file       : .env
-    image          : permafrost:latest
-    container_name : permafrost
+    image          : igloo-server:latest
+    container_name : igloo-server
     platform       : linux/x86_64
-    hostname       : permafrost
+    hostname       : igloo-server
     restart        : unless-stopped
     init           : true
     tty            : true
