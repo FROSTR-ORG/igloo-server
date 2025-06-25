@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { promises as fs } from 'fs';
 
 // Helper function to get valid relay URLs
 export function getValidRelays(envRelays?: string): string[] {
@@ -57,9 +57,10 @@ const ENV_FILE_PATH = '.env';
 
 // Security: Whitelist of allowed environment variable keys
 const ALLOWED_ENV_KEYS = new Set([
-  'SHARE_CRED',    // Share credential for signing
-  'GROUP_CRED',    // Group credential for signing
-  'RELAYS'         // Relay URLs configuration
+  'SHARE_CRED',         // Share credential for signing
+  'GROUP_CRED',         // Group credential for signing
+  'RELAYS',             // Relay URLs configuration
+  'CREDENTIALS_SAVED_AT' // Timestamp when credentials were last saved
 ]);
 
 // Validate environment variable keys against whitelist
@@ -113,23 +114,75 @@ function stringifyEnvFile(env: Record<string, string>): string {
     .join('\n') + '\n';
 }
 
-export function readEnvFile(): Record<string, string> {
+export async function readEnvFile(): Promise<Record<string, string>> {
   try {
-    if (existsSync(ENV_FILE_PATH)) {
-      const content = readFileSync(ENV_FILE_PATH, 'utf-8');
-      return parseEnvFile(content);
-    }
-    return {};
+    await fs.access(ENV_FILE_PATH);
+    const content = await fs.readFile(ENV_FILE_PATH, 'utf-8');
+    return parseEnvFile(content);
   } catch (error) {
+    // If file doesn't exist or other error, return empty object
+    if ((error as any)?.code === 'ENOENT') {
+      return {};
+    }
     console.error('Error reading .env file:', error);
     return {};
   }
 }
 
-export function writeEnvFile(env: Record<string, string>): boolean {
+// Get the modification time of the environment file
+export async function getEnvFileModTime(): Promise<string | null> {
+  try {
+    const stats = await fs.stat(ENV_FILE_PATH);
+    return stats.mtime.toISOString();
+  } catch (error) {
+    // File doesn't exist or error accessing it
+    return null;
+  }
+}
+
+// Get the saved timestamp for credentials, with fallback to file modification time
+export async function getCredentialsSavedAt(): Promise<string | null> {
+  try {
+    const env = await readEnvFile();
+    
+    // First, try to get the explicit saved timestamp
+    if (env.CREDENTIALS_SAVED_AT) {
+      return env.CREDENTIALS_SAVED_AT;
+    }
+    
+    // Fall back to file modification time if we have credentials but no timestamp
+    if (env.SHARE_CRED && env.GROUP_CRED) {
+      return await getEnvFileModTime();
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error getting credentials saved time:', error);
+    return null;
+  }
+}
+
+// Enhanced writeEnvFile that automatically sets the save timestamp
+export async function writeEnvFileWithTimestamp(env: Record<string, string>): Promise<boolean> {
+  try {
+    // Add timestamp when saving credentials
+    if (env.SHARE_CRED || env.GROUP_CRED) {
+      env.CREDENTIALS_SAVED_AT = new Date().toISOString();
+    }
+    
+    const content = stringifyEnvFile(env);
+    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
+    return true;
+  } catch (error) {
+    console.error('Error writing .env file:', error);
+    return false;
+  }
+}
+
+export async function writeEnvFile(env: Record<string, string>): Promise<boolean> {
   try {
     const content = stringifyEnvFile(env);
-    writeFileSync(ENV_FILE_PATH, content, 'utf-8');
+    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
     return true;
   } catch (error) {
     console.error('Error writing .env file:', error);

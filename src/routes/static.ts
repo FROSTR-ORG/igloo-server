@@ -1,34 +1,98 @@
 import { getContentType } from './utils.js';
+import { resolve, normalize, relative } from 'path';
 
 // Load static files into memory
 const index_page = Bun.file('static/index.html');
 const style_file = Bun.file('static/styles.css');
 const script_file = Bun.file('static/app.js');
 
+// Define the static directory path for security validation
+const STATIC_DIR = resolve('static');
+
+// Helper function to sanitize and validate file paths
+function sanitizePath(requestedPath: string): string | null {
+  try {
+    // Remove leading slash and normalize the path
+    const cleanPath = requestedPath.replace(/^\/+/, '');
+    
+    // Reject paths containing traversal sequences
+    if (cleanPath.includes('..') || cleanPath.includes('\\')) {
+      return null;
+    }
+    
+    // Resolve the full path
+    const fullPath = resolve(STATIC_DIR, cleanPath);
+    
+    // Ensure the resolved path is within the static directory
+    const relativePath = relative(STATIC_DIR, fullPath);
+    if (relativePath.startsWith('..') || relativePath.includes('..')) {
+      return null;
+    }
+    
+    return fullPath;
+  } catch {
+    return null;
+  }
+}
+
+// Helper function to get caching headers for static assets
+function getCachingHeaders(filePath: string): Record<string, string> {
+  const headers: Record<string, string> = {};
+  
+  // Set cache control based on file type
+  const ext = filePath.split('.').pop()?.toLowerCase();
+  if (ext && ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) {
+    // Images can be cached for a long time
+    headers['Cache-Control'] = 'public, max-age=31536000, immutable'; // 1 year
+  } else if (ext && ['css', 'js'].includes(ext)) {
+    // CSS/JS files with shorter cache time to allow updates
+    headers['Cache-Control'] = 'public, max-age=86400'; // 1 day
+  } else {
+    // Other static files
+    headers['Cache-Control'] = 'public, max-age=3600'; // 1 hour
+  }
+  
+  return headers;
+}
+
 export async function handleStaticRoute(req: Request, url: URL): Promise<Response | null> {
   // Handle specific routes first
   switch (url.pathname) {
     case '/styles.css':
       return new Response(style_file, {
-        headers: { 'Content-Type': 'text/css' }
+        headers: { 
+          'Content-Type': 'text/css',
+          ...getCachingHeaders('styles.css')
+        }
       });
 
     case '/app.js':
       return new Response(script_file, {
-        headers: { 'Content-Type': 'text/javascript' }
+        headers: { 
+          'Content-Type': 'text/javascript',
+          ...getCachingHeaders('app.js')
+        }
       });
   }
 
   // Handle assets directory
   if (url.pathname.startsWith('/assets/')) {
-    // Serve files from assets directory
-    const assetPath = url.pathname.substring(1); // Remove leading slash
-    const file = Bun.file(`static/${assetPath}`);
+    // Sanitize and validate the requested path
+    const safePath = sanitizePath(url.pathname);
+    
+    if (!safePath) {
+      return new Response('Invalid path', { status: 400 });
+    }
+    
+    const file = Bun.file(safePath);
     
     if (await file.exists()) {
-      const contentType = getContentType(assetPath);
+      const contentType = getContentType(url.pathname);
       return new Response(file, {
-        headers: { 'Content-Type': contentType }
+        headers: { 
+          'Content-Type': contentType,
+          ...getCachingHeaders(url.pathname)
+        }
       });
     }
     
@@ -38,7 +102,10 @@ export async function handleStaticRoute(req: Request, url: URL): Promise<Respons
   // Default to index.html for all other routes (SPA routing)
   if (!url.pathname.startsWith('/api/')) {
     return new Response(index_page, {
-      headers: { 'Content-Type': 'text/html' }
+      headers: { 
+        'Content-Type': 'text/html',
+        'Cache-Control': 'no-cache' // HTML should not be cached for SPA routing
+      }
     });
   }
 

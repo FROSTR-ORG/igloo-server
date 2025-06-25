@@ -19,7 +19,7 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
             type: 'system',
             message: 'Connected to event stream',
             timestamp: new Date().toLocaleTimeString(),
-            id: Math.random().toString(36).substr(2, 9)
+            id: Math.random().toString(36).substring(2, 11)
           };
           
           const eventData = `data: ${JSON.stringify(connectEvent)}\n\n`;

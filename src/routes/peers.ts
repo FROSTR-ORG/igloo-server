@@ -26,7 +26,7 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
       case '/api/peers':
         if (req.method === 'GET') {
           // Get all peers from group credential using igloo-core decoding
-          const env = readEnvFile();
+          const env = await readEnvFile();
           if (!env.GROUP_CRED) {
             return Response.json({ error: 'No group credential available' }, { status: 400, headers });
           }
@@ -77,7 +77,7 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
 
       case '/api/peers/self':
         if (req.method === 'GET') {
-          const env = readEnvFile();
+          const env = await readEnvFile();
           if (!env.GROUP_CRED || !env.SHARE_CRED) {
             return Response.json({ error: 'Missing credentials' }, { status: 400, headers });
           }
@@ -126,7 +126,7 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
 
 async function handlePingAllPeers(context: RouteContext, headers: Record<string, string>): Promise<Response> {
   // Ping all peers using igloo-core decoding
-  const env = readEnvFile();
+  const env = await readEnvFile();
   if (!env.GROUP_CRED) {
     return Response.json({ error: 'No group credential available' }, { status: 400, headers });
   }
@@ -179,7 +179,7 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
              message: '', // Internal use only - not logged
              data: { pubkey, status: updatedStatus, success: true },
              timestamp: new Date().toLocaleTimeString(),
-             id: Math.random().toString(36).substr(2, 9)
+             id: Math.random().toString(36).substring(2, 11)
            });
            
            return { pubkey, success: true, latency };
@@ -244,7 +244,7 @@ async function handlePingSinglePeer(target: string, context: RouteContext, heade
         message: '', // Internal use only - not logged
         data: { pubkey: target, status: updatedStatus, success: true },
         timestamp: new Date().toLocaleTimeString(),
-        id: Math.random().toString(36).substr(2, 9)
+        id: Math.random().toString(36).substring(2, 11)
       });
       
       return Response.json({ 

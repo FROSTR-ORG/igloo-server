@@ -1,7 +1,7 @@
 import { RouteContext } from './types.js';
 import { readEnvFile, getValidRelays } from './utils.js';
 
-export function handleStatusRoute(req: Request, url: URL, context: RouteContext): Response | null {
+export async function handleStatusRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
 
   const headers = {
@@ -14,13 +14,13 @@ export function handleStatusRoute(req: Request, url: URL, context: RouteContext)
   if (req.method === 'GET') {
     try {
       // Get current relay count from environment or use default
-      const env = readEnvFile();
+      const env = await readEnvFile();
       const currentRelays = getValidRelays(env.RELAYS);
       
       const status = {
         serverRunning: true,
         nodeActive: context.node !== null,
-        hasCredentials: env.SHARE_CRED && env.GROUP_CRED ? true : false,
+        hasCredentials: env.SHARE_CRED && env.GROUP_CRED,
         relayCount: currentRelays.length,
         timestamp: new Date().toISOString()
       };

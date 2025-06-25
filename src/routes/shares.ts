@@ -1,6 +1,6 @@
 import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { RouteContext } from './types.js';
-import { readEnvFile, writeEnvFile } from './utils.js';
+import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
 
 export async function handleSharesRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/shares')) return null;
@@ -17,7 +17,7 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
       case '/api/shares':
         if (req.method === 'GET') {
           // Return stored shares (for now, we'll use the current env credentials as an example)
-          const env = readEnvFile();
+          const env = await readEnvFile();
           const shares = [];
           
           // If we have both credentials in env, return them as a share
@@ -28,10 +28,13 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
               const groupValidation = validateGroup(env.GROUP_CRED);
               
               if (shareValidation.isValid && groupValidation.isValid) {
+                // Get the actual save timestamp
+                const savedAt = await getCredentialsSavedAt();
+                
                 shares.push({
                   shareCredential: env.SHARE_CRED,
                   groupCredential: env.GROUP_CRED,
-                  savedAt: new Date().toISOString(),
+                  savedAt: savedAt || new Date().toISOString(), // Fallback to current time if no timestamp found
                   id: 'env-stored-share',
                   source: 'environment'
                 });
@@ -68,11 +71,11 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
           }
           
           // For now, we'll save to the env file (in a real app, you'd use a database)
-          const env = readEnvFile();
+          const env = await readEnvFile();
           env.SHARE_CRED = shareCredential;
           env.GROUP_CRED = groupCredential;
           
-          if (writeEnvFile(env)) {
+          if (await writeEnvFileWithTimestamp(env)) {
             return Response.json({
               success: true,
               message: 'Share saved successfully'

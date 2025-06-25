@@ -25,13 +25,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: RouteConte
     switch (url.pathname) {
       case '/api/env':
         if (req.method === 'GET') {
-          const env = readEnvFile();
+          const env = await readEnvFile();
           return Response.json(env, { headers });
         }
         
         if (req.method === 'POST') {
           const body = await req.json();
-          const env = readEnvFile();
+          const env = await readEnvFile();
           
           // Security: Validate and filter incoming environment variables
           const { filteredEnv, rejectedKeys } = filterEnvObject(body);
@@ -56,7 +56,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: RouteConte
           // Update environment variables (only whitelisted ones)
           Object.assign(env, filteredEnv);
           
-          if (writeEnvFile(env)) {
+          if (await writeEnvFile(env)) {
             // If credentials were updated, recreate the node
             if (updatingCredentials) {
               try {
@@ -166,7 +166,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: RouteConte
             }, { status: 400, headers });
           }
           
-          const env = readEnvFile();
+          const env = await readEnvFile();
           
           // Security: Validate keys against whitelist
           const { validKeys, invalidKeys } = validateEnvKeys(keys);
@@ -193,7 +193,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: RouteConte
             delete env[key];
           }
           
-          if (writeEnvFile(env)) {
+          if (await writeEnvFile(env)) {
             // If credentials were deleted, clean up the node
             if (deletingCredentials && context.node) {
               try {
