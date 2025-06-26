@@ -67,6 +67,36 @@ RATE_LIMIT_MAX=100       # 100 requests per window per IP
 
 ## 🌐 Network Security
 
+### CORS (Cross-Origin Resource Sharing) Security
+
+Configure secure CORS to prevent unauthorized domains from accessing your API:
+
+**Production (Secure)**:
+```bash
+ALLOWED_ORIGINS=https://yourdomain.com,https://admin.yourdomain.com
+```
+
+**Development (Flexible)**:
+```bash
+ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8002
+```
+
+**Security Impact**:
+- **Without `ALLOWED_ORIGINS`**: Defaults to wildcard `*` (all origins allowed) - ⚠️ **Security Risk**
+- **With `ALLOWED_ORIGINS`**: Only specified domains can make API requests - ✅ **Secure**
+
+**Common Configurations**:
+```bash
+# Single domain
+ALLOWED_ORIGINS=https://myapp.com
+
+# Multiple domains
+ALLOWED_ORIGINS=https://myapp.com,https://admin.myapp.com,https://staging.myapp.com
+
+# Local development
+ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:8002
+```
+
 ### HTTPS/TLS Setup
 
 **Option 1: Reverse Proxy (Recommended)**
@@ -142,6 +172,7 @@ echo "*.pem" >> .gitignore
 # Minimal security for personal use
 AUTH_ENABLED=true
 API_KEY=your-personal-api-key
+ALLOWED_ORIGINS=https://yourdomain.com
 RATE_LIMIT_MAX=50
 SESSION_TIMEOUT=7200  # 2 hours
 ```
@@ -153,6 +184,7 @@ AUTH_ENABLED=true
 BASIC_AUTH_USER=team-admin
 BASIC_AUTH_PASS=strong-team-password
 API_KEY=team-api-key
+ALLOWED_ORIGINS=https://team.company.com,https://admin.company.com
 RATE_LIMIT_MAX=200
 SESSION_TIMEOUT=3600  # 1 hour
 ```
@@ -164,6 +196,7 @@ AUTH_ENABLED=true
 BASIC_AUTH_USER=enterprise-admin
 BASIC_AUTH_PASS=very-strong-enterprise-password
 API_KEY=enterprise-api-key-with-special-chars
+ALLOWED_ORIGINS=https://secure.enterprise.com
 SESSION_SECRET=256-bit-random-secret
 SESSION_TIMEOUT=1800   # 30 minutes
 RATE_LIMIT_ENABLED=true
@@ -258,6 +291,7 @@ grep "login" server.log
 
 - [ ] Authentication enabled in production
 - [ ] Strong API keys and passwords
+- [ ] CORS origins configured (avoid wildcard `*`)
 - [ ] HTTPS configured
 - [ ] Firewall properly configured
 - [ ] Rate limiting enabled

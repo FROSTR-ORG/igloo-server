@@ -91,18 +91,14 @@ export async function handleRequest(
     }
     
     if (!authResult.authenticated) {
-      const authHeaders: Record<string, string> = { ...headers };
-      
-      if (AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
-        authHeaders['WWW-Authenticate'] = 'Basic realm="Igloo Server"';
-      }
-      
+      // Don't set WWW-Authenticate header to avoid browser's native auth dialog
+      // The frontend will handle authentication through its own UI
       return Response.json({ 
         error: authResult.error || 'Authentication required',
         authMethods: getAuthStatus()
       }, { 
         status: 401,
-        headers: authHeaders 
+        headers 
       });
     }
     

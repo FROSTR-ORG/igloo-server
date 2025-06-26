@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle, Info, XCircle } from 'lucide-react';
 type AlertVariant = 'success' | 'error' | 'warning' | 'info';
 
 interface AlertProps {
-  variant: AlertVariant;
+  variant?: AlertVariant;
   title?: string;
   children: ReactNode;
   className?: string;

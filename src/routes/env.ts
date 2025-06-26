@@ -85,10 +85,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   if (!url.pathname.startsWith('/api/env')) return null;
 
   const headers = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Content-Type': 'application/json'
   };
 
   try {

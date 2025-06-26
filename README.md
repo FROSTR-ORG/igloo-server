@@ -266,6 +266,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share (bfshare1...) | - | ✅ |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for your signing group | - | ❌ |
+| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
 
 ## Troubleshooting
@@ -346,6 +347,7 @@ See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 - **Share credentials are sensitive**: Store `SHARE_CRED` securely - it's part of your nsec fragments
 - **Network security**: Use WSS (secure WebSocket) relays in production  
 - **Authentication required**: Configure authentication for any non-local deployment
+- **CORS security**: Set `ALLOWED_ORIGINS` to specific domains in production (avoid wildcard `*`)
 - **SESSION_SECRET required**: Set a strong 32+ character `SESSION_SECRET` in production to prevent session invalidation on server restarts
 - **Memory management**: The relay auto-purges events to prevent memory leaks
 - **HTTPS recommended**: Use a reverse proxy with TLS for production deployments

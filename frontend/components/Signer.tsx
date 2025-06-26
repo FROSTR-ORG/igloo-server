@@ -16,22 +16,8 @@ import {
   getShareDetailsWithGroup,
   cleanupBifrostNode
 } from '@frostr/igloo-core'
-
-// Define types locally
-export interface SignerHandle {
-  stopSigner: () => Promise<void>;
-}
-
-export interface SignerProps {
-  initialData?: {
-    share: string;
-    groupCredential: string;
-    name?: string;
-    threshold?: number;
-    totalShares?: number;
-  };
-  authHeaders?: Record<string, string>;
-}
+// Import types from shared types file
+import type { SignerHandle, SignerProps } from '../types'
 
 // Add CSS for the pulse animation
 const pulseStyle = `
