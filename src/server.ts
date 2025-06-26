@@ -69,7 +69,7 @@ serve({
         // Clean up the old node to prevent memory leaks
         if (node) {
           try {
-            cleanupBifrostNode(node as any);
+            cleanupBifrostNode(node);
           } catch (err) {
             addServerLog('warn', 'Failed to clean up previous node', err);
           }
