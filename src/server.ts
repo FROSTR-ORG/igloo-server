@@ -50,6 +50,23 @@ if (CONST.hasCredentials()) {
   addServerLog('info', 'No credentials found, starting server without Bifrost node. Use the Configure page to set up credentials.');
 }
 
+// Create the updateNode function for privileged routes
+const updateNode = (newNode: ServerBifrostNode | null) => {
+  // Clean up the old node to prevent memory leaks
+  if (node) {
+    try {
+      // Cast to any to handle type mismatch - igloo-core cleanup accepts broader types
+      cleanupBifrostNode(node as any);
+    } catch (err) {
+      addServerLog('warn', 'Failed to clean up previous node', err);
+    }
+  }
+  node = newNode;
+  if (newNode) {
+    setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses);
+  }
+};
+
 // HTTP Server
 serve({
   port: 8002,
@@ -58,31 +75,23 @@ serve({
     if (server.upgrade(req)) return;
     const url = new URL(req.url);
 
-    // Create route context
-    const context = {
+    // Create base (restricted) context for general routes
+    const baseContext = {
       node,
       peerStatuses,
       eventStreams,
       addServerLog,
-      broadcastEvent,
-      updateNode: (newNode: ServerBifrostNode | null) => {
-        // Clean up the old node to prevent memory leaks
-        if (node) {
-          try {
-            cleanupBifrostNode(node);
-          } catch (err) {
-            addServerLog('warn', 'Failed to clean up previous node', err);
-          }
-        }
-        node = newNode;
-        if (newNode) {
-          setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses);
-        }
-      }
+      broadcastEvent
     };
 
-    // Handle the request using the unified router
-    return await handleRequest(req, url, context);
+    // Create privileged context with updateNode for trusted routes  
+    const privilegedContext = {
+      ...baseContext,
+      updateNode
+    };
+
+    // Handle the request using the unified router with appropriate context
+    return await handleRequest(req, url, baseContext, privilegedContext);
   }
 });
 

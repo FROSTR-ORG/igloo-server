@@ -58,14 +58,19 @@ export interface AuthContext {
   authenticated: boolean;
 }
 
+// Base context for all routes - without updateNode function
 export interface RouteContext {
   node: ServerBifrostNode | null;
   peerStatuses: Map<string, PeerStatus>;
   eventStreams: Set<ReadableStreamDefaultController>;
   addServerLog: (type: string, message: string, data?: any) => void;
   broadcastEvent: (event: { type: string; message: string; data?: any; timestamp: string; id: string }) => void;
-  updateNode?: (newNode: ServerBifrostNode | null) => void;
   auth?: AuthContext;
+}
+
+// Privileged context for trusted/authenticated routes that need node management
+export interface PrivilegedRouteContext extends RouteContext {
+  updateNode: (newNode: ServerBifrostNode | null) => void;
 }
 
 export interface ApiResponse {

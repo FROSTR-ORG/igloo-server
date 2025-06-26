@@ -2,7 +2,7 @@ import {
   createConnectedNode, 
   createAndConnectNode
 } from '@frostr/igloo-core';
-import { RouteContext, ServerBifrostNode } from './types.js';
+import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { 
   readEnvFile, 
   writeEnvFile, 
@@ -15,7 +15,7 @@ import {
 let nodeUpdateLock: Promise<void> = Promise.resolve();
 
 // Extracted node creation and connection logic with reduced timeout and retries
-async function createAndConnectServerNode(env: any, context: RouteContext): Promise<void> {
+async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
   // Synchronize node updates to prevent race conditions
   nodeUpdateLock = nodeUpdateLock.then(async () => {
     // Clean up existing node if it exists
@@ -81,7 +81,7 @@ async function createAndConnectServerNode(env: any, context: RouteContext): Prom
   return nodeUpdateLock;
 }
 
-export async function handleEnvRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/env')) return null;
 
   const headers = {
