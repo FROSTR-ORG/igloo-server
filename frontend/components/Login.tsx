@@ -62,7 +62,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
     setError('');
 
     try {
-      const loginData = authMode === 'api' 
+      const loginData = authMode === 'api'
         ? { apiKey }
         : { username, password };
 
@@ -95,26 +95,14 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   return (
     <PageLayout maxWidth="max-w-md">
       <AppHeader subtitle="Authentication required to access this server" />
-      
+
       <ContentCard>
         <div className="space-y-6">
           {/* Logo and Title */}
           <div className="text-center space-y-4">
-            <div className="flex justify-center">
-              <img 
-                src="/assets/frostr-logo-transparent.png" 
-                alt="FROSTR Logo" 
-                className="h-16 w-auto"
-              />
-            </div>
-            <div>
-              <h2 className="text-2xl font-bold text-blue-200">
-                Igloo Server
-              </h2>
-              <p className="text-blue-300/70 text-sm mt-2">
-                Sign in to continue
-              </p>
-            </div>
+            <p className="text-blue-300/70 text-base mt-2">
+              Sign in to continue
+            </p>
           </div>
 
           {/* Connection Error */}
@@ -132,11 +120,10 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                   <button
                     type="button"
                     onClick={() => setAuthMode('basic')}
-                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
-                      authMode === 'basic'
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${authMode === 'basic'
                         ? 'bg-blue-600 text-white'
                         : 'text-blue-300 hover:text-blue-200 hover:bg-gray-700/50'
-                    }`}
+                      }`}
                   >
                     Username/Password
                   </button>
@@ -145,11 +132,10 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                   <button
                     type="button"
                     onClick={() => setAuthMode('api')}
-                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
-                      authMode === 'api'
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${authMode === 'api'
                         ? 'bg-blue-600 text-white'
                         : 'text-blue-300 hover:text-blue-200 hover:bg-gray-700/50'
-                    }`}
+                      }`}
                   >
                     API Key
                   </button>
