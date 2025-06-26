@@ -210,7 +210,7 @@ const App: React.FC = () => {
               onClick={handleBackToConfigure}
               className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30"
             >
-              Back to Configure
+              Back to Con
             </Button>
           }
         >

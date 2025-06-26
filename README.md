@@ -196,18 +196,42 @@ bun run dev
 # - Server restart on changes (if using nodemon)
 ```
 
+### Development vs Production Caching
+
+The server automatically adjusts caching behavior based on the `NODE_ENV` environment variable:
+
+**Development Mode** (`NODE_ENV !== 'production'`):
+- Static files are read fresh from disk on each request
+- No browser caching (`Cache-Control: no-cache`)
+- Perfect for seeing frontend changes immediately after rebuild
+
+**Production Mode** (`NODE_ENV=production`):
+- Static files are cached in memory for performance
+- Aggressive browser caching (24 hours for JS/CSS)
+- Optimized for production deployment
+
+```bash
+# Force development mode (recommended for local development)
+NODE_ENV=development bun start
+
+# Force production mode
+NODE_ENV=production bun start
+```
+
 ### Build Commands
 ```bash
 # Production build
 bun run build          # Minified JS + CSS
 
-# Development build  
-bun run build:dev      # Unminified for debugging
+# Development build (recommended for local development)
+bun run build:dev      # Unminified for debugging, no server caching
 
 # Individual builds
-bun run build:js       # Frontend JavaScript
-bun run build:css     # Tailwind CSS compilation
+bun run build:js       # Frontend JavaScript only
+bun run build:css     # Tailwind CSS compilation only
 ```
+
+**💡 Tip**: Use `bun run build:dev` during development to avoid caching issues. The server will automatically detect non-production builds and disable static file caching.
 
 ### Frontend Structure
 ```
@@ -261,10 +285,15 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 - Check firewall settings for outbound WebSocket connections  
 - Timeout errors are normal when peers are offline
 
-**Frontend not loading**:
+**Frontend not loading or changes not appearing**:
 - Ensure you've run `bun run build` before starting the server
 - Check that static files exist in the `static/` directory
-- Clear browser cache if seeing old content
+- **For development**: Use `bun run build:dev` and `NODE_ENV=development bun start` to disable caching
+- **If changes aren't showing**: The server caches static files differently in development vs production:
+  - Development mode: Files read fresh from disk each time (no caching)
+  - Production mode: Files cached in memory and browser for performance
+- Clear browser cache if still seeing old content (Ctrl+F5 / Cmd+Shift+R)
+- Restart the server after rebuilding if running in production mode
 
 ### Getting Help
 

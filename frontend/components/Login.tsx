@@ -1,7 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
-import { Card } from './ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
+import { PageLayout } from './ui/page-layout';
+import { AppHeader } from './ui/app-header';
+import { ContentCard } from './ui/content-card';
+import { Alert } from './ui/alert';
 
 interface LoginProps {
   onLogin: (sessionId: string, userId: string) => void;
@@ -89,42 +93,49 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-50 py-12 px-4 sm:px-6 lg:px-8">
-      <div className="max-w-md w-full space-y-8">
-        <div>
-          <div className="flex justify-center">
-            <img 
-              src="/assets/frostr-logo-transparent.png" 
-              alt="FROSTR Logo" 
-              className="h-16 w-auto"
-            />
-          </div>
-          <h2 className="mt-6 text-center text-3xl font-extrabold text-gray-900">
-            Igloo Server
-          </h2>
-          <p className="mt-2 text-center text-sm text-gray-600">
-            Authentication required to access this server
-          </p>
-        </div>
-
-        <Card className="bg-white py-8 px-4 shadow sm:rounded-lg sm:px-10">
-          {error && !authStatus && (
-            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded mb-4">
-              {error}
+    <PageLayout maxWidth="max-w-md">
+      <AppHeader subtitle="Authentication required to access this server" />
+      
+      <ContentCard>
+        <div className="space-y-6">
+          {/* Logo and Title */}
+          <div className="text-center space-y-4">
+            <div className="flex justify-center">
+              <img 
+                src="/assets/frostr-logo-transparent.png" 
+                alt="FROSTR Logo" 
+                className="h-16 w-auto"
+              />
             </div>
+            <div>
+              <h2 className="text-2xl font-bold text-blue-200">
+                Igloo Server
+              </h2>
+              <p className="text-blue-300/70 text-sm mt-2">
+                Sign in to continue
+              </p>
+            </div>
+          </div>
+
+          {/* Connection Error */}
+          {error && !authStatus && (
+            <Alert variant="error">
+              {error}
+            </Alert>
           )}
 
+          {/* Auth Method Toggle */}
           {authStatus && (
-            <div className="mb-6">
-              <div className="flex justify-center space-x-4">
+            <div className="flex justify-center">
+              <div className="flex bg-gray-800/50 rounded-lg p-1 space-x-1">
                 {authStatus.methods.includes('basic-auth') && (
                   <button
                     type="button"
                     onClick={() => setAuthMode('basic')}
-                    className={`px-3 py-1 text-sm rounded ${
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
                       authMode === 'basic'
-                        ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                        : 'bg-gray-100 text-gray-700 border border-gray-300'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-blue-300 hover:text-blue-200 hover:bg-gray-700/50'
                     }`}
                   >
                     Username/Password
@@ -134,10 +145,10 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                   <button
                     type="button"
                     onClick={() => setAuthMode('api')}
-                    className={`px-3 py-1 text-sm rounded ${
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${
                       authMode === 'api'
-                        ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                        : 'bg-gray-100 text-gray-700 border border-gray-300'
+                        ? 'bg-blue-600 text-white'
+                        : 'text-blue-300 hover:text-blue-200 hover:bg-gray-700/50'
                     }`}
                   >
                     API Key
@@ -147,11 +158,12 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
             </div>
           )}
 
-          <form onSubmit={handleLogin} className="space-y-6">
+          {/* Login Form */}
+          <form onSubmit={handleLogin} className="space-y-4">
             {authMode === 'basic' ? (
               <>
-                <div>
-                  <label htmlFor="username" className="block text-sm font-medium text-gray-700">
+                <div className="space-y-2">
+                  <label htmlFor="username" className="block text-sm font-medium text-blue-200">
                     Username
                   </label>
                   <Input
@@ -160,13 +172,13 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
                     required
-                    className="mt-1"
                     placeholder="Enter username"
+                    className="bg-gray-800/50 border-gray-700/50 text-blue-300"
                   />
                 </div>
 
-                <div>
-                  <label htmlFor="password" className="block text-sm font-medium text-gray-700">
+                <div className="space-y-2">
+                  <label htmlFor="password" className="block text-sm font-medium text-blue-200">
                     Password
                   </label>
                   <Input
@@ -175,14 +187,14 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     required
-                    className="mt-1"
                     placeholder="Enter password"
+                    className="bg-gray-800/50 border-gray-700/50 text-blue-300"
                   />
                 </div>
               </>
             ) : (
-              <div>
-                <label htmlFor="apiKey" className="block text-sm font-medium text-gray-700">
+              <div className="space-y-2">
+                <label htmlFor="apiKey" className="block text-sm font-medium text-blue-200">
                   API Key
                 </label>
                 <Input
@@ -191,37 +203,50 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
                   value={apiKey}
                   onChange={(e) => setApiKey(e.target.value)}
                   required
-                  className="mt-1"
                   placeholder="Enter API key"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300"
                 />
               </div>
             )}
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded">
+            {/* Login Error */}
+            {error && authStatus && (
+              <Alert variant="error">
                 {error}
-              </div>
+              </Alert>
             )}
 
             <Button
               type="submit"
               disabled={loading}
-              className="w-full flex justify-center py-2 px-4"
+              className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
             >
               {loading ? 'Signing in...' : 'Sign in'}
             </Button>
           </form>
 
+          {/* Auth Status Info */}
           {authStatus && (
-            <div className="mt-6 text-xs text-gray-500 space-y-1">
-              <p>• Authentication: {authStatus.enabled ? 'Enabled' : 'Disabled'}</p>
-              <p>• Rate limiting: {authStatus.rateLimiting ? 'Enabled' : 'Disabled'}</p>
-              <p>• Session timeout: {Math.floor(authStatus.sessionTimeout / 60)} minutes</p>
+            <div className="mt-6 p-3 bg-gray-800/30 rounded-lg border border-gray-700/30">
+              <div className="text-xs text-gray-400 space-y-1">
+                <div className="flex justify-between">
+                  <span>Authentication:</span>
+                  <span className="text-blue-300">{authStatus.enabled ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Rate limiting:</span>
+                  <span className="text-blue-300">{authStatus.rateLimiting ? 'Enabled' : 'Disabled'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Session timeout:</span>
+                  <span className="text-blue-300">{Math.floor(authStatus.sessionTimeout / 60)} minutes</span>
+                </div>
+              </div>
             </div>
           )}
-        </Card>
-      </div>
-    </div>
+        </div>
+      </ContentCard>
+    </PageLayout>
   );
 };
 

@@ -29,6 +29,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
   const [nameError, setNameError] = useState<string | undefined>(undefined);
   const [hasExistingCredentials, setHasExistingCredentials] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [originalKeysetName, setOriginalKeysetName] = useState("");
+  const [originalShare, setOriginalShare] = useState("");
+  const [originalGroupCredential, setOriginalGroupCredential] = useState("");
 
   useEffect(() => {
     const loadExistingData = async () => {
@@ -53,6 +56,10 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
             setKeysetName(savedName);
             setIsNameValid(true);
           }
+          // Store originals for change detection
+          setOriginalShare(savedShare);
+          setOriginalGroupCredential(savedGroup);
+          setOriginalKeysetName(savedName || "");
         }
         
         // TODO: Replace with server API call for existing names
@@ -208,6 +215,13 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
     }
   };
 
+  // Compute if any value has changed from the original
+  const isChanged = hasExistingCredentials && (
+    keysetName !== originalKeysetName ||
+    share !== originalShare ||
+    groupCredential !== originalGroupCredential
+  );
+
   return (
     <Card className="bg-gray-900/30 border-blue-900/30 backdrop-blur-sm shadow-lg">
       <CardHeader>
@@ -344,10 +358,16 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
 
         <Button
           onClick={handleCreateKeyset}
-          className="w-full py-5 bg-blue-600 hover:bg-blue-700 transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+          className="w-full py-5 bg-blue-600 hover:bg-blue-700 transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed text-white"
           disabled={isGenerating || !keysetName.trim() || !share.trim() || !groupCredential.trim() || !isValidShare || !isValidGroup || !isNameValid}
         >
-          {isGenerating ? "Saving..." : hasExistingCredentials ? "Update Configuration" : "Configure Signer"}
+          {isGenerating
+            ? "Saving..."
+            : hasExistingCredentials
+              ? isChanged
+                ? "Update and Continue"
+                : "Continue"
+              : "Configure Signer"}
         </Button>
 
         {keysetGenerated.location && (
