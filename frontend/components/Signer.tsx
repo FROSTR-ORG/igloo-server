@@ -49,16 +49,24 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
   try {
     if (!groupCredential || !shareCredential) return null;
 
-    // Use real igloo-core function to get share details with group context
-    const shareDetails = getShareDetailsWithGroup(shareCredential, groupCredential);
+    // Decode both group and share credentials directly
+    const decodedGroup = decodeGroup(groupCredential);
+    const decodedShare = decodeShare(shareCredential);
 
-    return {
-      index: shareDetails.idx || 0,
-      pubkey: realPubkey || 'Loading...', // Use real pubkey if available
-      shareName: shareName || `Share ${shareDetails.idx || 0}`,
-      threshold: shareDetails.threshold || 0,
-      totalShares: shareDetails.totalMembers || 0
-    };
+    // Find the corresponding commit in the group
+    const commit = decodedGroup.commits.find((c: any) => c.idx === decodedShare.idx);
+
+    if (commit) {
+      return {
+        index: decodedShare.idx,
+        pubkey: realPubkey || commit.pubkey, // Use real pubkey if available, otherwise use commit pubkey
+        shareName: shareName || `Share ${decodedShare.idx}`,
+        threshold: decodedGroup.threshold,
+        totalShares: decodedGroup.commits.length
+      };
+    }
+
+    return null;
   } catch (error) {
     console.error('Error getting share info:', error);
     return null;
@@ -887,6 +895,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           shareCredential={signerSecret}
           isSignerRunning={isSignerRunning}
           disabled={!isGroupValid || !isShareValid}
+          authHeaders={authHeaders}
         />
 
         <EventLog

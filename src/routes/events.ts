@@ -1,7 +1,22 @@
 import { RouteContext } from './types.js';
+import { authenticate, AUTH_CONFIG } from './auth.js';
 
 export function handleEventsRoute(req: Request, url: URL, context: RouteContext): Response | null {
   if (url.pathname !== '/api/events') return null;
+
+  // Check authentication for EventSource (which can only send cookies, not custom headers)
+  if (AUTH_CONFIG.ENABLED) {
+    const authResult = authenticate(req);
+    if (!authResult.authenticated) {
+      return new Response('Unauthorized', { 
+        status: 401,
+        headers: {
+          'Content-Type': 'text/plain',
+          'Access-Control-Allow-Origin': '*'
+        }
+      });
+    }
+  }
 
   if (req.method === 'GET') {
     let streamController: ReadableStreamDefaultController | null = null;

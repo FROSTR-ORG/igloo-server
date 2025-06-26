@@ -8,7 +8,7 @@ import { ContentCard } from './ui/content-card';
 import { Alert } from './ui/alert';
 
 interface LoginProps {
-  onLogin: (sessionId: string, userId: string) => void;
+  onLogin: (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => void;
   authEnabled: boolean;
 }
 
@@ -77,7 +77,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        onLogin(data.sessionId, data.userId);
+        // Pass credentials along with session info for fallback authentication
+        const credentials = authMode === 'api' 
+          ? { apiKey } 
+          : { basicAuth: { username, password } };
+        onLogin(data.sessionId, data.userId, credentials);
       } else {
         setError(data.error || 'Login failed');
       }

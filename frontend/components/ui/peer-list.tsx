@@ -21,6 +21,7 @@ interface PeerListProps {
   isSignerRunning: boolean;
   disabled?: boolean;
   className?: string;
+  authHeaders?: Record<string, string>;
 }
 
 // Utility function to parse date values safely
@@ -36,7 +37,8 @@ const PeerList: React.FC<PeerListProps> = ({
   shareCredential,
   isSignerRunning,
   disabled = false,
-  className
+  className,
+  authHeaders = {}
 }) => {
   const [isExpanded, setIsExpanded] = useState(false);
   const [peers, setPeers] = useState<PeerStatus[]>([]);
@@ -72,7 +74,9 @@ const PeerList: React.FC<PeerListProps> = ({
     }
 
     try {
-      const response = await fetch('/api/peers');
+      const response = await fetch('/api/peers', {
+        headers: authHeaders
+      });
       if (response.ok) {
         const data = await response.json();
         setPeers(data.peers.map((peer: any) => ({
@@ -87,7 +91,7 @@ const PeerList: React.FC<PeerListProps> = ({
       console.error('Error fetching peers:', error);
       setError(error instanceof Error ? error.message : 'Failed to fetch peers');
     }
-  }, [isSignerRunning, disabled]);
+  }, [isSignerRunning, disabled, authHeaders]);
 
   // Fetch self pubkey
   const fetchSelfPubkey = useCallback(async () => {
@@ -97,7 +101,9 @@ const PeerList: React.FC<PeerListProps> = ({
     }
 
     try {
-      const response = await fetch('/api/peers/self');
+      const response = await fetch('/api/peers/self', {
+        headers: authHeaders
+      });
       if (response.ok) {
         const data = await response.json();
         setSelfPubkey(data.pubkey);
@@ -108,7 +114,7 @@ const PeerList: React.FC<PeerListProps> = ({
     } catch (error) {
       console.debug('Error fetching self pubkey:', error);
     }
-  }, [isSignerRunning, disabled]);
+  }, [isSignerRunning, disabled, authHeaders]);
 
   // Initialize peer list
   useEffect(() => {
@@ -140,7 +146,10 @@ const PeerList: React.FC<PeerListProps> = ({
         try {
           await fetch('/api/peers/ping', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 
+              'Content-Type': 'application/json',
+              ...authHeaders
+            },
             body: JSON.stringify({ target: 'all' })
           });
           
@@ -230,7 +239,10 @@ const PeerList: React.FC<PeerListProps> = ({
     try {
       const response = await fetch('/api/peers/ping', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ target: peerPubkey })
       });
 
@@ -269,7 +281,10 @@ const PeerList: React.FC<PeerListProps> = ({
     try {
       const response = await fetch('/api/peers/ping', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
         body: JSON.stringify({ target: 'all' })
       });
       

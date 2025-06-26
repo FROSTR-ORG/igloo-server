@@ -23,6 +23,8 @@ interface AuthState {
   sessionId?: string;
   userId?: string;
   authEnabled: boolean;
+  apiKey?: string;
+  basicAuth?: { username: string; password: string };
 }
 
 const App: React.FC = () => {
@@ -51,19 +53,9 @@ const App: React.FC = () => {
         setAuthState({ isAuthenticated: true, authEnabled: false });
         await loadAppData();
       } else {
-        // Auth is enabled, check if we have a valid session
-        setAuthState(prev => ({ ...prev, authEnabled: true }));
-        
-        // Try to make an authenticated request to see if we're already logged in
-        const testResponse = await fetch('/api/status');
-        if (testResponse.ok) {
-          // Already authenticated
-          setAuthState(prev => ({ ...prev, isAuthenticated: true }));
-          await loadAppData();
-        } else {
-          // Need to authenticate
-          setAuthState(prev => ({ ...prev, isAuthenticated: false }));
-        }
+        // Auth is enabled, we need to show login screen
+        // Don't try to load app data without authentication
+        setAuthState({ isAuthenticated: false, authEnabled: true });
       }
     } catch (error) {
       console.error('Error checking authentication:', error);
@@ -75,11 +67,14 @@ const App: React.FC = () => {
     }
   };
 
-  const loadAppData = async () => {
+  const loadAppData = async (authHeaders?: Record<string, string>) => {
     try {
+      // Use provided headers or get current auth headers
+      const headers = authHeaders || getAuthHeaders();
+      
       // Fetch environment variables from server
       const response = await fetch('/api/env', {
-        headers: getAuthHeaders()
+        headers
       });
       
       if (!response.ok) {
@@ -109,22 +104,47 @@ const App: React.FC = () => {
 
   const getAuthHeaders = (): Record<string, string> => {
     const headers: Record<string, string> = {};
+    
+    // Try session-based auth first
     if (authState.sessionId) {
       headers['X-Session-ID'] = authState.sessionId;
     }
+    // Fall back to API key auth
+    else if (authState.apiKey) {
+      headers['X-API-Key'] = authState.apiKey;
+    }
+    // Fall back to basic auth
+    else if (authState.basicAuth) {
+      const credentials = btoa(`${authState.basicAuth.username}:${authState.basicAuth.password}`);
+      headers['Authorization'] = `Basic ${credentials}`;
+    }
+    
     return headers;
   };
 
-  const handleLogin = async (sessionId: string, userId: string) => {
+  const handleLogin = async (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => {
     setAuthState({
       isAuthenticated: true,
-      sessionId,
+      sessionId: sessionId || undefined,
       userId,
-      authEnabled: true
+      authEnabled: true,
+      apiKey: credentials?.apiKey,
+      basicAuth: credentials?.basicAuth
     });
     
-    // Now load the app data
-    await loadAppData();
+    // Create auth headers directly from credentials to avoid state timing issues
+    const authHeaders: Record<string, string> = {};
+    if (sessionId) {
+      authHeaders['X-Session-ID'] = sessionId;
+    } else if (credentials?.apiKey) {
+      authHeaders['X-API-Key'] = credentials.apiKey;
+    } else if (credentials?.basicAuth) {
+      const basicCredentials = btoa(`${credentials.basicAuth.username}:${credentials.basicAuth.password}`);
+      authHeaders['Authorization'] = `Basic ${basicCredentials}`;
+    }
+    
+    // Now load the app data with the correct headers
+    await loadAppData(authHeaders);
   };
 
   const handleLogout = async () => {

@@ -74,8 +74,18 @@ export async function handleRequest(
   const needsPrivilegedAccess = privilegedRoutes.some(route => url.pathname.startsWith(route));
   const context = needsPrivilegedAccess ? privilegedContext : baseContext;
 
-  // Authentication check for API endpoints
-  if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED) {
+  // Define endpoints that should be accessible without authentication
+  const publicEndpoints = [
+    '/api/auth/login',
+    '/api/auth/logout', 
+    '/api/auth/status',
+    '/api/status'  // Health check endpoint should be public
+  ];
+
+  const isPublicEndpoint = publicEndpoints.some(endpoint => url.pathname === endpoint);
+
+  // Authentication check for API endpoints (skip public endpoints)
+  if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint) {
     const authResult = authenticate(req);
     
     if (authResult.rateLimited) {
@@ -109,27 +119,7 @@ export async function handleRequest(
     };
   }
 
-  // Define which endpoints need protection (all except status for health checks)
-  const protectedRoutes = [
-    '/api/env',
-    '/api/peers',
-    '/api/recover', 
-    '/api/shares',
-    '/api/events'
-  ];
-
-  // Apply additional protection to sensitive endpoints
-  const isSensitiveRoute = protectedRoutes.some(route => url.pathname.startsWith(route));
-  
-  if (isSensitiveRoute && AUTH_CONFIG.ENABLED && !context.auth?.authenticated) {
-    return Response.json({ 
-      error: 'Authentication required for this endpoint',
-      hint: 'This endpoint requires authentication. Use API key, basic auth, or login first.'
-    }, { 
-      status: 401,
-      headers 
-    });
-  }
+  // Note: Authentication is now handled above for all non-public API endpoints
 
   // Handle privileged routes separately
   if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {

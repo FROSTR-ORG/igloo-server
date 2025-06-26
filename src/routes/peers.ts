@@ -11,6 +11,9 @@ import { readEnvFile } from './utils.js';
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 
+// Flag to prevent repeated CORS warnings
+let corsWarningLogged = false;
+
 // Utility function to get secure CORS headers based on request origin
 function getSecureCorsHeaders(req: Request): Record<string, string> {
   const headers: Record<string, string> = {
@@ -39,7 +42,10 @@ function getSecureCorsHeaders(req: Request): Record<string, string> {
     // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
     // In production, ALLOWED_ORIGINS should always be configured
     headers['Access-Control-Allow-Origin'] = '*';
-    console.warn('ALLOWED_ORIGINS environment variable not set. Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS for production security.');
+    if (!corsWarningLogged) {
+      console.warn('ALLOWED_ORIGINS environment variable not set. Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS for production security.');
+      corsWarningLogged = true;
+    }
   }
 
   return headers;

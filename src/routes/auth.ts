@@ -341,7 +341,7 @@ export async function handleLogin(req: Request): Promise<Response> {
       expiresIn: AUTH_CONFIG.SESSION_TIMEOUT
     }, {
       headers: {
-        'Set-Cookie': `session=${sessionId}; HttpOnly; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`,
+        'Set-Cookie': `session=${sessionId}; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`,
         'Content-Type': 'application/json'
       }
     });
@@ -364,7 +364,7 @@ export function handleLogout(req: Request): Response {
 
   return Response.json({ success: true }, {
     headers: {
-      'Set-Cookie': `session=; HttpOnly; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`,
+      'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`,
       'Content-Type': 'application/json'
     }
   });

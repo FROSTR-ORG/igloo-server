@@ -39,17 +39,30 @@ function sanitizePath(requestedPath: string): string | null {
 function getCachingHeaders(filePath: string): Record<string, string> {
   const headers: Record<string, string> = {};
   
-  // Set cache control based on file type
+  // Set cache control based on file type and environment
   const ext = filePath.split('.').pop()?.toLowerCase();
+  const isDevelopment = process.env.NODE_ENV !== 'production';
+  
   if (ext && ['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(ext)) {
     // Images can be cached for a long time
-    headers['Cache-Control'] = 'public, max-age=31536000, immutable'; // 1 year
+    headers['Cache-Control'] = isDevelopment 
+      ? 'public, max-age=3600' // 1 hour in dev
+      : 'public, max-age=31536000, immutable'; // 1 year in prod
   } else if (ext && ['css', 'js'].includes(ext)) {
-    // CSS/JS files with shorter cache time to allow updates
-    headers['Cache-Control'] = 'public, max-age=86400'; // 1 day
+    // CSS/JS files - no cache in development for easier updates
+    headers['Cache-Control'] = isDevelopment 
+      ? 'no-cache, no-store, must-revalidate' // No cache in dev
+      : 'public, max-age=86400'; // 1 day in prod
+    
+    // Add ETag based on file modification time for cache busting
+    if (isDevelopment) {
+      headers['ETag'] = `"${Date.now()}"`;
+    }
   } else {
     // Other static files
-    headers['Cache-Control'] = 'public, max-age=3600'; // 1 hour
+    headers['Cache-Control'] = isDevelopment 
+      ? 'no-cache' // No cache in dev
+      : 'public, max-age=3600'; // 1 hour in prod
   }
   
   return headers;
