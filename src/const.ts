@@ -6,7 +6,13 @@ export const RELAYS: string[] = (() => {
   try {
     // Try to parse as JSON first
     if (relaysEnv.startsWith('[')) {
-      return JSON.parse(relaysEnv);
+      const parsed = JSON.parse(relaysEnv);
+      if (Array.isArray(parsed) && parsed.every(item => typeof item === 'string')) {
+        return parsed;
+      } else {
+        // Not a valid array of strings
+        return [];
+      }
     } else {
       // Handle comma-separated strings
       return relaysEnv.split(',').map(url => url.trim()).filter(url => url.length > 0);

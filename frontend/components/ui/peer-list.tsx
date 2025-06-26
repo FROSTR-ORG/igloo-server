@@ -23,6 +23,13 @@ interface PeerListProps {
   className?: string;
 }
 
+// Utility function to parse date values safely
+function parseDate(value: any): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return isNaN(date.getTime()) ? undefined : date;
+}
+
 const PeerList: React.FC<PeerListProps> = ({
   node, // Not used but kept for compatibility
   groupCredential,
@@ -70,8 +77,8 @@ const PeerList: React.FC<PeerListProps> = ({
         const data = await response.json();
         setPeers(data.peers.map((peer: any) => ({
           ...peer,
-          lastSeen: peer.lastSeen ? (new Date(peer.lastSeen).getTime() ? new Date(peer.lastSeen) : undefined) : undefined,
-          lastPingAttempt: peer.lastPingAttempt ? (new Date(peer.lastPingAttempt).getTime() ? new Date(peer.lastPingAttempt) : undefined) : undefined
+          lastSeen: parseDate(peer.lastSeen),
+          lastPingAttempt: parseDate(peer.lastPingAttempt)
         })));
       } else {
         throw new Error('Failed to fetch peers');
@@ -177,9 +184,9 @@ const PeerList: React.FC<PeerListProps> = ({
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: status.lastSeen ? (new Date(status.lastSeen).getTime() ? new Date(status.lastSeen) : peer.lastSeen) : peer.lastSeen,
+            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
             latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: status.lastPingAttempt ? (new Date(status.lastPingAttempt).getTime() ? new Date(status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
+            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
           } as PeerStatus;
         }
         // Try match without 02 prefix
@@ -189,9 +196,9 @@ const PeerList: React.FC<PeerListProps> = ({
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: status.lastSeen ? (new Date(status.lastSeen).getTime() ? new Date(status.lastSeen) : peer.lastSeen) : peer.lastSeen,
+            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
             latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: status.lastPingAttempt ? (new Date(status.lastPingAttempt).getTime() ? new Date(status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
+            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
           } as PeerStatus;
         }
         return peer;
@@ -236,9 +243,9 @@ const PeerList: React.FC<PeerListProps> = ({
             ? {
                 ...peer,
                 online: Boolean(result.status.online),
-                lastSeen: result.status.lastSeen ? (new Date(result.status.lastSeen).getTime() ? new Date(result.status.lastSeen) : peer.lastSeen) : peer.lastSeen,
+                lastSeen: parseDate(result.status.lastSeen) ?? peer.lastSeen,
                 latency: result.status.latency ? Number(result.status.latency) : peer.latency,
-                lastPingAttempt: result.status.lastPingAttempt ? (new Date(result.status.lastPingAttempt).getTime() ? new Date(result.status.lastPingAttempt) : peer.lastPingAttempt) : peer.lastPingAttempt
+                lastPingAttempt: parseDate(result.status.lastPingAttempt) ?? peer.lastPingAttempt
               } as PeerStatus
             : peer
         ));

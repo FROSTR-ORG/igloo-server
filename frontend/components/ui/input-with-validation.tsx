@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useId } from 'react';
 import { Input } from "./input";
 import { cn } from "../../lib/utils";
 
@@ -22,7 +22,8 @@ const InputWithValidation: React.FC<InputWithValidationProps> = ({
   isRequired,
   ...props
 }) => {
-  const inputId = id || Math.random().toString(36).substr(2, 9);
+  const reactId = useId();
+  const inputId = id || reactId;
   const hasError = value.trim() !== '' && isValid === false;
 
   return (

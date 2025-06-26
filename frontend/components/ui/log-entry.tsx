@@ -29,6 +29,41 @@ const getLogVariant = (type: string) => {
   }
 };
 
+// Utility function to format log data with proper error handling
+function formatLogData(data: any): string {
+  try {
+    return JSON.stringify(data, null, 2);
+  } catch (error) {
+    // Try to provide more useful information about the data
+    try {
+      const dataType = typeof data;
+      const isArray = Array.isArray(data);
+      const constructorName = data?.constructor?.name;
+      
+      let preview = '';
+      if (dataType === 'object' && data !== null) {
+        try {
+          const keys = Object.keys(data);
+          preview = `Object with keys: [${keys.slice(0, 5).join(', ')}${keys.length > 5 ? '...' : ''}]`;
+        } catch {
+          preview = `${constructorName || 'Object'} (non-enumerable)`;
+        }
+      } else {
+        preview = `${dataType}: ${String(data).slice(0, 100)}${String(data).length > 100 ? '...' : ''}`;
+      }
+      
+      return `Unable to serialize data to JSON
+Type: ${isArray ? 'Array' : dataType}${constructorName ? ` (${constructorName})` : ''}
+Preview: ${preview}
+Error: ${error instanceof Error ? error.message : 'Circular reference or non-serializable data'}
+
+This is likely a complex object from the Bifrost node containing circular references or functions.`;
+    } catch {
+      return 'Error: Unable to format data (complex object with circular references or non-serializable data)';
+    }
+  }
+}
+
 export const LogEntry = memo(({ log }: LogEntryProps) => {
   const [isMessageExpanded, setIsMessageExpanded] = React.useState(false);
   const hasData = log.data && Object.keys(log.data).length > 0;
@@ -41,37 +76,7 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
 
   const formattedData = React.useMemo(() => {
     if (!hasData) return null;
-    try {
-      return JSON.stringify(log.data, null, 2);
-    } catch (error) {
-      // Try to provide more useful information about the data
-      try {
-        const dataType = typeof log.data;
-        const isArray = Array.isArray(log.data);
-        const constructorName = log.data?.constructor?.name;
-        
-        let preview = '';
-        if (dataType === 'object' && log.data !== null) {
-          try {
-            const keys = Object.keys(log.data);
-            preview = `Object with keys: [${keys.slice(0, 5).join(', ')}${keys.length > 5 ? '...' : ''}]`;
-          } catch {
-            preview = `${constructorName || 'Object'} (non-enumerable)`;
-          }
-        } else {
-          preview = `${dataType}: ${String(log.data).slice(0, 100)}${String(log.data).length > 100 ? '...' : ''}`;
-        }
-        
-        return `Unable to serialize data to JSON
-Type: ${isArray ? 'Array' : dataType}${constructorName ? ` (${constructorName})` : ''}
-Preview: ${preview}
-Error: ${error instanceof Error ? error.message : 'Circular reference or non-serializable data'}
-
-This is likely a complex object from the Bifrost node containing circular references or functions.`;
-      } catch {
-        return 'Error: Unable to format data (complex object with circular references or non-serializable data)';
-      }
-    }
+    return formatLogData(log.data);
   }, [log.data, hasData]);
 
   return (
