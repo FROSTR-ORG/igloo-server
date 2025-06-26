@@ -97,7 +97,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   }
 
   return (
-    <PageLayout maxWidth="max-w-md">
+    <PageLayout maxWidth="max-w-lg">
       <AppHeader subtitle="Authentication required to access this server" />
 
       <ContentCard>
