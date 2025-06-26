@@ -1,5 +1,34 @@
 import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 
+// Validate SESSION_SECRET configuration
+function validateSessionSecret(): string | null {
+  const sessionSecret = process.env.SESSION_SECRET;
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (!sessionSecret) {
+    const message = 'SESSION_SECRET environment variable is not set';
+    if (isProduction) {
+      console.error(`❌ SECURITY ERROR: ${message}. This is required in production to prevent session invalidation on server restarts.`);
+      process.exit(1);
+    } else {
+      console.warn(`⚠️  WARNING: ${message}. Sessions will be invalidated on server restart. Set SESSION_SECRET for persistent sessions.`);
+      return null;
+    }
+  }
+  
+  if (sessionSecret.length < 32) {
+    const message = 'SESSION_SECRET should be at least 32 characters long for security';
+    if (isProduction) {
+      console.error(`❌ SECURITY ERROR: ${message}`);
+      process.exit(1);
+    } else {
+      console.warn(`⚠️  WARNING: ${message}`);
+    }
+  }
+  
+  return sessionSecret;
+}
+
 // Authentication configuration from environment variables
 export const AUTH_CONFIG = {
   // Enable/disable authentication (default: true for security)
@@ -11,7 +40,7 @@ export const AUTH_CONFIG = {
   BASIC_AUTH_PASS: process.env.BASIC_AUTH_PASS,
   
   // Session configuration
-  SESSION_SECRET: process.env.SESSION_SECRET || randomBytes(32).toString('hex'),
+  SESSION_SECRET: validateSessionSecret(),
   SESSION_TIMEOUT: parseInt(process.env.SESSION_TIMEOUT || '3600') * 1000, // Default 1 hour
   
   // Rate limiting
@@ -138,6 +167,11 @@ function authenticateBasicAuth(req: Request): AuthResult {
 
 // Session authentication for web UI
 function authenticateSession(req: Request): AuthResult {
+  // If no SESSION_SECRET is configured, session auth is not available
+  if (!AUTH_CONFIG.SESSION_SECRET) {
+    return { authenticated: false, error: 'Session authentication not available (SESSION_SECRET not configured)' };
+  }
+  
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
   
   if (!sessionId) {
@@ -174,7 +208,12 @@ function extractSessionFromCookie(req: Request): string | null {
 }
 
 // Create new session
-export function createSession(userId: string, ipAddress: string): string {
+export function createSession(userId: string, ipAddress: string): string | null {
+  // If no SESSION_SECRET is configured, sessions are not available
+  if (!AUTH_CONFIG.SESSION_SECRET) {
+    return null;
+  }
+  
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
   
@@ -192,7 +231,7 @@ export function createSession(userId: string, ipAddress: string): string {
 // Cleanup expired sessions periodically
 function cleanupExpiredSessions(): void {
   const now = Date.now();
-  for (const [sessionId, session] of sessionStore.entries()) {
+  for (const [sessionId, session] of Array.from(sessionStore.entries())) {
     if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
       sessionStore.delete(sessionId);
     }
@@ -286,6 +325,15 @@ export async function handleLogin(req: Request): Promise<Response> {
     const clientIP = getClientIP(req);
     const sessionId = createSession(userId, clientIP);
 
+    if (!sessionId) {
+      // Session creation failed (no SESSION_SECRET configured)
+      return Response.json({
+        success: true,
+        userId,
+        warning: 'Session not created - SESSION_SECRET not configured. Authentication will be required for each request.'
+      });
+    }
+
     return Response.json({
       success: true,
       sessionId,
@@ -371,7 +419,7 @@ function getAvailableAuthMethods(): string[] {
   
   if (AUTH_CONFIG.API_KEY) methods.push('api-key');
   if (AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) methods.push('basic-auth');
-  methods.push('session');
+  if (AUTH_CONFIG.SESSION_SECRET) methods.push('session');
   
   return methods;
 }

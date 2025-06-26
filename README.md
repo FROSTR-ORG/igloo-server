@@ -266,6 +266,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share (bfshare1...) | - | ✅ |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for your signing group | - | ❌ |
+| `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
 
 ## Troubleshooting
 
@@ -320,12 +321,14 @@ AUTH_ENABLED=true
 API_KEY=your-secure-api-key-here
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASS=your-strong-password
+SESSION_SECRET=your-random-64-char-session-secret-here
 RATE_LIMIT_ENABLED=true
 ```
 
 **Development (Local only)**:
 ```bash
 AUTH_ENABLED=false  # Only for local development
+# SESSION_SECRET=optional-for-development  # Will show warning if not set
 ```
 
 ### 🛡️ **Security Features**
@@ -334,6 +337,7 @@ AUTH_ENABLED=false  # Only for local development
 - **Automatic session cleanup** and timeout management
 - **Comprehensive rate limiting** with configurable windows and limits
 - **Secure headers** and CORS configuration
+- **Required SESSION_SECRET** in production to prevent session invalidation on restarts
 
 See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 
@@ -342,6 +346,7 @@ See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 - **Share credentials are sensitive**: Store `SHARE_CRED` securely - it's part of your nsec fragments
 - **Network security**: Use WSS (secure WebSocket) relays in production  
 - **Authentication required**: Configure authentication for any non-local deployment
+- **SESSION_SECRET required**: Set a strong 32+ character `SESSION_SECRET` in production to prevent session invalidation on server restarts
 - **Memory management**: The relay auto-purges events to prevent memory leaks
 - **HTTPS recommended**: Use a reverse proxy with TLS for production deployments
 

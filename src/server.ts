@@ -1,4 +1,5 @@
 import { serve } from 'bun';
+import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
 import { 
@@ -67,11 +68,8 @@ serve({
       updateNode: (newNode: ServerBifrostNode | null) => {
         // Clean up the old node to prevent memory leaks
         if (node) {
-          // Import cleanupBifrostNode from @frostr/igloo-core at the top if not already imported
-          // @ts-ignore: TypeScript may not know about this import if using require
-          const { cleanupBifrostNode } = require('@frostr/igloo-core');
           try {
-            cleanupBifrostNode(node);
+            cleanupBifrostNode(node as any);
           } catch (err) {
             addServerLog('warn', 'Failed to clean up previous node', err);
           }

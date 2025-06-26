@@ -94,19 +94,12 @@ export interface LogEntryData {
 
 // Bifrost message types
 export interface BifrostMessage {
+  type: string;
   id?: string;
   tag?: string;
   content?: string;
   reason?: string;
   [key: string]: unknown;
-}
-
-export interface ECDHMessage extends BifrostMessage {
-  type: 'ecdh';
-}
-
-export interface SignMessage extends BifrostMessage {
-  type: 'sign';
 }
 
 // Console types for error handling
@@ -163,6 +156,6 @@ export interface NobleCipher {
 
 // Event handler types
 export type EventCallback<T = unknown> = (data: T) => void;
-export type BifrostEventCallback = (reason: string, data: BifrostMessage) => void;
-export type ECDHEventCallback = (data: ECDHMessage | ECDHMessage[]) => void;
-export type SignEventCallback = (data: SignMessage | SignMessage[]) => void; 
+export type BifrostEventCallback = (data: BifrostMessage) => void;
+export type ECDHEventCallback = (data: BifrostMessage | BifrostMessage[]) => void;
+export type SignEventCallback = (data: BifrostMessage | BifrostMessage[]) => void; 
