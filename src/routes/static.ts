@@ -100,7 +100,7 @@ export async function handleStaticRoute(req: Request, url: URL): Promise<Respons
     const file = Bun.file(safePath);
     
     if (await file.exists()) {
-      const contentType = getContentType(url.pathname);
+      const contentType = getContentType(safePath);
       return new Response(file, {
         headers: { 
           'Content-Type': contentType,
