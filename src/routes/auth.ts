@@ -387,20 +387,16 @@ export function requireAuth(handler: Function) {
     }
     
     if (!authResult.authenticated) {
-      const headers: Record<string, string> = {
-        'Content-Type': 'application/json'
-      };
-      
-      if (AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
-        headers['WWW-Authenticate'] = 'Basic realm="Igloo Server"';
-      }
-      
+      // Don't set WWW-Authenticate header to avoid browser's native auth dialog
+      // The frontend will handle authentication through its own UI
       return Response.json({ 
         error: authResult.error || 'Authentication required',
         authMethods: getAvailableAuthMethods()
       }, { 
         status: 401,
-        headers 
+        headers: {
+          'Content-Type': 'application/json'
+        }
       });
     }
     

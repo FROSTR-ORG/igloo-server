@@ -120,7 +120,10 @@ export interface SignerProps {
     share: string;
     groupCredential: string;
     name?: string;
-  } | null;
+    threshold?: number;
+    totalShares?: number;
+  };
+  authHeaders?: Record<string, string>;
 }
 
 // Keyset types
