@@ -104,7 +104,7 @@ export async function handleStaticRoute(req: Request, url: URL): Promise<Respons
       return new Response(file, {
         headers: { 
           'Content-Type': contentType,
-          ...getCachingHeaders(url.pathname)
+          ...getCachingHeaders(safePath)
         }
       });
     }
