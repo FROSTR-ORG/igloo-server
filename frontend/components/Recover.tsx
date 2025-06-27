@@ -38,7 +38,7 @@ const saveShareToStorage = (shareCredential: string, groupCredential: string) =>
       shareCredential,
       groupCredential,
       savedAt: new Date().toISOString(),
-      id: `share-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
+      id: `share-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`
     };
     
     // Check if this exact combination already exists
@@ -305,10 +305,6 @@ const Recover: React.FC<RecoverProps> = ({
       const newSharesValidity = [...sharesValidity];
       newSharesValidity[index] = validation;
       setSharesValidity(newSharesValidity);
-      if (!validation.isValid) {
-        setCurrentThreshold(defaultThreshold);
-        setCurrentTotalShares(defaultTotalShares);
-      }
     }
   };
 
