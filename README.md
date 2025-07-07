@@ -22,6 +22,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Key Recovery**: Intuitive interface for recovering secrets from threshold shares
 - **Live Event Logs**: Real-time visibility into signing operations and network events
 - **Peer Management**: Monitor other nodes in your signing group with ping/status tracking
+- **Authentication**: Secure login with multiple authentication methods (API key, username/password, sessions)
 
 ### 📡 **Ephemeral Nostr Relay**
 - **In-Memory Storage**: Temporarily caches events without persistent database
@@ -106,11 +107,35 @@ docker run -p 8002:8002 \
   -e SHARE_CRED="bfshare1qqsqp..." \
   -e RELAYS='["wss://relay.primal.net"]' \
   igloo-server
+
+# Or use Docker Compose
+docker-compose up -d
 ```
 
 ## API Reference
 
 The server provides RESTful APIs for programmatic control:
+
+### Authentication
+```bash
+# Login with username/password or API key
+POST /api/auth/login
+Content-Type: application/json
+{
+  "username": "admin",
+  "password": "your-password"
+}
+# OR
+{
+  "apiKey": "your-api-key"
+}
+
+# Logout (clear session)
+POST /api/auth/logout
+
+# Get authentication status
+GET /api/auth/status
+```
 
 ### Environment Management
 ```bash
@@ -169,6 +194,39 @@ POST /api/peers/ping
 Content-Type: application/json
 {
   "target": "all"
+}
+```
+
+### Key Recovery
+```bash
+# Recover secret key from threshold shares
+POST /api/recover
+Content-Type: application/json
+{
+  "groupCredential": "bfgroup1...",
+  "shareCredentials": ["bfshare1...", "bfshare1..."]
+}
+
+# Validate group or share credentials
+POST /api/recover/validate
+Content-Type: application/json
+{
+  "type": "group", // or "share"
+  "credential": "bfgroup1..."
+}
+```
+
+### Share Management
+```bash
+# Get stored shares
+GET /api/shares
+
+# Store new share
+POST /api/shares
+Content-Type: application/json
+{
+  "shareCredential": "bfshare1...",
+  "groupCredential": "bfgroup1..."
 }
 ```
 

@@ -76,7 +76,7 @@ module.exports = {
       fontFamily: {
         sans: ["var(--font-sans)", ...fontFamily.sans],
         mono: ["'Share Tech Mono'", "monospace"],
-        orbitron: ["'Orbitron'", "sans-serif"],
+        sharetech: ["'Share Tech Mono'", "monospace"],
       },
       keyframes: {
         "accordion-down": {

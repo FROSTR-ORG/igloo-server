@@ -3,7 +3,7 @@ services:
   igloo-server:
     build          : ./
     env_file       : .env
-    image          : igloo-server:v0.1.0
+    image          : igloo-server
     container_name : igloo-server
     platform       : linux/x86_64
     hostname       : igloo-server

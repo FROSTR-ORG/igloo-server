@@ -1,14 +1,18 @@
 import { RouteContext } from './types.js';
+import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, getValidRelays } from './utils.js';
 
 export async function handleStatusRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
 
+  // Get secure CORS headers based on request origin
+  const corsHeaders = getSecureCorsHeaders(req);
+  
   const headers = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };
 
   if (req.method === 'GET') {

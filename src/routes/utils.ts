@@ -252,4 +252,36 @@ export function safeStringify(obj: any, maxDepth = 3): string {
       constructor: obj?.constructor?.name || 'Unknown'
     });
   }
+}
+
+// Utility function to get secure CORS headers based on request origin
+export function getSecureCorsHeaders(req: Request): Record<string, string> {
+  const headers: Record<string, string> = {};
+
+  // Get allowed origins from environment variable
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+  const requestOrigin = req.headers.get('origin');
+
+  if (allowedOriginsEnv && requestOrigin) {
+    // Parse allowed origins (comma-separated list)
+    const allowedOrigins = allowedOriginsEnv
+      .split(',')
+      .map(origin => origin.trim())
+      .filter(origin => origin.length > 0);
+
+    // Check if request origin is in allowed list
+    if (allowedOrigins.includes(requestOrigin) || allowedOrigins.includes('*')) {
+      headers['Access-Control-Allow-Origin'] = requestOrigin;
+    }
+    // If origin is not allowed, don't set the header (CORS will block the request)
+  } else if (!allowedOriginsEnv) {
+    // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
+    // In production, ALLOWED_ORIGINS should always be configured
+    headers['Access-Control-Allow-Origin'] = '*';
+    if (process.env.NODE_ENV === 'production') {
+      console.warn('SECURITY WARNING: ALLOWED_ORIGINS not configured in production. Using wildcard (*) for CORS.');
+    }
+  }
+
+  return headers;
 } 

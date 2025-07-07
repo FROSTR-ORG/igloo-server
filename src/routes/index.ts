@@ -27,6 +27,7 @@ import {
   AUTH_CONFIG,
   authenticate 
 } from './auth.js';
+import { getSecureCorsHeaders } from './utils.js';
 
 // Unified router function
 export async function handleRequest(
@@ -35,10 +36,13 @@ export async function handleRequest(
   baseContext: RouteContext, 
   privilegedContext: PrivilegedRouteContext
 ): Promise<Response> {
+  // Get secure CORS headers based on request origin
+  const corsHeaders = getSecureCorsHeaders(req);
+  
   // Set CORS headers for all API endpoints
   const headers = {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
+    ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };

@@ -6,7 +6,7 @@ import {
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
 import { RouteContext, PeerStatus } from './types.js';
-import { readEnvFile } from './utils.js';
+import { readEnvFile, getSecureCorsHeaders } from './utils.js';
 
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
@@ -14,47 +14,18 @@ const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 // Flag to prevent repeated CORS warnings
 let corsWarningLogged = false;
 
-// Utility function to get secure CORS headers based on request origin
-function getSecureCorsHeaders(req: Request): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
-  };
-
-  // Get allowed origins from environment variable
-  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
-  const requestOrigin = req.headers.get('origin');
-
-  if (allowedOriginsEnv && requestOrigin) {
-    // Parse allowed origins (comma-separated list)
-    const allowedOrigins = allowedOriginsEnv
-      .split(',')
-      .map(origin => origin.trim())
-      .filter(origin => origin.length > 0);
-
-    // Check if request origin is in allowed list
-    if (allowedOrigins.includes(requestOrigin) || allowedOrigins.includes('*')) {
-      headers['Access-Control-Allow-Origin'] = requestOrigin;
-    }
-    // If origin is not allowed, don't set the header (CORS will block the request)
-  } else if (!allowedOriginsEnv) {
-    // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
-    // In production, ALLOWED_ORIGINS should always be configured
-    headers['Access-Control-Allow-Origin'] = '*';
-    if (!corsWarningLogged) {
-      console.warn('ALLOWED_ORIGINS environment variable not set. Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS for production security.');
-      corsWarningLogged = true;
-    }
-  }
-
-  return headers;
-}
-
 export async function handlePeersRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/peers')) return null;
 
-  const headers = getSecureCorsHeaders(req);
+  // Get secure CORS headers based on request origin
+  const corsHeaders = getSecureCorsHeaders(req);
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+  };
 
   try {
     switch (url.pathname) {

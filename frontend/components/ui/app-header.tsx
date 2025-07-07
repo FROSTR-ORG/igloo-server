@@ -15,9 +15,7 @@ export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeader
       <div className="relative flex items-center mb-8 h-16">
         {/* Center: Title (perfectly centered) */}
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-          <h1 className="text-4xl font-bold font-orbitron bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300 select-none">
-            Igloo Server
-          </h1>
+        <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo Server</h1>
         </div>
         
         {/* Logo positioned immediately to the left of the centered text */}

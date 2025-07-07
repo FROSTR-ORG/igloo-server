@@ -1,26 +1,39 @@
-# Use a multi-stage build for smaller, more secure images
+# Multi-stage build for smaller production image
+FROM oven/bun:latest AS build
 
-# --- Frontend build stage ---
-FROM oven/bun:latest AS frontend-build
-WORKDIR /frontend
-COPY frontend/package.json frontend/bun.lock ./
-RUN bun install
-COPY frontend .
-RUN bun run build
-
-# --- Main app build stage ---
-FROM oven/bun:latest AS app
 WORKDIR /app
 
-# Copy only necessary files for the backend
-COPY package.json bun.lock ./
-RUN bun install --production
+# Copy package files first for better caching
+COPY package.json bun.lockb ./
+
+# Install all dependencies (including dev dependencies for building)
+RUN bun install --frozen-lockfile
+
+# Copy source code
 COPY src ./src
+COPY frontend ./frontend
 COPY static ./static
 COPY tsconfig.json ./
 
-# Copy built frontend assets from the build stage
-COPY --from=frontend-build /frontend/dist ./static/dist
+# Build the frontend
+RUN bun run build
+
+# --- Production stage ---
+FROM oven/bun:latest AS production
+
+WORKDIR /app
+
+# Copy package files
+COPY package.json bun.lockb ./
+
+# Install only production dependencies
+RUN bun install --production --frozen-lockfile
+
+# Copy built application from build stage
+COPY --from=build /app/src ./src
+COPY --from=build /app/static ./static
+COPY --from=build /app/tsconfig.json ./
 
 EXPOSE 8002
+
 CMD ["bun", "start"]

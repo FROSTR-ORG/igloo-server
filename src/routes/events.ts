@@ -1,5 +1,6 @@
 import { RouteContext } from './types.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
+import { getSecureCorsHeaders } from './utils.js';
 
 export function handleEventsRoute(req: Request, url: URL, context: RouteContext): Response | null {
   if (url.pathname !== '/api/events') return null;
@@ -8,11 +9,12 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
   if (AUTH_CONFIG.ENABLED) {
     const authResult = authenticate(req);
     if (!authResult.authenticated) {
+      const corsHeaders = getSecureCorsHeaders(req);
       return new Response('Unauthorized', { 
         status: 401,
         headers: {
           'Content-Type': 'text/plain',
-          'Access-Control-Allow-Origin': '*'
+          ...corsHeaders
         }
       });
     }
@@ -62,12 +64,13 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
       }
     });
 
+    const corsHeaders = getSecureCorsHeaders(req);
     return new Response(stream, {
       headers: {
         'Content-Type': 'text/event-stream',
         'Cache-Control': 'no-cache',
         'Connection': 'keep-alive',
-        'Access-Control-Allow-Origin': '*',
+        ...corsHeaders,
         'Access-Control-Allow-Headers': 'Content-Type, Cache-Control',
         'Access-Control-Allow-Methods': 'GET',
       }

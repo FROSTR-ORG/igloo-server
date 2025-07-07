@@ -85,6 +85,8 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8002
 - **Without `ALLOWED_ORIGINS`**: Defaults to wildcard `*` (all origins allowed) - ⚠️ **Security Risk**
 - **With `ALLOWED_ORIGINS`**: Only specified domains can make API requests - ✅ **Secure**
 
+⚠️ **Note**: The server shows a warning in production if `ALLOWED_ORIGINS` is not configured.
+
 **Common Configurations**:
 ```bash
 # Single domain
