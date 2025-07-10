@@ -34,7 +34,7 @@
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.2",
-    "@types/yaml": "^1.9.10",
+    "@types/yaml": "^1.9.7",
     "bun-types": "latest",
     "yaml": "^2.4.1",
     "esbuild": "^0.24.2",
