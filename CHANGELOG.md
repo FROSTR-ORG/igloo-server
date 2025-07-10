@@ -1,5 +1,10 @@
 # CHANGELOG
 
+## [0.1.3] - 2025-07-10
+### Changes since v1.0.1:
+- chore: update version to 0.1.2 and prepare for release
+- fix: resolve TypeScript unused variable warnings
+
 ## [1.0.1] - 2025-07-10
 ### Changes:
 - fix: update workflow configurations to use master branch instead of main
