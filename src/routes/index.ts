@@ -99,7 +99,7 @@ export async function handleRequest(
         status: 429,
         headers: {
           ...headers,
-          'Retry-After': Math.ceil((parseInt(process.env.RATE_LIMIT_WINDOW || '900')) / 60).toString()
+          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
         }
       });
     }

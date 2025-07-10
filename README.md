@@ -81,6 +81,8 @@ The server will be available at **http://localhost:8002**
 3. Switch to the **Signer** tab to start your signing node
 4. Monitor operations in the **Event Log** and **Peer List**
 
+**Note**: The Configure screen only allows updating FROSTR credentials and relay settings. Authentication settings (SESSION_SECRET, API_KEY, etc.) must be configured via environment variables or the `.env` file for security reasons.
+
 #### Option 2: Headless Mode
 Set environment variables and run the server directly:
 
@@ -150,6 +152,8 @@ Content-Type: application/json
   "SHARE_CRED": "bfshare1...",
   "RELAYS": "[\"wss://relay.primal.net\"]"
 }
+# Note: Only FROSTR credentials and relay settings can be updated via API
+# Authentication settings must be configured via environment variables
 
 # Delete configuration keys
 POST /api/env/delete
@@ -352,7 +356,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 - **If changes aren't showing**: The server caches static files differently in development vs production:
   - Development mode: Files read fresh from disk each time (no caching)
   - Production mode: Files cached in memory and browser for performance
-- Clear browser cache if still seeing old content (Ctrl+F5 / Cmd+Shift+R)
+- **Clear browser cache only if running in production mode** (Ctrl+F5 / Cmd+Shift+R)
 - Restart the server after rebuilding if running in production mode
 
 ### Getting Help
