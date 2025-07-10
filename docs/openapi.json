@@ -23,7 +23,17 @@
       "description": "Local development server (HTTP for local development only)"
     }
   ],
-
+  "security": [
+    {
+      "apiKeyAuth": []
+    },
+    {
+      "basicAuth": []
+    },
+    {
+      "sessionAuth": []
+    }
+  ],
   "tags": [
     {
       "name": "Status",
@@ -208,17 +218,6 @@
         "tags": [
           "Authentication"
         ],
-        "security": [
-          {
-            "sessionAuth": []
-          },
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Logout successful",
@@ -254,17 +253,6 @@
         "tags": [
           "Configuration"
         ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Environment variables retrieved successfully",
@@ -295,17 +283,6 @@
         "description": "Update environment configuration (whitelisted variables only)",
         "tags": [
           "Configuration"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "requestBody": {
           "required": true,
@@ -384,17 +361,6 @@
         "description": "Remove specified environment variables",
         "tags": [
           "Configuration"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "requestBody": {
           "required": true,
@@ -479,17 +445,6 @@
         "tags": [
           "Peers"
         ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Peers retrieved successfully",
@@ -561,17 +516,6 @@
         "tags": [
           "Peers"
         ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Self public key retrieved successfully",
@@ -624,17 +568,6 @@
         "description": "Ping specific peer or all peers to check connectivity",
         "tags": [
           "Peers"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "requestBody": {
           "required": true,
@@ -775,17 +708,6 @@
         "description": "Use threshold shares to recover the original secret key",
         "tags": [
           "Key Recovery"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "requestBody": {
           "required": true,
@@ -941,17 +863,6 @@
         "tags": [
           "Key Recovery"
         ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -1022,16 +933,13 @@
                       "type": "object",
                       "properties": {
                         "threshold": {
-                          "type": "integer",
-                          "nullable": true
+                          "type": ["integer", "null"]
                         },
                         "totalShares": {
-                          "type": "integer",
-                          "nullable": true
+                          "type": ["integer", "null"]
                         },
                         "idx": {
-                          "type": "integer",
-                          "nullable": true
+                          "type": ["integer", "null"]
                         }
                       }
                     }
@@ -1078,17 +986,6 @@
         "tags": [
           "Share Management"
         ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
-        ],
         "responses": {
           "200": {
             "description": "Shares retrieved successfully",
@@ -1125,17 +1022,6 @@
         "description": "Save share and group credentials",
         "tags": [
           "Share Management"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "requestBody": {
           "required": true,
@@ -1230,17 +1116,6 @@
         "description": "Subscribe to real-time server events using Server-Sent Events.\n\nEvents include:\n- `system`: Server status changes\n- `sign`: Signature requests and responses\n- `bifrost`: Peer connections and network events\n- `ecdh`: ECDH protocol events\n\nNote: This endpoint uses Server-Sent Events (SSE) and requires EventSource client.\n",
         "tags": [
           "Events"
-        ],
-        "security": [
-          {
-            "apiKeyAuth": []
-          },
-          {
-            "basicAuth": []
-          },
-          {
-            "sessionAuth": []
-          }
         ],
         "responses": {
           "200": {
@@ -1457,20 +1332,17 @@
             "description": "Whether the peer is currently online"
           },
           "lastSeen": {
-            "type": "string",
+            "type": ["string", "null"],
             "format": "date-time",
-            "nullable": true,
             "description": "Last time peer was seen online"
           },
           "latency": {
-            "type": "integer",
-            "nullable": true,
+            "type": ["integer", "null"],
             "description": "Last measured latency in milliseconds"
           },
           "lastPingAttempt": {
-            "type": "string",
+            "type": ["string", "null"],
             "format": "date-time",
-            "nullable": true,
             "description": "Last ping attempt timestamp"
           }
         },
@@ -1491,13 +1363,11 @@
             "description": "Target peer's public key"
           },
           "latency": {
-            "type": "integer",
-            "nullable": true,
+            "type": ["integer", "null"],
             "description": "Round-trip time in milliseconds"
           },
           "policy": {
-            "type": "object",
-            "nullable": true,
+            "type": ["object", "null"],
             "properties": {
               "send": {
                 "type": "boolean",
@@ -1510,8 +1380,7 @@
             }
           },
           "error": {
-            "type": "string",
-            "nullable": true,
+            "type": ["string", "null"],
             "description": "Error message if ping failed"
           },
           "timestamp": {
