@@ -8,7 +8,7 @@ import {
 import { RouteContext } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 
-export async function handleRecoveryRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+export async function handleRecoveryRoute(req: Request, url: URL, _context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/recover')) return null;
 
   // Get secure CORS headers based on request origin

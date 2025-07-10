@@ -212,7 +212,7 @@ export function getContentType(filePath: string): string {
 export function safeStringify(obj: any, maxDepth = 3): string {
   const seen = new WeakSet();
   
-  const replacer = (key: string, value: any, depth = 0): any => {
+  const replacer = (_key: string, value: any, depth = 0): any => {
     if (depth > maxDepth) {
       return '[Max Depth Reached]';
     }

@@ -11,9 +11,6 @@ import { readEnvFile, getSecureCorsHeaders } from './utils.js';
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 
-// Flag to prevent repeated CORS warnings
-let corsWarningLogged = false;
-
 export async function handlePeersRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/peers')) return null;
 

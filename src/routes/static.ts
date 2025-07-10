@@ -1,5 +1,5 @@
 import { getContentType } from './utils.js';
-import { resolve, normalize, relative } from 'path';
+import { resolve, relative } from 'path';
 
 // Load static files into memory
 const index_page = Bun.file('static/index.html');
@@ -68,7 +68,7 @@ function getCachingHeaders(filePath: string): Record<string, string> {
   return headers;
 }
 
-export async function handleStaticRoute(req: Request, url: URL): Promise<Response | null> {
+export async function handleStaticRoute(_req: Request, url: URL): Promise<Response | null> {
   // Handle specific routes first
   switch (url.pathname) {
     case '/styles.css':

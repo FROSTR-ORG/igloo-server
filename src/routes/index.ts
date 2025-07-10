@@ -20,7 +20,6 @@ import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { 
-  requireAuth, 
   handleLogin, 
   handleLogout, 
   getAuthStatus, 

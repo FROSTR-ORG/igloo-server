@@ -51,7 +51,7 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
         }
       },
       
-      cancel(reason) {
+      cancel(_reason) {
         try {
           // Remove this controller when the connection is closed
           if (streamController) {

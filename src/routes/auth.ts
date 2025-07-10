@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from 'crypto';
+import { randomBytes, timingSafeEqual } from 'crypto';
 
 // Validate SESSION_SECRET configuration
 function validateSessionSecret(): string | null {

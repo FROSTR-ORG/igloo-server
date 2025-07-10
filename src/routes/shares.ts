@@ -3,7 +3,7 @@ import { RouteContext } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
 
-export async function handleSharesRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+export async function handleSharesRoute(req: Request, url: URL, _context: RouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/shares')) return null;
 
   // Get secure CORS headers based on request origin
