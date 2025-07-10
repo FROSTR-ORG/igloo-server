@@ -87,7 +87,7 @@ paths:
                 $ref: '#/components/schemas/AuthStatus'
               example:
                 enabled: true
-                methods: ["api-key", "basic-auth", "session"]
+                methods: ["api-key", "bearer", "basic-auth", "session"]
                 rateLimiting: true
                 sessionTimeout: 3600
 
@@ -870,7 +870,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["api-key", "basic-auth", "session"]
+            enum: ["api-key", "bearer", "basic-auth", "session"]
           description: Available authentication methods
         rateLimiting:
           type: boolean
@@ -1064,7 +1064,7 @@ components:
                       type: string
           example:
             error: "Authentication required"
-            authMethods: ["api-key", "basic-auth", "session"]
+            authMethods: ["api-key", "bearer", "basic-auth", "session"]
 
     InternalServerError:
       description: Internal server error
