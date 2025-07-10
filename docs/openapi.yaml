@@ -1,0 +1,1093 @@
+openapi: 3.0.3
+info:
+  title: Igloo Server API
+  description: |
+    A server-based signing device and personal ephemeral relay for the FROSTR protocol. 
+    
+    ## Authentication
+    
+    The Igloo Server supports multiple authentication methods:
+    - **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>`
+    - **Basic Auth**: Standard HTTP Basic Authentication
+    - **Session**: Cookie-based sessions for web UI
+    
+    ## Rate Limiting
+    
+    API requests are rate limited per IP address. Default limits:
+    - 100 requests per 15-minute window
+    - Rate limit headers included in responses
+    
+    ## CORS
+    
+    Cross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.
+  version: 0.1.5
+  contact:
+    name: FROSTR Organization
+    url: https://github.com/FROSTR-ORG/igloo-server
+  license:
+    name: MIT
+    url: https://github.com/FROSTR-ORG/igloo-server/blob/main/LICENSE
+
+servers:
+  - url: http://localhost:8002
+    description: Local development server
+  - url: https://your-domain.com
+    description: Production server
+
+paths:
+  /api/status:
+    get:
+      summary: Get server status
+      description: Returns the current status of the server and Bifrost node
+      tags:
+        - Status
+      responses:
+        '200':
+          description: Server status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerStatus'
+              example:
+                serverRunning: true
+                nodeActive: true
+                hasCredentials: true
+                relayCount: 2
+                timestamp: "2025-01-20T12:00:00.000Z"
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/auth/status:
+    get:
+      summary: Get authentication status
+      description: Returns the current authentication configuration and available methods
+      tags:
+        - Authentication
+      responses:
+        '200':
+          description: Authentication status retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthStatus'
+              example:
+                enabled: true
+                methods: ["api-key", "basic-auth", "session"]
+                rateLimiting: true
+                sessionTimeout: 3600
+
+  /api/auth/login:
+    post:
+      summary: Authenticate user
+      description: Login with username/password or API key to get a session
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/BasicAuthLogin'
+                - $ref: '#/components/schemas/ApiKeyLogin'
+            examples:
+              basicAuth:
+                summary: Username/Password login
+                value:
+                  username: "admin"
+                  password: "your-password"
+              apiKey:
+                summary: API Key login
+                value:
+                  apiKey: "your-api-key"
+      responses:
+        '200':
+          description: Login successful
+          headers:
+            Set-Cookie:
+              description: Session cookie (if session auth is configured)
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResponse'
+              example:
+                success: true
+                sessionId: "abc123def456"
+                userId: "admin"
+                expiresIn: 3600
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Invalid credentials"
+
+  /api/auth/logout:
+    post:
+      summary: Logout user
+      description: Clear the current session
+      tags:
+        - Authentication
+      security:
+        - sessionAuth: []
+        - apiKeyAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Logout successful
+          headers:
+            Set-Cookie:
+              description: Cleared session cookie
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+
+  /api/env:
+    get:
+      summary: Get environment variables
+      description: Retrieve current environment configuration (whitelisted variables only)
+      tags:
+        - Configuration
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Environment variables retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnvironmentVariables'
+              example:
+                GROUP_CRED: "bfgroup1qqsqp..."
+                SHARE_CRED: "bfshare1qqsqp..."
+                RELAYS: "[\"wss://relay.primal.net\"]"
+                GROUP_NAME: "my-signing-group"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Update environment variables
+      description: Update environment configuration (whitelisted variables only)
+      tags:
+        - Configuration
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnvironmentVariables'
+            example:
+              GROUP_CRED: "bfgroup1qqsqp..."
+              SHARE_CRED: "bfshare1qqsqp..."
+              RELAYS: "[\"wss://relay.primal.net\",\"wss://relay.damus.io\"]"
+              GROUP_NAME: "my-signing-group"
+      responses:
+        '200':
+          description: Environment variables updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  rejectedKeys:
+                    type: array
+                    items:
+                      type: string
+                example:
+                  success: true
+                  message: "Environment variables updated and node restarted"
+        '400':
+          description: Invalid environment variables
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                message: "No valid environment variables provided"
+                rejectedKeys: ["INVALID_KEY"]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/env/delete:
+    post:
+      summary: Delete environment variables
+      description: Remove specified environment variables
+      tags:
+        - Configuration
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                keys:
+                  type: array
+                  items:
+                    type: string
+                  description: List of environment variable keys to delete
+              required:
+                - keys
+            example:
+              keys: ["GROUP_CRED", "SHARE_CRED"]
+      responses:
+        '200':
+          description: Environment variables deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  deletedKeys:
+                    type: array
+                    items:
+                      type: string
+                  rejectedKeys:
+                    type: array
+                    items:
+                      type: string
+                example:
+                  success: true
+                  message: "Environment variables deleted"
+                  deletedKeys: ["GROUP_CRED", "SHARE_CRED"]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/peers:
+    get:
+      summary: List peers in signing group
+      description: Get all peers from the group credential with their current status
+      tags:
+        - Peers
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Peers retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  peers:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/PeerStatus'
+                  total:
+                    type: integer
+                  online:
+                    type: integer
+                example:
+                  peers:
+                    - pubkey: "02abcd1234..."
+                      online: true
+                      lastSeen: "2025-01-20T12:00:00.000Z"
+                      latency: 150
+                      lastPingAttempt: "2025-01-20T11:59:00.000Z"
+                    - pubkey: "03efgh5678..."
+                      online: false
+                      lastSeen: null
+                      latency: null
+                      lastPingAttempt: "2025-01-20T11:58:00.000Z"
+                  total: 2
+                  online: 1
+        '400':
+          description: No group credential available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "No group credential available"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/peers/self:
+    get:
+      summary: Get self public key
+      description: Get the public key of this node from the share credential
+      tags:
+        - Peers
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Self public key retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  pubkey:
+                    type: string
+                    description: This node's public key
+                  warnings:
+                    type: array
+                    items:
+                      type: string
+                example:
+                  pubkey: "02abcd1234..."
+                  warnings: []
+        '400':
+          description: Missing credentials or could not extract pubkey
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Missing credentials"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/peers/ping:
+    post:
+      summary: Ping peers
+      description: Ping specific peer or all peers to check connectivity
+      tags:
+        - Peers
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                target:
+                  oneOf:
+                    - type: string
+                      enum: ["all"]
+                    - type: string
+                      pattern: "^(02|03)[a-fA-F0-9]{64}$"
+                  description: Either "all" to ping all peers, or a specific peer's public key
+              required:
+                - target
+            examples:
+              pingAll:
+                summary: Ping all peers
+                value:
+                  target: "all"
+              pingSpecific:
+                summary: Ping specific peer
+                value:
+                  target: "02abcd1234..."
+      responses:
+        '200':
+          description: Ping completed successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/PingResult'
+                  - type: array
+                    items:
+                      $ref: '#/components/schemas/PingResult'
+              examples:
+                singlePing:
+                  summary: Single peer ping result
+                  value:
+                    success: true
+                    pubkey: "02abcd1234..."
+                    latency: 150
+                    policy:
+                      send: true
+                      recv: true
+                    timestamp: "2025-01-20T12:00:00.000Z"
+                allPings:
+                  summary: All peers ping results
+                  value:
+                    - success: true
+                      pubkey: "02abcd1234..."
+                      latency: 150
+                      policy:
+                        send: true
+                        recv: true
+                      timestamp: "2025-01-20T12:00:00.000Z"
+                    - success: false
+                      pubkey: "03efgh5678..."
+                      error: "Timeout"
+                      timestamp: "2025-01-20T12:00:05.000Z"
+        '400':
+          description: Invalid target parameter
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid target parameter"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Node not available
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Node not available"
+
+  /api/recover:
+    post:
+      summary: Recover secret key from shares
+      description: Use threshold shares to recover the original secret key
+      tags:
+        - Key Recovery
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                groupCredential:
+                  type: string
+                  description: Group credential (bfgroup1...)
+                  pattern: "^bfgroup1"
+                shareCredentials:
+                  type: array
+                  items:
+                    type: string
+                    pattern: "^bfshare1"
+                  description: Array of share credentials (bfshare1...)
+                  minItems: 1
+              required:
+                - groupCredential
+                - shareCredentials
+            example:
+              groupCredential: "bfgroup1qqsqp..."
+              shareCredentials:
+                - "bfshare1qqsqp..."
+                - "bfshare1qqsqp..."
+      responses:
+        '200':
+          description: Secret key recovered successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  nsec:
+                    type: string
+                    description: Recovered secret key in nsec format
+                  details:
+                    type: object
+                    properties:
+                      sharesUsed:
+                        type: integer
+                      thresholdRequired:
+                        type: integer
+                      invalidShares:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            index:
+                              type: integer
+                            error:
+                              type: string
+                example:
+                  success: true
+                  nsec: "nsec1abc123..."
+                  details:
+                    sharesUsed: 2
+                    thresholdRequired: 2
+        '400':
+          description: Invalid credentials or insufficient shares
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                  details:
+                    type: object
+                example:
+                  success: false
+                  error: "Insufficient shares: need 2, got 1"
+                  details:
+                    provided: 1
+                    required: 2
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Recovery failed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  error:
+                    type: string
+                example:
+                  success: false
+                  error: "Recovery failed: Invalid shares"
+
+  /api/recover/validate:
+    post:
+      summary: Validate credentials
+      description: Validate group or share credentials without performing recovery
+      tags:
+        - Key Recovery
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum: ["group", "share"]
+                  description: Type of credential to validate
+                credential:
+                  type: string
+                  description: The credential to validate
+              required:
+                - type
+                - credential
+            examples:
+              validateGroup:
+                summary: Validate group credential
+                value:
+                  type: "group"
+                  credential: "bfgroup1qqsqp..."
+              validateShare:
+                summary: Validate share credential
+                value:
+                  type: "share"
+                  credential: "bfshare1qqsqp..."
+      responses:
+        '200':
+          description: Validation completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  validation:
+                    type: object
+                    properties:
+                      isValid:
+                        type: boolean
+                      message:
+                        type: string
+                  decoded:
+                    type: object
+                    properties:
+                      threshold:
+                        type: integer
+                        nullable: true
+                      totalShares:
+                        type: integer
+                        nullable: true
+                      idx:
+                        type: integer
+                        nullable: true
+                example:
+                  success: true
+                  validation:
+                    isValid: true
+                  decoded:
+                    threshold: 2
+                    totalShares: 3
+                    idx: null
+        '400':
+          description: Invalid request or credential type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Invalid type. Must be 'group' or 'share'"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/shares:
+    get:
+      summary: Get stored shares
+      description: Retrieve currently stored share information
+      tags:
+        - Share Management
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Shares retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/StoredShare'
+              example:
+                - shareCredential: "bfshare1qqsqp..."
+                  groupCredential: "bfgroup1qqsqp..."
+                  savedAt: "2025-01-20T12:00:00.000Z"
+                  id: "env-stored-share"
+                  source: "environment"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+    post:
+      summary: Store new share
+      description: Save share and group credentials
+      tags:
+        - Share Management
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                shareCredential:
+                  type: string
+                  pattern: "^bfshare1"
+                  description: Share credential to store
+                groupCredential:
+                  type: string
+                  pattern: "^bfgroup1"
+                  description: Group credential to store
+              required:
+                - shareCredential
+                - groupCredential
+            example:
+              shareCredential: "bfshare1qqsqp..."
+              groupCredential: "bfgroup1qqsqp..."
+      responses:
+        '200':
+          description: Share saved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                example:
+                  success: true
+                  message: "Share saved successfully"
+        '400':
+          description: Missing or invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Invalid credentials provided"
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          description: Failed to save share
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                success: false
+                error: "Failed to save share"
+
+  /api/events:
+    get:
+      summary: Server-Sent Events stream
+      description: |
+        Subscribe to real-time server events using Server-Sent Events.
+        
+        Events include:
+        - `system`: Server status changes
+        - `sign`: Signature requests and responses
+        - `bifrost`: Peer connections and network events
+        - `ecdh`: ECDH protocol events
+        
+        Note: This endpoint uses Server-Sent Events (SSE) and requires EventSource client.
+      tags:
+        - Events
+      security:
+        - apiKeyAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      responses:
+        '200':
+          description: Event stream established
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: Server-Sent Events stream
+              example: |
+                data: {"type":"system","message":"Connected to event stream","timestamp":"12:34:56","id":"abc123"}
+                
+                data: {"type":"sign","message":"Signature request received","timestamp":"12:35:01","id":"def456"}
+                
+                data: {"type":"bifrost","message":"Peer connected","timestamp":"12:35:03","id":"ghi789"}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key authentication
+    
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token authentication (alternative to X-API-Key header)
+    
+    basicAuth:
+      type: http
+      scheme: basic
+      description: HTTP Basic Authentication
+    
+    sessionAuth:
+      type: apiKey
+      in: header
+      name: X-Session-ID
+      description: Session-based authentication for web UI
+
+  schemas:
+    ServerStatus:
+      type: object
+      properties:
+        serverRunning:
+          type: boolean
+          description: Whether the server is running
+        nodeActive:
+          type: boolean
+          description: Whether the Bifrost node is active
+        hasCredentials:
+          type: boolean
+          description: Whether FROSTR credentials are configured
+        relayCount:
+          type: integer
+          description: Number of configured relays
+        timestamp:
+          type: string
+          format: date-time
+          description: Current server timestamp
+      required:
+        - serverRunning
+        - nodeActive
+        - hasCredentials
+        - relayCount
+        - timestamp
+
+    AuthStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: Whether authentication is enabled
+        methods:
+          type: array
+          items:
+            type: string
+            enum: ["api-key", "basic-auth", "session"]
+          description: Available authentication methods
+        rateLimiting:
+          type: boolean
+          description: Whether rate limiting is enabled
+        sessionTimeout:
+          type: integer
+          description: Session timeout in seconds (dynamic based on configuration)
+      required:
+        - enabled
+        - methods
+        - rateLimiting
+        - sessionTimeout
+
+    BasicAuthLogin:
+      type: object
+      properties:
+        username:
+          type: string
+          description: Username for basic authentication
+        password:
+          type: string
+          description: Password for basic authentication
+      required:
+        - username
+        - password
+
+    ApiKeyLogin:
+      type: object
+      properties:
+        apiKey:
+          type: string
+          description: API key for authentication
+      required:
+        - apiKey
+
+    LoginResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        sessionId:
+          type: string
+          description: Session ID (if session auth is configured)
+        userId:
+          type: string
+          description: User identifier
+        expiresIn:
+          type: integer
+          description: Session expiration time in seconds
+        warning:
+          type: string
+          description: Warning message (if session creation failed)
+      required:
+        - success
+        - userId
+
+    EnvironmentVariables:
+      type: object
+      properties:
+        GROUP_CRED:
+          type: string
+          description: FROSTR group credential
+          pattern: "^bfgroup1"
+        SHARE_CRED:
+          type: string
+          description: FROSTR share credential
+          pattern: "^bfshare1"
+        RELAYS:
+          type: string
+          description: JSON array of relay URLs
+        GROUP_NAME:
+          type: string
+          description: Display name for the signing group
+      additionalProperties: false
+
+    PeerStatus:
+      type: object
+      properties:
+        pubkey:
+          type: string
+          description: Peer's public key
+          pattern: "^(02|03)[a-fA-F0-9]{64}$"
+        online:
+          type: boolean
+          description: Whether the peer is currently online
+        lastSeen:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last time peer was seen online
+        latency:
+          type: integer
+          nullable: true
+          description: Last measured latency in milliseconds
+        lastPingAttempt:
+          type: string
+          format: date-time
+          nullable: true
+          description: Last ping attempt timestamp
+      required:
+        - pubkey
+        - online
+
+    PingResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+          description: Whether the ping was successful
+        pubkey:
+          type: string
+          description: Target peer's public key
+        latency:
+          type: integer
+          nullable: true
+          description: Round-trip time in milliseconds
+        policy:
+          type: object
+          nullable: true
+          properties:
+            send:
+              type: boolean
+              description: Whether peer accepts messages from us
+            recv:
+              type: boolean
+              description: Whether we accept messages from peer
+        error:
+          type: string
+          nullable: true
+          description: Error message if ping failed
+        timestamp:
+          type: string
+          format: date-time
+          description: Ping timestamp
+      required:
+        - success
+        - pubkey
+        - timestamp
+
+    StoredShare:
+      type: object
+      properties:
+        shareCredential:
+          type: string
+          description: The share credential
+        groupCredential:
+          type: string
+          description: The group credential
+        savedAt:
+          type: string
+          format: date-time
+          description: When the share was saved
+        id:
+          type: string
+          description: Unique identifier for the share
+        source:
+          type: string
+          description: Source of the share (e.g., "environment")
+      required:
+        - shareCredential
+        - groupCredential
+        - savedAt
+        - id
+        - source
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+          description: Error message
+        success:
+          type: boolean
+          description: Always false for error responses
+      required:
+        - error
+
+  responses:
+    Unauthorized:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: '#/components/schemas/ErrorResponse'
+              - type: object
+                properties:
+                  authMethods:
+                    type: array
+                    items:
+                      type: string
+          example:
+            error: "Authentication required"
+            authMethods: ["api-key", "basic-auth", "session"]
+
+    InternalServerError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Internal server error"
+
+    RateLimitExceeded:
+      description: Rate limit exceeded
+      headers:
+        Retry-After:
+          description: Seconds to wait before retrying
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: "Rate limit exceeded. Try again later."
+
+tags:
+  - name: Status
+    description: Server and node status endpoints
+  - name: Authentication
+    description: Authentication and session management
+  - name: Configuration
+    description: Environment variable management
+  - name: Peers
+    description: Peer discovery and connectivity
+  - name: Key Recovery
+    description: Secret key recovery from threshold shares
+  - name: Share Management
+    description: Share storage and management
+  - name: Events
+    description: Real-time event streaming 

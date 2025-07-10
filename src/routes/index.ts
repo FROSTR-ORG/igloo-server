@@ -19,6 +19,7 @@ import { handleRecoveryRoute } from './recovery.js';
 import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
+import { handleDocsRoute } from './docs.js';
 import { 
   handleLogin, 
   handleLogout, 
@@ -62,6 +63,28 @@ export async function handleRequest(
   
   if (url.pathname === '/api/auth/status') {
     return Response.json(getAuthStatus(), { headers });
+  }
+
+  // Handle API documentation (require auth in production for security)
+  if (url.pathname.startsWith('/api/docs')) {
+    // Require authentication for docs in production
+    if (AUTH_CONFIG.ENABLED && process.env.NODE_ENV === 'production') {
+      const authResult = authenticate(req);
+      if (!authResult.authenticated) {
+        return Response.json({ 
+          error: 'Authentication required for API documentation in production',
+          authMethods: getAuthStatus()
+        }, { 
+          status: 401,
+          headers 
+        });
+      }
+    }
+    
+    const docsResult = await handleDocsRoute(req, url);
+    if (docsResult) {
+      return docsResult;
+    }
   }
 
   // Handle static files without auth (frontend needs to load to show login)

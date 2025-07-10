@@ -9,7 +9,8 @@
     "build:js:prod": "NODE_ENV=production esbuild frontend/index.tsx --bundle --outfile=static/app.js --jsx=automatic --minify --tree-shaking --define:process.env.NODE_ENV='\"production\"'",
     "build": "bun run build:js:prod && bun run build:css:prod",
     "build:dev": "bun run build:js && cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css",
-    "dev": "concurrently \"bun run build:css\" \"bun run build:js -- --watch\""
+    "dev": "concurrently \"bun run build:css\" \"bun run build:js -- --watch\"",
+    "docs:validate": "bun -e \"const YAML = require('yaml'); const fs = require('fs'); try { YAML.parse(fs.readFileSync('docs/openapi.yaml', 'utf8')); console.log('✅ OpenAPI spec is valid'); } catch (e) { console.error('❌ OpenAPI spec validation failed:', e.message); process.exit(1); }\""
   },
   "dependencies": {
     "@cmdcode/buff": "^2.2.5",
@@ -33,7 +34,9 @@
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.2",
+    "@types/yaml": "^1.9.10",
     "bun-types": "latest",
+    "yaml": "^2.4.1",
     "esbuild": "^0.24.2",
     "concurrently": "^9.1.0",
     "tailwindcss-animate": "^1.0.7",
