@@ -40,6 +40,11 @@ servers:
   - url: http://localhost:8002
     description: Local development server (HTTP for local development only)
 
+security:
+  - apiKeyAuth: []
+  - basicAuth: []
+  - sessionAuth: []
+
 paths:
   /api/status:
     get:
@@ -146,10 +151,6 @@ paths:
       description: Clear the current session
       tags:
         - Authentication
-      security:
-        - sessionAuth: []
-        - apiKeyAuth: []
-        - basicAuth: []
       responses:
         '200':
           description: Logout successful
@@ -174,10 +175,6 @@ paths:
       description: Retrieve current environment configuration (whitelisted variables only)
       tags:
         - Configuration
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       responses:
         '200':
           description: Environment variables retrieved successfully
@@ -201,10 +198,6 @@ paths:
       description: Update environment configuration (whitelisted variables only)
       tags:
         - Configuration
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -255,10 +248,6 @@ paths:
       description: Remove specified environment variables
       tags:
         - Configuration
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -311,10 +300,6 @@ paths:
       description: Get all peers from the group credential with their current status
       tags:
         - Peers
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       responses:
         '200':
           description: Peers retrieved successfully
@@ -363,10 +348,6 @@ paths:
       description: Get the public key of this node from the share credential
       tags:
         - Peers
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       responses:
         '200':
           description: Self public key retrieved successfully
@@ -403,10 +384,6 @@ paths:
       description: Ping specific peer or all peers to check connectivity
       tags:
         - Peers
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -494,10 +471,6 @@ paths:
       description: Use threshold shares to recover the original secret key
       tags:
         - Key Recovery
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -602,10 +575,6 @@ paths:
       description: Validate group or share credentials without performing recovery
       tags:
         - Key Recovery
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -687,10 +656,6 @@ paths:
       description: Retrieve currently stored share information
       tags:
         - Share Management
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       responses:
         '200':
           description: Shares retrieved successfully
@@ -717,10 +682,6 @@ paths:
       description: Save share and group credentials
       tags:
         - Share Management
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       requestBody:
         required: true
         content:
@@ -794,10 +755,6 @@ paths:
         Note: This endpoint uses Server-Sent Events (SSE) and requires EventSource client.
       tags:
         - Events
-      security:
-        - apiKeyAuth: []
-        - basicAuth: []
-        - sessionAuth: []
       responses:
         '200':
           description: Event stream established
