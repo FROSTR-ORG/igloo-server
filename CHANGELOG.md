@@ -1,5 +1,9 @@
 # CHANGELOG
 
+## [0.1.4] - 2025-07-10
+### Changes since v0.1.3:
+- fix: resolve CI workflow failures
+
 ## [0.1.3] - 2025-07-10
 ### Changes since v1.0.1:
 - chore: update version to 0.1.2 and prepare for release
