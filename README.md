@@ -4,6 +4,50 @@ A server-based signing device and personal ephemeral relay for the **FROSTR** pr
 
 Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reliable FROSTR protocol operations.
 
+## Table of Contents
+
+- [What is FROSTR?](#what-is-frostr)
+- [Features](#features)
+  - [🔐 FROSTR Signing Node](#-frostr-signing-node)
+  - [🌐 Modern Web Interface](#-modern-web-interface)
+  - [📡 Ephemeral Nostr Relay](#-ephemeral-nostr-relay)
+  - [⚙️ Flexible Operation Modes](#️-flexible-operation-modes)
+- [Architecture](#architecture)
+- [Quick Start](#quick-start)
+  - [Prerequisites](#prerequisites)
+  - [Installation & Setup](#installation--setup)
+  - [Configuration Options](#configuration-options)
+  - [Docker Deployment](#docker-deployment)
+- [API Reference](#api-reference)
+  - [Authentication](#authentication)
+  - [Environment Management](#environment-management)
+  - [Server Status](#server-status)
+  - [Peer Management](#peer-management)
+  - [Key Recovery](#key-recovery)
+  - [Share Management](#share-management)
+  - [Real-time Events](#real-time-events)
+- [Deployment](#deployment)
+  - [Digital Ocean Deployment](#digital-ocean-deployment)
+  - [Umbrel Deployment](#umbrel-deployment)
+  - [Start9 Deployment](#start9-deployment)
+- [Development](#development)
+  - [Development Mode](#development-mode)
+  - [Development vs Production Caching](#development-vs-production-caching)
+  - [Build Commands](#build-commands)
+  - [Frontend Structure](#frontend-structure)
+- [Built on Igloo-Core](#built-on-igloo-core)
+- [Environment Variables](#environment-variables)
+- [Troubleshooting](#troubleshooting)
+  - [Common Issues](#common-issues)
+  - [Getting Help](#getting-help)
+- [Security Configuration](#security-configuration)
+  - [🔐 Authentication](#-authentication)
+  - [📋 Quick Security Setup](#-quick-security-setup)
+  - [🛡️ Security Features](#️-security-features)
+- [Security Notes](#security-notes)
+- [License](#license)
+- [Contributing](#contributing)
+
 ## What is FROSTR?
 
 **FROSTR** is a simple k-of-n remote signing and key management protocol for Nostr, using the powers of FROST. It allows you to break up an existing **nsec** into fragments called "shares" and create any kind of multi-signature setup using your shares and signing devices. If one share is compromised, your secret key remains safe, and your **npub** and signatures don't change - nobody knows you're using a multi-sig.
@@ -25,10 +69,10 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Authentication**: Secure login with multiple authentication methods (API key, username/password, sessions)
 
 ### 📡 **Ephemeral Nostr Relay**
+- **Testing Convenience Only**: Built-in relay for development and integration testing; **not recommended for production deployments**
 - **In-Memory Storage**: Temporarily caches events without persistent database
 - **WebSocket Support**: Full NIP-01 compliant Nostr relay implementation  
 - **Auto-Purging**: Configurable memory cleanup (default: 30 seconds)
-- **Development Ready**: Perfect for testing and coordination within your signing network
 
 ### ⚙️ **Flexible Operation Modes**
 - **Web UI Mode**: Full React interface for interactive management
@@ -42,7 +86,7 @@ The server provides three integrated services:
 
 1. **FROSTR Signing Node** - Built on igloo-core with bifrost protocol implementation
 2. **Web Interface** - React frontend for configuration and monitoring  
-3. **Ephemeral Relay** - In-memory Nostr relay for network coordination
+3. **Ephemeral Test Relay** - In-memory relay included for development/testing convenience; not suitable for production
 
 ## Quick Start
 
