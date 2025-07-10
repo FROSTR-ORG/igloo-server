@@ -245,6 +245,130 @@ data: {"type":"sign","message":"Signature request received","timestamp":"12:34:5
 data: {"type":"bifrost","message":"Peer connected","timestamp":"12:34:57","id":"def456"}
 ```
 
+## Deployment
+
+### Digital Ocean Deployment
+
+Deploy Igloo Server on Digital Ocean using Docker for a production-ready setup:
+
+#### 1. Create a Digital Ocean Droplet
+```bash
+# Create a new droplet (Ubuntu 22.04 recommended)
+# Minimum: 1GB RAM, 1 vCPU, 25GB SSD
+# Recommended: 2GB RAM, 2 vCPU, 50GB SSD
+```
+
+#### 2. Install Docker
+```bash
+# Connect to your droplet via SSH
+ssh root@your-droplet-ip
+
+# Install Docker and Docker Compose
+curl -fsSL https://get.docker.com -o get-docker.sh
+sh get-docker.sh
+
+# Install Docker Compose
+sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+sudo chmod +x /usr/local/bin/docker-compose
+```
+
+#### 3. Deploy with Docker Compose
+```bash
+# Clone the repository
+git clone https://github.com/FROSTR-ORG/igloo-server.git
+cd igloo-server
+
+# Create production environment file
+cat > .env.production << EOF
+NODE_ENV=production
+GROUP_CRED=bfgroup1qqsqp...your-group-credential
+SHARE_CRED=bfshare1qqsqp...your-share-credential
+RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
+GROUP_NAME=my-signing-group
+
+# Security settings (REQUIRED for production)
+AUTH_ENABLED=true
+API_KEY=your-secure-api-key-here
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=your-strong-password
+SESSION_SECRET=your-random-64-char-session-secret-here
+RATE_LIMIT_ENABLED=true
+ALLOWED_ORIGINS=https://yourdomain.com
+EOF
+
+# Deploy with Docker Compose
+docker-compose --env-file .env.production up -d
+```
+
+#### 4. Configure Firewall
+```bash
+# Allow HTTP/HTTPS traffic
+sudo ufw allow 80
+sudo ufw allow 443
+sudo ufw allow 8002  # If accessing directly without reverse proxy
+
+# Enable firewall
+sudo ufw enable
+```
+
+#### 5. Set Up Reverse Proxy (Recommended)
+```bash
+# Install nginx
+sudo apt update
+sudo apt install nginx
+
+# Configure nginx for SSL termination
+sudo nano /etc/nginx/sites-available/igloo-server
+```
+
+```nginx
+server {
+    listen 80;
+    server_name yourdomain.com;
+    
+    location / {
+        proxy_pass http://localhost:8002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+```
+
+```bash
+# Enable site and restart nginx
+sudo ln -s /etc/nginx/sites-available/igloo-server /etc/nginx/sites-enabled/
+sudo systemctl restart nginx
+
+# Add SSL with Let's Encrypt (optional)
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d yourdomain.com
+```
+
+#### 6. Monitor and Maintain
+```bash
+# Check container status
+docker-compose ps
+
+# View logs
+docker-compose logs -f
+
+# Update deployment
+git pull
+docker-compose --env-file .env.production up -d --build
+```
+
+### Umbrel Deployment
+*Coming Soon* - One-click installation through the Umbrel App Store.
+
+### Start9 Deployment  
+*Coming Soon* - Native Start9 service package for sovereign server deployments.
+
 ## Development
 
 ### Development Mode
