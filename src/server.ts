@@ -70,6 +70,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
 // HTTP Server
 serve({
   port: 8002,
+  hostname: '0.0.0.0', // Bind to all interfaces for Docker compatibility
   websocket: relay.handler(),
   fetch: async (req, server) => {
     if (server.upgrade(req)) return;

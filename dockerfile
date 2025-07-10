@@ -36,4 +36,8 @@ COPY --from=build /app/tsconfig.json ./
 
 EXPOSE 8002
 
+# Set environment variables for Docker
+ENV HOST_NAME=0.0.0.0
+ENV HOST_PORT=8002
+
 CMD ["bun", "start"]
