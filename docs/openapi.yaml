@@ -1,15 +1,21 @@
-openapi: 3.0.3
+openapi: 3.1.0
 info:
   title: Igloo Server API
   description: |
     A server-based signing device and personal ephemeral relay for the FROSTR protocol. 
     
+    ## Security Requirements
+    
+    **HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.
+    
     ## Authentication
     
     The Igloo Server supports multiple authentication methods:
-    - **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>`
-    - **Basic Auth**: Standard HTTP Basic Authentication
-    - **Session**: Cookie-based sessions for web UI
+    - **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)
+    - **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)
+    - **Session**: Cookie-based sessions for web UI (HTTPS required)
+    
+    **Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.
     
     ## Rate Limiting
     
@@ -29,10 +35,14 @@ info:
     url: https://github.com/FROSTR-ORG/igloo-server/blob/main/LICENSE
 
 servers:
+  - url: https://api.example.com
+    description: Production server (HTTPS required)
   - url: http://localhost:8002
-    description: Local development server
-  - url: https://your-domain.com
-    description: Production server
+    description: Local development server (HTTP for local development only)
+
+security:
+  - apiKeyAuth: []
+  - bearerAuth: []
 
 paths:
   /api/status:
@@ -41,6 +51,7 @@ paths:
       description: Returns the current status of the server and Bifrost node
       tags:
         - Status
+      security: []  # Public endpoint - no authentication required
       responses:
         '200':
           description: Server status retrieved successfully
@@ -63,6 +74,7 @@ paths:
       description: Returns the current authentication configuration and available methods
       tags:
         - Authentication
+      security: []  # Public endpoint - no authentication required
       responses:
         '200':
           description: Authentication status retrieved successfully
@@ -82,6 +94,7 @@ paths:
       description: Login with username/password or API key to get a session
       tags:
         - Authentication
+      security: []  # Public endpoint - no authentication required for login
       requestBody:
         required: true
         content:
@@ -802,23 +815,61 @@ components:
       type: apiKey
       in: header
       name: X-API-Key
-      description: API key authentication
+      description: |
+        API key authentication via X-API-Key header.
+        
+        **Security Requirements:**
+        - HTTPS is mandatory in production environments
+        - API keys must be transmitted over encrypted connections only
+        - Never include API keys in URL query parameters
+        
+        **Recommended for Production:**
+        Consider implementing OAuth2/OIDC flows for enhanced security and token management in sensitive production environments.
     
     bearerAuth:
       type: http
       scheme: bearer
-      description: Bearer token authentication (alternative to X-API-Key header)
+      description: |
+        Bearer token authentication (alternative to X-API-Key header).
+        
+        **Security Requirements:**  
+        - HTTPS is mandatory in production environments
+        - Bearer tokens must be transmitted over encrypted connections only
+        - Never include bearer tokens in URL query parameters
+        
+        **Recommended for Production:**
+        OAuth2/OIDC bearer tokens provide better security, token rotation, and scope management compared to static API keys.
     
     basicAuth:
       type: http
       scheme: basic
-      description: HTTP Basic Authentication
+      description: |
+        HTTP Basic Authentication using username and password.
+        
+        **Security Requirements:**
+        - HTTPS is absolutely critical - Basic Auth transmits credentials in Base64 encoding (not encryption)
+        - Never use Basic Auth over HTTP in production as credentials are easily intercepted
+        - Credentials are sent with every request, increasing exposure risk
+        
+        **Production Recommendation:**
+        Basic Auth is discouraged for production use. Implement OAuth2/OIDC with proper token-based authentication for enhanced security, session management, and credential protection.
     
     sessionAuth:
       type: apiKey
       in: header
       name: X-Session-ID
-      description: Session-based authentication for web UI
+      description: |
+        Session-based authentication for web UI using session cookies.
+        
+        **Security Requirements:**
+        - HTTPS is mandatory to protect session cookies from interception
+        - Session cookies must have Secure flag set in production
+        - Implement proper session timeout and rotation mechanisms
+        
+        **Best Practices:**
+        - Use HttpOnly and SameSite cookie attributes
+        - Consider implementing CSRF protection
+        - For high-security applications, consider OAuth2/OIDC with refresh token rotation
 
   schemas:
     ServerStatus:

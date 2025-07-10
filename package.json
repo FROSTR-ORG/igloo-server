@@ -10,7 +10,8 @@
     "build": "bun run build:js:prod && bun run build:css:prod",
     "build:dev": "bun run build:js && cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css",
     "dev": "concurrently \"bun run build:css\" \"bun run build:js -- --watch\"",
-    "docs:validate": "bun -e \"const YAML = require('yaml'); const fs = require('fs'); try { YAML.parse(fs.readFileSync('docs/openapi.yaml', 'utf8')); console.log('✅ OpenAPI spec is valid'); } catch (e) { console.error('❌ OpenAPI spec validation failed:', e.message); process.exit(1); }\""
+    "docs:validate": "bunx redocly lint docs/openapi.yaml",
+    "docs:bundle": "bunx redocly bundle docs/openapi.yaml --output docs/openapi.json"
   },
   "dependencies": {
     "@cmdcode/buff": "^2.2.5",
@@ -32,6 +33,7 @@
     "yaml": "^2.4.1"
   },
   "devDependencies": {
+    "@redocly/cli": "^1.25.9",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.2",

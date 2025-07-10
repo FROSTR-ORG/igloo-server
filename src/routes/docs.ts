@@ -126,7 +126,7 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
 
   switch (url.pathname) {
     case '/api/docs':
-    case '/api/docs/':
+    case '/api/docs/': {
       // Swagger UI interface
       const specUrl = `${url.origin}/api/docs/openapi.json`;
       return new Response(swaggerUIHtml(specUrl), {
@@ -135,6 +135,7 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
           ...headers
         }
       });
+    }
 
     case '/api/docs/openapi.json':
       // OpenAPI spec in JSON format
