@@ -15,7 +15,7 @@
   },
   "servers": [
     {
-      "url": "https://api.example.com",
+      "url": "https://your-domain.com",
       "description": "Production server (HTTPS required)"
     },
     {
@@ -23,14 +23,7 @@
       "description": "Local development server (HTTP for local development only)"
     }
   ],
-  "security": [
-    {
-      "apiKeyAuth": []
-    },
-    {
-      "bearerAuth": []
-    }
-  ],
+
   "tags": [
     {
       "name": "Status",
@@ -283,7 +276,7 @@
                 "example": {
                   "GROUP_CRED": "bfgroup1qqsqp...",
                   "SHARE_CRED": "bfshare1qqsqp...",
-                  "RELAYS": "[\"wss://relay.primal.net\"]",
+                  "RELAYS": ["wss://relay.primal.net"],
                   "GROUP_NAME": "my-signing-group"
                 }
               }
@@ -324,7 +317,7 @@
               "example": {
                 "GROUP_CRED": "bfgroup1qqsqp...",
                 "SHARE_CRED": "bfshare1qqsqp...",
-                "RELAYS": "[\"wss://relay.primal.net\",\"wss://relay.damus.io\"]",
+                "RELAYS": ["wss://relay.primal.net", "wss://relay.damus.io"],
                 "GROUP_NAME": "my-signing-group"
               }
             }
@@ -1434,8 +1427,15 @@
             "pattern": "^bfshare1"
           },
           "RELAYS": {
-            "type": "string",
-            "description": "JSON array of relay URLs"
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri",
+              "pattern": "^wss?://"
+            },
+            "description": "Array of relay URLs (WebSocket URLs)",
+            "maxItems": 20,
+            "minItems": 1
           },
           "GROUP_NAME": {
             "type": "string",
