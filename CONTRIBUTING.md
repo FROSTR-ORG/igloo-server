@@ -137,7 +137,7 @@ git commit -m "chore: update dependencies"
 
 The project uses automated releases through GitHub Actions:
 
-1. **Push to main** triggers automatic release detection
+1. **Push to master** triggers automatic release detection
 2. **Version bumping** is based on commit messages:
    - `feat:` → minor version bump
    - `fix:` → patch version bump
@@ -159,7 +159,7 @@ bun run release:major
 
 # Create a custom version
 npm version 1.2.3
-git push origin main --tags
+git push origin master --tags
 ```
 
 ### Release Artifacts
@@ -222,7 +222,7 @@ Use the provided PR template and include:
 1. **Automated checks** must pass
 2. **Code review** by maintainers
 3. **Testing** in different environments
-4. **Merge** to main branch
+4. **Merge** to master branch
 
 ## Security
 
