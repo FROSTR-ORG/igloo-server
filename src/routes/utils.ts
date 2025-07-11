@@ -60,6 +60,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'SHARE_CRED',         // Share credential for signing
   'GROUP_CRED',         // Group credential for signing
   'RELAYS',             // Relay URLs configuration
+  'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT' // Timestamp when credentials were last saved
 ]);
 
@@ -118,15 +119,34 @@ export async function readEnvFile(): Promise<Record<string, string>> {
   try {
     await fs.access(ENV_FILE_PATH);
     const content = await fs.readFile(ENV_FILE_PATH, 'utf-8');
-    return parseEnvFile(content);
+    const fileEnv = parseEnvFile(content);
+    
+    // Merge with actual environment variables as fallback
+    const envVars = getEnvVarsFromProcess();
+    return { ...envVars, ...fileEnv }; // File takes precedence over process env
   } catch (error) {
-    // If file doesn't exist or other error, return empty object
+    // If file doesn't exist or other error, fall back to process environment variables
     if ((error as any)?.code === 'ENOENT') {
-      return {};
+      return getEnvVarsFromProcess();
     }
     console.error('Error reading .env file:', error);
-    return {};
+    return getEnvVarsFromProcess();
   }
+}
+
+// Helper function to get environment variables from process.env
+function getEnvVarsFromProcess(): Record<string, string> {
+  const envVars: Record<string, string> = {};
+  
+  // Only include whitelisted environment variables
+  for (const key of ALLOWED_ENV_KEYS) {
+    const value = process.env[key];
+    if (value) {
+      envVars[key] = value;
+    }
+  }
+  
+  return envVars;
 }
 
 // Get the modification time of the environment file
