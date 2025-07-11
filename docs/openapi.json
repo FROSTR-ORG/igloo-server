@@ -72,7 +72,6 @@
         "tags": [
           "Status"
         ],
-        "security": [],
         "responses": {
           "200": {
             "description": "Server status retrieved successfully",
@@ -104,7 +103,6 @@
         "tags": [
           "Authentication"
         ],
-        "security": [],
         "responses": {
           "200": {
             "description": "Authentication status retrieved successfully",
@@ -117,6 +115,7 @@
                   "enabled": true,
                   "methods": [
                     "api-key",
+                    "bearer",
                     "basic-auth",
                     "session"
                   ],
@@ -136,7 +135,6 @@
         "tags": [
           "Authentication"
         ],
-        "security": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -1209,6 +1207,7 @@
               "type": "string",
               "enum": [
                 "api-key",
+                "bearer",
                 "basic-auth",
                 "session"
               ]
@@ -1472,6 +1471,7 @@
               "error": "Authentication required",
               "authMethods": [
                 "api-key",
+                "bearer",
                 "basic-auth",
                 "session"
               ]
