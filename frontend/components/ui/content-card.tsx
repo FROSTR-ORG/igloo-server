@@ -21,7 +21,7 @@ export function ContentCard({
   headerRight
 }: ContentCardProps) {
   return (
-    <div className={cn("bg-gray-900/40 rounded-lg p-6 shadow-lg", className)}>
+    <div className={cn("bg-gray-900/40 rounded-lg p-4 sm:p-6 shadow-lg", className)}>
       {(title || onBack || headerRight) && (
         <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-2">

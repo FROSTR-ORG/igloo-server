@@ -264,7 +264,7 @@ const App: React.FC = () => {
               </TabsTrigger>
             </TabsList>
             
-            <TabsContent value="signer" className="border border-blue-900/30 rounded-lg p-4">
+            <TabsContent value="signer" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
               <Signer 
                 initialData={signerData} 
                 ref={signerRef}
@@ -272,7 +272,7 @@ const App: React.FC = () => {
               />
             </TabsContent>
             
-            <TabsContent value="recover" className="border border-purple-900/30 rounded-lg p-4">
+            <TabsContent value="recover" className="border border-purple-900/30 rounded-lg p-2 sm:p-4">
               <Recover 
                 initialShare={signerData?.share} 
                 initialGroupCredential={signerData?.groupCredential}
