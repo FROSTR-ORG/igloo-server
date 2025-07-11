@@ -69,7 +69,8 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
 
 // HTTP Server
 serve({
-  port: 8002,
+  port: CONST.HOST_PORT,
+  hostname: CONST.HOST_NAME,
   websocket: relay.handler(),
   fetch: async (req, server) => {
     if (server.upgrade(req)) return;

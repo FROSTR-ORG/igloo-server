@@ -67,6 +67,9 @@ bun run clean
 # Test Docker build
 bun run docker:build
 bun run docker:run
+
+# Validate OpenAPI documentation
+bun run docs:validate
 ```
 
 ## Code Style & Standards
@@ -191,6 +194,8 @@ Before submitting a PR, please verify:
 - [ ] **Docker build works**: `docker build -t igloo-server .`
 - [ ] **Frontend loads** at http://localhost:8002
 - [ ] **API endpoints respond** (e.g., `/api/status`)
+- [ ] **API documentation loads** at http://localhost:8002/api/docs
+- [ ] **OpenAPI spec is valid**: `bun run docs:validate`
 - [ ] **No console errors** in browser or server logs
 
 ### Automated Testing
@@ -206,9 +211,10 @@ The CI pipeline runs:
 
 ### Before Submitting
 1. **Update documentation** if you change APIs
-2. **Add tests** for new functionality
-3. **Update CHANGELOG.md** if needed
-4. **Verify your changes** don't break existing functionality
+2. **Update OpenAPI spec** if you modify API endpoints (`docs/openapi.yaml`)
+3. **Add tests** for new functionality
+4. **Update CHANGELOG.md** if needed
+5. **Verify your changes** don't break existing functionality
 
 ### PR Description
 Use the provided PR template and include:

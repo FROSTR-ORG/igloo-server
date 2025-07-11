@@ -160,7 +160,18 @@ docker-compose up -d
 
 ## API Reference
 
-The server provides RESTful APIs for programmatic control:
+The server provides RESTful APIs for programmatic control.
+
+### 📖 Interactive API Documentation
+
+**Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing
+**OpenAPI Spec**: 
+- JSON: [http://localhost:8002/api/docs/openapi.json](http://localhost:8002/api/docs/openapi.json)
+- YAML: [http://localhost:8002/api/docs/openapi.yaml](http://localhost:8002/api/docs/openapi.yaml)
+
+💡 **Note**: Documentation requires authentication in production environments for security.
+
+### API Endpoints
 
 ### Authentication
 ```bash
