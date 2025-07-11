@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## [0.1.7] - 2025-07-11
+### Changes since v0.1.6:
+- Merge pull request #8 from FROSTR-ORG/dev
+- Merge pull request #7 from FROSTR-ORG/refactor/minimal-mobile-styles
+- mobile style fixes for header, page layout, signer, and recover pages
+- Merge pull request #6 from FROSTR-ORG/bugfix/configuration-quirks
+- docs: clarify HOST_NAME configuration for Docker vs local development
+- just use .env to simplify configuration, fix docker configs and readme for this change
+- fix: read environment variables from process.env in Docker containers
+
 ## [0.1.6] - 2025-07-11
 ### Changes since v0.1.5:
 - Merge pull request #5 from FROSTR-ORG/chore/api-docs

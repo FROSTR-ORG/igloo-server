@@ -1,6 +1,6 @@
 {
   "name": "igloo-server",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "scripts": {
     "start": "bun run src/server.ts",
     "build:css": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --watch",
