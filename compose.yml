@@ -4,6 +4,10 @@ services:
     build          : ./
     env_file       : .env
     image          : igloo-server
+    environment:
+      - HOST_NAME=0.0.0.0
+      - HOST_PORT=8002
+      - NODE_ENV=production
     container_name : igloo-server
     platform       : linux/x86_64
     hostname       : igloo-server

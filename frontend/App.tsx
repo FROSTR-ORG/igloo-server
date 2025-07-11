@@ -72,28 +72,42 @@ const App: React.FC = () => {
       // Use provided headers or get current auth headers
       const headers = authHeaders || getAuthHeaders();
       
+      console.log('Loading app data with headers:', Object.keys(headers));
+      
       // Fetch environment variables from server
       const response = await fetch('/api/env', {
         headers
       });
       
       if (!response.ok) {
-        throw new Error('Failed to fetch environment variables');
+        const errorText = await response.text();
+        console.error('Failed to fetch environment variables:', response.status, errorText);
+        throw new Error(`Failed to fetch environment variables: ${response.status}`);
       }
       
       const envVars = await response.json();
+      console.log('Loaded environment variables:', {
+        hasShareCred: !!envVars.SHARE_CRED,
+        hasGroupCred: !!envVars.GROUP_CRED,
+        hasGroupName: !!envVars.GROUP_NAME,
+        hasRelays: !!envVars.RELAYS,
+        keys: Object.keys(envVars)
+      });
       
       const savedShare = envVars.SHARE_CRED;
       const savedGroup = envVars.GROUP_CRED;
       const savedName = envVars.GROUP_NAME;
       
       if (savedShare && savedGroup) {
+        console.log('Found saved credentials, setting signer data');
         // If we have saved credentials, go directly to Signer
         setSignerData({
           share: savedShare,
           groupCredential: savedGroup,
           name: savedName || 'Saved Share'
         });
+      } else {
+        console.log('No saved credentials found, showing Configure page');
       }
       // If no saved credentials, we'll show Configure page (default state)
     } catch (error) {
