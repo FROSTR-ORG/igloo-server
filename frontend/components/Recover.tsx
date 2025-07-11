@@ -1,7 +1,7 @@
 import React, { useState, useEffect, FormEvent, useRef, useCallback } from "react"
 import { Button } from "./ui/button"
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card"
 import { InputWithValidation } from "./ui/input-with-validation"
+import { Tooltip } from "./ui/tooltip"
 import { HelpCircle } from "lucide-react"
 import {
   validateShare,
@@ -436,17 +436,27 @@ const Recover: React.FC<RecoverProps> = ({
   };
 
   return (
-    <Card className="bg-gray-900/30 border-blue-900/30 backdrop-blur-sm shadow-lg">
-      <CardHeader>
-        <div className="flex items-center">
-          <CardTitle className="text-xl text-blue-200">Recover NSEC</CardTitle>
-          <HelpCircle size={18} className="ml-2 text-blue-400" />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-8">
+    <div className="space-y-6">
+      <div className="flex items-center gap-2">
+        <h2 className="text-lg sm:text-xl text-blue-200 font-semibold">Recover NSEC</h2>
+        <Tooltip
+          trigger={<HelpCircle size={18} className="text-blue-400 flex-shrink-0 cursor-pointer" />}
+          position="right"
+          content={
+            <>
+              <p className="mb-2 font-semibold">NSEC Recovery:</p>
+              <p>
+                Use your FROSTR threshold shares to recover your original Nostr private key (nsec). 
+                You need at least {currentThreshold} valid shares from your signing group to reconstruct the key.
+              </p>
+            </>
+          }
+        />
+      </div>
+      <div className="space-y-8">
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
-            <div className="bg-gray-800/50 p-4 rounded-lg">
+            <div className="bg-gray-800/50 p-3 sm:p-4 rounded-lg">
               <div className="text-sm text-blue-300 mb-2">Recovery Requirements:</div>
               <div className="text-sm text-blue-200">
                 You need {currentThreshold} out of {currentTotalShares} shares to recover your NSEC
@@ -455,10 +465,10 @@ const Recover: React.FC<RecoverProps> = ({
 
             <InputWithValidation
               label={
-                <div className="flex items-center">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2">
                   <span>Group Credential</span>
                   {isGroupAutofilled && (
-                    <span className="ml-2 text-xs bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded-full animate-pulse">
+                    <span className="text-xs bg-blue-900/40 text-blue-300 px-2 py-0.5 rounded-full animate-pulse whitespace-nowrap">
                       Auto-detected
                     </span>
                   )}
@@ -477,7 +487,7 @@ const Recover: React.FC<RecoverProps> = ({
             <div className="space-y-3 w-full">
               <div className="text-blue-200 text-sm font-medium">Share Credentials:</div>
               {sharesInputs.map((share, index) => (
-                <div key={index} className="flex gap-2 w-full">
+                <div key={index} className="flex flex-col sm:flex-row gap-2 w-full">
                   <InputWithValidation
                     placeholder={`Enter share ${index + 1} (bfshare1...)`}
                     value={share}
@@ -491,7 +501,7 @@ const Recover: React.FC<RecoverProps> = ({
                   <Button
                     type="button"
                     onClick={() => removeShareInput(index)}
-                    className="bg-red-900/30 hover:bg-red-800/50 text-red-200 hover:text-red-100 px-2"
+                    className="bg-red-900/30 hover:bg-red-800/50 text-red-200 hover:text-red-100 px-3 py-2 sm:px-2 w-full sm:w-auto text-base sm:text-sm font-medium"
                     disabled={isProcessing || sharesInputs.length <= 1}
                   >
                     ✕
@@ -502,7 +512,7 @@ const Recover: React.FC<RecoverProps> = ({
                 <Button
                   type="button"
                   onClick={addShareInput}
-                  className="w-full mt-2 bg-blue-600/30 hover:bg-blue-700/30 text-blue-200 hover:text-blue-100"
+                  className="w-full mt-2 bg-blue-600/30 hover:bg-blue-700/30 text-blue-200 hover:text-blue-100 text-sm sm:text-base"
                   disabled={isProcessing}
                 >
                   Add Share Input ({sharesInputs.length}/{currentThreshold})
@@ -514,7 +524,7 @@ const Recover: React.FC<RecoverProps> = ({
           <div className="mt-6">
             <Button 
               type="submit"
-              className="w-full py-5 bg-green-600 hover:bg-green-700 text-white hover:text-gray-100 transition-colors duration-200 text-sm font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-4 sm:py-5 bg-green-600 hover:bg-green-700 text-white hover:text-gray-100 transition-colors duration-200 text-sm sm:text-base font-medium hover:opacity-90 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
               disabled={isProcessing || !sharesFormValid}
             >
               {isProcessing ? "Processing..." : "Recover NSEC"}
@@ -529,8 +539,8 @@ const Recover: React.FC<RecoverProps> = ({
             {result.message}
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   );
 };
 

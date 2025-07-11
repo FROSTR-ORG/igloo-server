@@ -635,23 +635,24 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         const shareInfo = getShareInfo(groupCredential, signerSecret, signerName || initialData?.name, realSelfPubkey || undefined);
         return shareInfo && isGroupValid && isShareValid ? (
           <div className="border border-blue-800/30 rounded-lg p-4">
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
               <div className="flex items-center gap-2">
                 <User className="h-5 w-5 text-blue-400" />
                 <span className="text-blue-200 font-medium">{shareInfo.shareName}</span>
               </div>
-              <div className="text-gray-400">•</div>
-              <div className="text-gray-300 text-sm">
-                Index: <span className="text-blue-400 font-mono">{shareInfo.index}</span>
-              </div>
-              <div className="text-gray-400">•</div>
-              <div className="text-gray-300 text-sm">
-                Threshold: <span className="text-blue-400">{shareInfo.threshold}</span>/<span className="text-blue-400">{shareInfo.totalShares || '?'}</span>
+              <div className="flex items-center gap-2 sm:gap-3 text-sm">
+                <div className="text-gray-300">
+                  Index: <span className="text-blue-400 font-mono">{shareInfo.index}</span>
+                </div>
+                <div className="text-gray-400 hidden sm:block">•</div>
+                <div className="text-gray-300">
+                  Threshold: <span className="text-blue-400">{shareInfo.threshold}</span>/<span className="text-blue-400">{shareInfo.totalShares || '?'}</span>
+                </div>
               </div>
             </div>
             <div className="mt-2">
               <div className="text-gray-300 text-sm">
-                Pubkey: <span className="font-mono text-xs truncate block">{shareInfo.pubkey}</span>
+                Pubkey: <span className="font-mono text-xs break-all sm:truncate sm:block">{shareInfo.pubkey}</span>
               </div>
             </div>
           </div>
@@ -660,14 +661,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
 
       <div className="space-y-6">
         <div className="space-y-3">
-          <div className="flex">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-0">
             <Tooltip
               trigger={
                 <Input
                   type="text"
                   value={groupCredential}
                   onChange={(e) => handleGroupChange(e.target.value)}
-                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono text-xs sm:text-sm"
                   placeholder="Enter your group credential (bfgroup...)"
                   aria-label="Group credential input"
                 />
@@ -686,40 +687,42 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
                 </>
               }
             />
-            <Tooltip
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleCopy(groupCredential, 'group')}
-                  className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
-                  disabled={!groupCredential || !isGroupValid}
-                  aria-label="Copy group credential"
-                >
-                  {copiedStates.group ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
-                </Button>
-              }
-              position="top"
-              width="w-fit"
-              content="Copy"
-            />
-            <Tooltip
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => toggleExpanded('group')}
-                  className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
-                  disabled={!groupCredential || !isGroupValid}
-                  aria-label="Toggle group credential details"
-                >
-                  {expandedItems['group'] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                </Button>
-              }
-              position="top"
-              width="w-fit"
-              content="Decoded"
-            />
+            <div className="flex gap-2 sm:ml-2">
+              <Tooltip
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleCopy(groupCredential, 'group')}
+                    className="bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
+                    disabled={!groupCredential || !isGroupValid}
+                    aria-label="Copy group credential"
+                  >
+                    {copiedStates.group ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+                  </Button>
+                }
+                position="top"
+                width="w-fit"
+                content="Copy"
+              />
+              <Tooltip
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleExpanded('group')}
+                    className="bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
+                    disabled={!groupCredential || !isGroupValid}
+                    aria-label="Toggle group credential details"
+                  >
+                    {expandedItems['group'] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                  </Button>
+                }
+                position="top"
+                width="w-fit"
+                content="Decoded"
+              />
+            </div>
           </div>
 
           {expandedItems['group'] && groupCredential && isGroupValid && (
@@ -734,14 +737,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
             </div>
           )}
 
-          <div className="flex">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-0">
             <Tooltip
               trigger={
                 <Input
                   type="password"
                   value={signerSecret}
                   onChange={(e) => handleShareChange(e.target.value)}
-                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full font-mono text-xs sm:text-sm"
                   placeholder="Enter your secret share (bfshare...)"
                   aria-label="Secret share input"
                 />
@@ -755,40 +758,42 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
                 </>
               }
             />
-            <Tooltip
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => handleCopy(signerSecret, 'share')}
-                  className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
-                  disabled={!signerSecret || !isShareValid}
-                  aria-label="Copy secret share"
-                >
-                  {copiedStates.share ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
-                </Button>
-              }
-              position="top"
-              width="w-fit"
-              content="Copy"
-            />
-            <Tooltip
-              trigger={
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => toggleExpanded('share')}
-                  className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
-                  disabled={!signerSecret || !isShareValid}
-                  aria-label="Toggle share details"
-                >
-                  {expandedItems['share'] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
-                </Button>
-              }
-              position="top"
-              width="w-fit"
-              content="Decoded"
-            />
+            <div className="flex gap-2 sm:ml-2">
+              <Tooltip
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => handleCopy(signerSecret, 'share')}
+                    className="bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
+                    disabled={!signerSecret || !isShareValid}
+                    aria-label="Copy secret share"
+                  >
+                    {copiedStates.share ? <Check className="h-5 w-5" /> : <Copy className="h-5 w-5" />}
+                  </Button>
+                }
+                position="top"
+                width="w-fit"
+                content="Copy"
+              />
+              <Tooltip
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    onClick={() => toggleExpanded('share')}
+                    className="bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
+                    disabled={!signerSecret || !isShareValid}
+                    aria-label="Toggle share details"
+                  >
+                    {expandedItems['share'] ? <ChevronDown className="h-5 w-5" /> : <ChevronRight className="h-5 w-5" />}
+                  </Button>
+                }
+                position="top"
+                width="w-fit"
+                content="Decoded"
+              />
+            </div>
           </div>
 
           {expandedItems['share'] && signerSecret && isShareValid && (
@@ -851,7 +856,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               }
             />
           </div>
-          <div className="flex">
+          <div className="flex flex-col sm:flex-row gap-2 sm:gap-0">
             <Input
               type="text"
               placeholder="Add relay URL"
@@ -861,7 +866,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
             />
             <Button
               onClick={handleAddRelay}
-              className="ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
+              className="sm:ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
               disabled={!newRelayUrl.trim()}
             >
               Add
