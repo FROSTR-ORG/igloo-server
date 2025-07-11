@@ -150,6 +150,7 @@ bun run start
 docker build -t igloo-server .
 docker run -p 8002:8002 \
   -e NODE_ENV="production" \
+  -e HOST_NAME="0.0.0.0" \
   -e GROUP_CRED="bfgroup1qqsqp..." \
   -e SHARE_CRED="bfshare1qqsqp..." \
   -e RELAYS='["wss://relay.primal.net","wss://relay.damus.io"]' \
@@ -343,6 +344,7 @@ cd igloo-server
 # Create production environment file
 cat > .env << EOF
 NODE_ENV=production
+HOST_NAME=0.0.0.0
 GROUP_CRED=bfgroup1qqsqp...your-group-credential
 SHARE_CRED=bfshare1qqsqp...your-share-credential
 RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
@@ -514,8 +516,14 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share (bfshare1...) | - | ✅ |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for your signing group | - | ❌ |
+| `HOST_NAME` | Server bind address | `localhost` | ❌ |
+| `HOST_PORT` | Server port | `8002` | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
+
+**💡 Network Configuration**: 
+- **Local development**: Use `HOST_NAME=localhost` (default)
+- **Docker deployment**: Use `HOST_NAME=0.0.0.0` to allow external connections
 
 ## Troubleshooting
 
