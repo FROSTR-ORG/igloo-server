@@ -142,7 +142,7 @@ export const EventLog = memo(({
     <div>
       {!hideHeader && (
         <div 
-          className="flex items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors"
+          className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors gap-2 sm:gap-0"
           onClick={handleToggle}
           role="button"
           tabIndex={0}
@@ -153,10 +153,10 @@ export const EventLog = memo(({
             }
           }}
         >
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 min-w-0">
             {isExpanded ? 
-              <ChevronUp className="h-4 w-4 text-blue-400" /> : 
-              <ChevronDown className="h-4 w-4 text-blue-400" />
+              <ChevronUp className="h-4 w-4 text-blue-400 flex-shrink-0" /> : 
+              <ChevronDown className="h-4 w-4 text-blue-400 flex-shrink-0" />
             }
             <span className="text-blue-200 text-sm font-medium select-none">{title}</span>
             <StatusIndicator 
@@ -164,12 +164,12 @@ export const EventLog = memo(({
               count={activeFilters.size > 0 ? filteredLogs.length : logs.length}
             />
             {activeFilters.size > 0 && (
-              <Badge variant="info" className="text-xs px-1.5 py-0.5 bg-blue-600/20 text-blue-400 border-blue-500/30">
+              <Badge variant="info" className="text-xs px-1.5 py-0.5 bg-blue-600/20 text-blue-400 border-blue-500/30 whitespace-nowrap">
                 {activeFilters.size} filter{activeFilters.size !== 1 ? 's' : ''}
               </Badge>
             )}
           </div>
-          <div onClick={e => e.stopPropagation()}>
+          <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
             {actions}
           </div>
         </div>
@@ -178,14 +178,14 @@ export const EventLog = memo(({
       {/* Filter Controls */}
       {showFilters && isExpanded && availableEventTypes.length > 0 && (
         <div className="bg-gray-900/30 border border-gray-800/30 rounded p-3 space-y-3">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-0">
             <span className="text-blue-200 text-sm font-medium">Filter by Event Type</span>
-            <div className="flex items-center gap-1.5">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={handleSelectAllFilters}
-                className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 h-6 px-2"
+                className="text-xs text-blue-400 hover:text-blue-300 hover:bg-blue-600/10 h-6 px-2 whitespace-nowrap"
               >
                 Select All
               </Button>
@@ -193,7 +193,7 @@ export const EventLog = memo(({
                 variant="ghost"
                 size="sm"
                 onClick={handleClearFilters}
-                className="text-xs text-gray-400 hover:text-gray-300 hover:bg-gray-600/20 h-6 px-2"
+                className="text-xs text-gray-400 hover:text-gray-300 hover:bg-gray-600/20 h-6 px-2 whitespace-nowrap"
               >
                 Clear All
               </Button>
@@ -227,7 +227,7 @@ export const EventLog = memo(({
                   <Badge variant={getFilterVariant(eventType)} className="text-xs px-1.5 py-0.5">
                     {eventType.toUpperCase()}
                   </Badge>
-                  <span className="text-gray-500 font-light">({count})</span>
+                  <span className="text-gray-500 font-light whitespace-nowrap">({count})</span>
                 </button>
               );
             })}

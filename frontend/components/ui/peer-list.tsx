@@ -347,7 +347,7 @@ const PeerList: React.FC<PeerListProps> = ({
     <div className={cn("space-y-2", className)}>
       {/* Collapsible Header */}
       <div 
-        className="flex items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors"
+        className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors gap-2 sm:gap-0"
         onClick={handleToggle}
         role="button"
         tabIndex={0}
@@ -358,17 +358,17 @@ const PeerList: React.FC<PeerListProps> = ({
           }
         }}
       >
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           {isExpanded ? 
-            <ChevronUp className="h-4 w-4 text-blue-400" /> : 
-            <ChevronDown className="h-4 w-4 text-blue-400" />
+            <ChevronUp className="h-4 w-4 text-blue-400 flex-shrink-0" /> : 
+            <ChevronDown className="h-4 w-4 text-blue-400 flex-shrink-0" />
           }
           <span className="text-blue-200 text-sm font-medium select-none">Peer List</span>
           
           {/* Status indicators */}
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
             <div className={cn(
-              "w-2 h-2 rounded-full",
+              "w-2 h-2 rounded-full flex-shrink-0",
               getStatusIndicator() === 'success' ? 'bg-green-500' :
               getStatusIndicator() === 'warning' ? 'bg-yellow-500' :
               getStatusIndicator() === 'error' ? 'bg-red-500' : 'bg-gray-500'
@@ -376,14 +376,14 @@ const PeerList: React.FC<PeerListProps> = ({
             
             {stats.total > 0 && (
               <>
-                <Badge variant="success" className="text-xs px-1.5 py-0.5">
+                <Badge variant="success" className="text-xs px-1.5 py-0.5 whitespace-nowrap">
                   {stats.online} online
                 </Badge>
-                <Badge variant="default" className="text-xs px-1.5 py-0.5">
+                <Badge variant="default" className="text-xs px-1.5 py-0.5 whitespace-nowrap">
                   {stats.total} total
                 </Badge>
                 {stats.avgPing && (
-                  <Badge variant="info" className="text-xs px-1.5 py-0.5">
+                  <Badge variant="info" className="text-xs px-1.5 py-0.5 whitespace-nowrap">
                     Avg: {stats.avgPing}ms
                   </Badge>
                 )}
@@ -391,13 +391,13 @@ const PeerList: React.FC<PeerListProps> = ({
             )}
             
             {error && (
-              <Badge variant="error" className="text-xs px-1.5 py-0.5">
+              <Badge variant="error" className="text-xs px-1.5 py-0.5 whitespace-nowrap">
                 Error
               </Badge>
             )}
           </div>
         </div>
-        <div onClick={e => e.stopPropagation()}>
+        <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
           {actions}
         </div>
       </div>
@@ -453,7 +453,7 @@ const PeerList: React.FC<PeerListProps> = ({
                   const isPinging = pingingPeers.has(peer.pubkey);
                   
                   return (
-                    <div key={peer.pubkey} className="flex items-center justify-between bg-gray-800/30 p-3 rounded border border-gray-700/30">
+                    <div key={peer.pubkey} className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-800/30 p-3 rounded border border-gray-700/30 gap-2 sm:gap-0">
                       <div className="flex items-center gap-3 flex-1 min-w-0">
                         <Tooltip
                           trigger={
@@ -471,19 +471,19 @@ const PeerList: React.FC<PeerListProps> = ({
                         />
                         
                         <div className="flex-1 min-w-0">
-                          <div className="text-blue-300 text-sm font-mono truncate">
+                          <div className="text-blue-300 text-sm font-mono break-all sm:truncate">
                             {peer.pubkey.slice(0, 16)}...{peer.pubkey.slice(-8)}
                           </div>
-                          <div className="flex items-center gap-2 text-xs text-gray-400">
-                            <span>Status: {peer.online ? 'Online' : 'Offline'}</span>
+                          <div className="flex flex-wrap items-center gap-1 sm:gap-2 text-xs text-gray-400">
+                            <span className="whitespace-nowrap">Status: {peer.online ? 'Online' : 'Offline'}</span>
                             {peer.latency && (
-                              <span>• Ping: {peer.latency}ms</span>
+                              <span className="whitespace-nowrap">• Ping: {peer.latency}ms</span>
                             )}
                             {peer.lastSeen && peer.lastSeen instanceof Date && !isNaN(peer.lastSeen.getTime()) && (
-                              <span>• Last seen: {peer.lastSeen.toLocaleTimeString()}</span>
+                              <span className="whitespace-nowrap">• Last seen: {peer.lastSeen.toLocaleTimeString()}</span>
                             )}
                             {!peer.online && peer.lastPingAttempt && peer.lastPingAttempt instanceof Date && !isNaN(peer.lastPingAttempt.getTime()) && (
-                              <span>• Last attempt: {peer.lastPingAttempt.toLocaleTimeString()}</span>
+                              <span className="whitespace-nowrap">• Last attempt: {peer.lastPingAttempt.toLocaleTimeString()}</span>
                             )}
                           </div>
                         </div>
@@ -497,7 +497,7 @@ const PeerList: React.FC<PeerListProps> = ({
                         tooltip="Ping this peer"
                         disabled={!isSignerRunning || disabled || isPinging}
                         className={cn(
-                          "ml-2 transition-all duration-200",
+                          "sm:ml-2 transition-all duration-200 self-end sm:self-center",
                           isPinging && "animate-pulse"
                         )}
                       />

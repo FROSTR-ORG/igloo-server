@@ -12,17 +12,16 @@ interface AppHeaderProps {
 export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeaderProps) {
   return (
     <>
-      <div className="relative flex items-center mb-8 h-16">
+      {/* Desktop/Tablet Header (hidden on mobile) */}
+      <div className="relative items-center mb-8 h-16 hidden sm:flex">
         {/* Center: Title (perfectly centered) */}
         <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-        <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo Server</h1>
+          <h1 className="text-4xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo Server</h1>
         </div>
-        
         {/* Logo positioned immediately to the left of the centered text */}
         <div className="absolute left-1/2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ transform: 'translateX(calc(-50% - 160px)) translateY(-50%)' }}>
           <img src="/assets/frostr-logo-transparent.png" alt="Frostr Logo" className="w-12 h-12" />
         </div>
-        
         {/* Right: User/Logout */}
         <div className="absolute right-0 top-1/2 -translate-y-1/2">
           {authEnabled && userId && onLogout && (
@@ -44,7 +43,13 @@ export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeader
           )}
         </div>
       </div>
-      
+
+      {/* Mobile Header (shown only on mobile) */}
+      <div className="flex flex-col items-center justify-center mb-8 sm:hidden">
+        <img src="/assets/frostr-logo-transparent.png" alt="Frostr Logo" className="w-10 h-10 mb-2" />
+        <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-300 to-cyan-300">Igloo Server</h1>
+      </div>
+
       {subtitle && (
         <p className="mb-8 text-blue-400 text-center max-w-xl mx-auto text-sm">
           {subtitle}

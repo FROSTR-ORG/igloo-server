@@ -149,9 +149,17 @@ bun run start
 # Build and run with Docker
 docker build -t igloo-server .
 docker run -p 8002:8002 \
+  -e NODE_ENV="production" \
+  -e HOST_NAME="0.0.0.0" \
   -e GROUP_CRED="bfgroup1qqsqp..." \
   -e SHARE_CRED="bfshare1qqsqp..." \
-  -e RELAYS='["wss://relay.primal.net"]' \
+  -e RELAYS='["wss://relay.primal.net","wss://relay.damus.io"]' \
+  -e AUTH_ENABLED="true" \
+  -e SESSION_SECRET="your-random-64-char-session-secret-here" \
+  -e API_KEY="your-secure-api-key-here" \
+  -e BASIC_AUTH_USER="admin" \
+  -e BASIC_AUTH_PASS="your-strong-password" \
+  -e RATE_LIMIT_ENABLED="true" \
   igloo-server
 
 # Or use Docker Compose
@@ -334,8 +342,9 @@ git clone https://github.com/FROSTR-ORG/igloo-server.git
 cd igloo-server
 
 # Create production environment file
-cat > .env.production << EOF
+cat > .env << EOF
 NODE_ENV=production
+HOST_NAME=0.0.0.0
 GROUP_CRED=bfgroup1qqsqp...your-group-credential
 SHARE_CRED=bfshare1qqsqp...your-share-credential
 RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
@@ -352,7 +361,7 @@ ALLOWED_ORIGINS=https://yourdomain.com
 EOF
 
 # Deploy with Docker Compose
-docker-compose --env-file .env.production up -d
+docker-compose up -d
 ```
 
 #### 4. Configure Firewall
@@ -415,7 +424,7 @@ docker-compose logs -f
 
 # Update deployment
 git pull
-docker-compose --env-file .env.production up -d --build
+docker-compose --env-file .env up -d --build
 ```
 
 ### Umbrel Deployment
@@ -507,8 +516,14 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share (bfshare1...) | - | ✅ |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for your signing group | - | ❌ |
+| `HOST_NAME` | Server bind address | `localhost` | ❌ |
+| `HOST_PORT` | Server port | `8002` | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
+
+**💡 Network Configuration**: 
+- **Local development**: Use `HOST_NAME=localhost` (default)
+- **Docker deployment**: Use `HOST_NAME=0.0.0.0` to allow external connections
 
 ## Troubleshooting
 
