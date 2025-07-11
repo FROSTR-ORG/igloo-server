@@ -149,9 +149,16 @@ bun run start
 # Build and run with Docker
 docker build -t igloo-server .
 docker run -p 8002:8002 \
+  -e NODE_ENV="production" \
   -e GROUP_CRED="bfgroup1qqsqp..." \
   -e SHARE_CRED="bfshare1qqsqp..." \
-  -e RELAYS='["wss://relay.primal.net"]' \
+  -e RELAYS='["wss://relay.primal.net","wss://relay.damus.io"]' \
+  -e AUTH_ENABLED="true" \
+  -e SESSION_SECRET="your-random-64-char-session-secret-here" \
+  -e API_KEY="your-secure-api-key-here" \
+  -e BASIC_AUTH_USER="admin" \
+  -e BASIC_AUTH_PASS="your-strong-password" \
+  -e RATE_LIMIT_ENABLED="true" \
   igloo-server
 
 # Or use Docker Compose
@@ -334,7 +341,7 @@ git clone https://github.com/FROSTR-ORG/igloo-server.git
 cd igloo-server
 
 # Create production environment file
-cat > .env.production << EOF
+cat > .env << EOF
 NODE_ENV=production
 GROUP_CRED=bfgroup1qqsqp...your-group-credential
 SHARE_CRED=bfshare1qqsqp...your-share-credential
@@ -352,7 +359,7 @@ ALLOWED_ORIGINS=https://yourdomain.com
 EOF
 
 # Deploy with Docker Compose
-docker-compose --env-file .env.production up -d
+docker-compose up -d
 ```
 
 #### 4. Configure Firewall
@@ -415,7 +422,7 @@ docker-compose logs -f
 
 # Update deployment
 git pull
-docker-compose --env-file .env.production up -d --build
+docker-compose --env-file .env up -d --build
 ```
 
 ### Umbrel Deployment
