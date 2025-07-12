@@ -62,7 +62,7 @@ export interface AuthContext {
 export interface RouteContext {
   node: ServerBifrostNode | null;
   peerStatuses: Map<string, PeerStatus>;
-  eventStreams: Set<ReadableStreamDefaultController>;
+  eventStreams: Set<any>; // Bun WebSocket type
   addServerLog: (type: string, message: string, data?: any) => void;
   broadcastEvent: (event: { type: string; message: string; data?: any; timestamp: string; id: string }) => void;
   auth?: AuthContext;

@@ -22,8 +22,8 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
-// Helper function to broadcast events to all connected clients
-export function createBroadcastEvent(eventStreams: Set<ReadableStreamDefaultController>) {
+// Helper function to broadcast events to all connected WebSocket clients
+export function createBroadcastEvent(eventStreams: Set<any>) {
   return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
     if (eventStreams.size === 0) {
       return; // No connected clients
@@ -36,24 +36,29 @@ export function createBroadcastEvent(eventStreams: Set<ReadableStreamDefaultCont
         data: event.data ? JSON.parse(safeStringify(event.data)) : undefined
       };
       
-      const eventData = `data: ${JSON.stringify(safeEvent)}\n\n`;
-      const encodedData = new TextEncoder().encode(eventData);
+      const eventData = JSON.stringify(safeEvent);
       
-      // Send to all connected streams, removing failed ones
-      const failedStreams = new Set<ReadableStreamDefaultController>();
+      // Send to all connected WebSocket clients, removing failed ones
+      const failedStreams = new Set<any>();
       
-      for (const controller of eventStreams) {
+      for (const ws of eventStreams) {
         try {
-          controller.enqueue(encodedData);
+          // Use Bun's WebSocket readyState constants
+          if (ws.readyState === 1) { // OPEN state
+            ws.send(eventData);
+          } else {
+            // Mark for removal if connection is not open
+            failedStreams.add(ws);
+          }
         } catch (error) {
           // Mark for removal - don't modify set while iterating
-          failedStreams.add(controller);
+          failedStreams.add(ws);
         }
       }
       
       // Remove failed streams
-      for (const failedController of failedStreams) {
-        eventStreams.delete(failedController);
+      for (const failedWs of failedStreams) {
+        eventStreams.delete(failedWs);
       }
     } catch (error) {
       console.error('Broadcast event error:', error);
