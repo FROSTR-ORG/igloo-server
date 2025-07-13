@@ -14,8 +14,11 @@ import {
   createNodeWithCredentials 
 } from './node/manager.js';
 
+// WebSocket data type for event streams
+type EventStreamData = { isEventStream: true };
+
 // Event streaming for frontend - WebSocket connections
-const eventStreams = new Set<ServerWebSocket<any>>();
+const eventStreams = new Set<ServerWebSocket<EventStreamData>>();
 
 // Peer status tracking
 let peerStatuses = new Map<string, PeerStatus>();
@@ -83,8 +86,8 @@ const websocketHandler = {
   open(ws: ServerWebSocket<any>) {
     // Check if this is an event stream WebSocket
     if (ws.data?.isEventStream) {
-      // Add to event streams
-      eventStreams.add(ws);
+      // Add to event streams (with type assertion for compatibility)
+      eventStreams.add(ws as ServerWebSocket<EventStreamData>);
       
       // Send initial connection event
       const connectEvent = {
@@ -107,8 +110,8 @@ const websocketHandler = {
   close(ws: ServerWebSocket<any>, code: number, reason: string) {
     // Check if this is an event stream WebSocket
     if (ws.data?.isEventStream) {
-      // Remove from event streams
-      eventStreams.delete(ws);
+      // Remove from event streams (with type assertion for compatibility)
+      eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
     } else {
       // Delegate to NostrRelay handler
       return relay.handler().close?.(ws, code, reason);
@@ -118,8 +121,8 @@ const websocketHandler = {
     // Check if this is an event stream WebSocket
     if (ws.data?.isEventStream) {
       console.error('Event stream WebSocket error:', error);
-      // Remove from event streams to prevent further errors
-      eventStreams.delete(ws);
+      // Remove from event streams to prevent further errors (with type assertion)
+      eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
     } else {
       // Delegate to NostrRelay handler if it has an error method
       const relayHandler = relay.handler();

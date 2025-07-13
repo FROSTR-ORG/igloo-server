@@ -5,6 +5,13 @@ import {
 } from '@frostr/igloo-core';
 import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
+import type { ServerWebSocket } from 'bun';
+
+// WebSocket ready state constants
+const READY_STATE_OPEN = 1;
+
+// WebSocket data type for event streams
+type EventStreamData = { isEventStream: true };
 
 // Event mapping for cleaner message handling - matching Igloo Desktop
 const EVENT_MAPPINGS = {
@@ -22,10 +29,8 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
-import type { ServerWebSocket } from 'bun';
-
 // Helper function to broadcast events to all connected WebSocket clients
-export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<any>>) {
+export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<EventStreamData>>) {
   return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
     if (eventStreams.size === 0) {
       return; // No connected clients
@@ -41,12 +46,12 @@ export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<any>>) {
       const eventData = JSON.stringify(safeEvent);
       
       // Send to all connected WebSocket clients, removing failed ones
-      const failedStreams = new Set<ServerWebSocket<any>>();
+      const failedStreams = new Set<ServerWebSocket<EventStreamData>>();
       
       for (const ws of eventStreams) {
         try {
-          // Use Bun's WebSocket readyState constants
-          if (ws.readyState === 1) { // OPEN state
+          // Use named constant instead of magic number
+          if (ws.readyState === READY_STATE_OPEN) {
             ws.send(eventData);
           } else {
             // Mark for removal if connection is not open
