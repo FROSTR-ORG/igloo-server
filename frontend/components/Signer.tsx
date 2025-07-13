@@ -254,6 +254,24 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     let reconnectTimeout: NodeJS.Timeout | null = null;
     let isConnecting = false;
     let isMounted = true;
+    let reconnectAttempts = 0;
+
+    // Exponential backoff configuration
+    const BASE_DELAY = 1000; // 1 second base delay
+    const MAX_DELAY = 30000; // 30 seconds maximum delay
+    const JITTER_RANGE = 1000; // 0-1 second jitter
+
+    /**
+     * Calculate reconnection delay using exponential backoff with jitter
+     * @param attempt - Current attempt number (0-based)
+     * @returns Delay in milliseconds
+     */
+    const calculateReconnectDelay = (attempt: number): number => {
+      const exponentialDelay = BASE_DELAY * Math.pow(2, attempt);
+      const cappedDelay = Math.min(exponentialDelay, MAX_DELAY);
+      const jitter = Math.random() * JITTER_RANGE;
+      return cappedDelay + jitter;
+    };
 
     const connect = () => {
       if (!isMounted || isConnecting) return;
@@ -288,6 +306,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         
         ws.onopen = () => {
           isConnecting = false;
+          reconnectAttempts = 0; // Reset attempt count on successful connection
           console.log('WebSocket connected to event stream');
         };
         
@@ -328,12 +347,15 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           
           // Attempt to reconnect if the component is still mounted and close wasn't intentional
           if (isMounted && event.code !== 1000) { // 1000 = normal closure
-            console.log('Attempting to reconnect WebSocket in 3 seconds...');
+            const delay = calculateReconnectDelay(reconnectAttempts);
+            console.log(`Attempting to reconnect WebSocket in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts + 1})...`);
+            reconnectAttempts++;
+            
             reconnectTimeout = setTimeout(() => {
               if (isMounted) {
                 connect();
               }
-            }, 3000);
+            }, delay);
           }
         };
         
@@ -341,13 +363,17 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         console.error('Failed to create WebSocket connection:', error);
         isConnecting = false;
         
-        // Retry connection after delay
+        // Retry connection after delay using exponential backoff
         if (isMounted) {
+          const delay = calculateReconnectDelay(reconnectAttempts);
+          console.log(`Retrying WebSocket connection in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts + 1})...`);
+          reconnectAttempts++;
+          
           reconnectTimeout = setTimeout(() => {
             if (isMounted) {
               connect();
             }
-          }, 5000);
+          }, delay);
         }
       }
     };
