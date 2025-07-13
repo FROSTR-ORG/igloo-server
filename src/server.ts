@@ -1,4 +1,4 @@
-import { serve } from 'bun';
+import { serve, type ServerWebSocket } from 'bun';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
@@ -15,7 +15,7 @@ import {
 } from './node/manager.js';
 
 // Event streaming for frontend - WebSocket connections
-const eventStreams = new Set<any>();
+const eventStreams = new Set<ServerWebSocket<any>>();
 
 // Peer status tracking
 let peerStatuses = new Map<string, PeerStatus>();
@@ -69,7 +69,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
 
 // WebSocket handler for event streaming and Nostr relay
 const websocketHandler = {
-  message(ws: any, message: string | Buffer) {
+  message(ws: ServerWebSocket<any>, message: string | Buffer) {
     // Check if this is an event stream WebSocket or relay WebSocket
     if (ws.data?.isEventStream) {
       // Handle event stream WebSocket messages if needed
@@ -80,11 +80,10 @@ const websocketHandler = {
       return relay.handler().message?.(ws, message);
     }
   },
-  open(ws: any) {
+  open(ws: ServerWebSocket<any>) {
     // Check if this is an event stream WebSocket
     if (ws.data?.isEventStream) {
-      // Mark WebSocket for identification and add to event streams
-      (ws as any)._isEventStream = true;
+      // Add to event streams
       eventStreams.add(ws);
       
       // Send initial connection event
@@ -105,14 +104,30 @@ const websocketHandler = {
       return relay.handler().open?.(ws);
     }
   },
-  close(ws: any, code: number, reason: string) {
+  close(ws: ServerWebSocket<any>, code: number, reason: string) {
     // Check if this is an event stream WebSocket
-    if (ws.data?.isEventStream || (ws as any)._isEventStream) {
+    if (ws.data?.isEventStream) {
       // Remove from event streams
       eventStreams.delete(ws);
     } else {
       // Delegate to NostrRelay handler
       return relay.handler().close?.(ws, code, reason);
+    }
+  },
+  error(ws: ServerWebSocket<any>, error: Error) {
+    // Check if this is an event stream WebSocket
+    if (ws.data?.isEventStream) {
+      console.error('Event stream WebSocket error:', error);
+      // Remove from event streams to prevent further errors
+      eventStreams.delete(ws);
+    } else {
+      // Delegate to NostrRelay handler if it has an error method
+      const relayHandler = relay.handler();
+      if ('error' in relayHandler && typeof relayHandler.error === 'function') {
+        return relayHandler.error(ws, error);
+      } else {
+        console.error('Relay WebSocket error:', error);
+      }
     }
   }
 };
@@ -143,16 +158,16 @@ serve({
           headers.set('X-API-Key', apiKey);
           authReq = new Request(req.url, {
             method: req.method,
-            headers: headers,
-            body: req.body
+            headers: headers
+            // Note: WebSocket upgrade requests should not have bodies
           });
         } else if (sessionId) {
           const headers = new Headers(req.headers);
           headers.set('X-Session-ID', sessionId);
           authReq = new Request(req.url, {
             method: req.method,
-            headers: headers,
-            body: req.body
+            headers: headers
+            // Note: WebSocket upgrade requests should not have bodies
           });
         }
         
@@ -161,7 +176,8 @@ serve({
           return new Response('Unauthorized', { 
             status: 401,
             headers: {
-              'Content-Type': 'text/plain'
+              'Content-Type': 'text/plain',
+              'WWW-Authenticate': 'Bearer realm="WebSocket"'
             }
           });
         }
@@ -173,6 +189,14 @@ serve({
       
       if (upgraded) {
         return undefined; // WebSocket upgrade successful
+      } else {
+        // WebSocket upgrade failed
+        return new Response('WebSocket upgrade failed', { 
+          status: 400,
+          headers: {
+            'Content-Type': 'text/plain'
+          }
+        });
       }
     }
     
@@ -184,6 +208,14 @@ serve({
       
       if (upgraded) {
         return undefined; // WebSocket upgrade successful
+      } else {
+        // WebSocket upgrade failed
+        return new Response('WebSocket upgrade failed', { 
+          status: 400,
+          headers: {
+            'Content-Type': 'text/plain'
+          }
+        });
       }
     }
 

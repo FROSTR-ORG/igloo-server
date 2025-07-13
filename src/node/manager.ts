@@ -22,8 +22,10 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
+import type { ServerWebSocket } from 'bun';
+
 // Helper function to broadcast events to all connected WebSocket clients
-export function createBroadcastEvent(eventStreams: Set<any>) {
+export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<any>>) {
   return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
     if (eventStreams.size === 0) {
       return; // No connected clients
@@ -39,7 +41,7 @@ export function createBroadcastEvent(eventStreams: Set<any>) {
       const eventData = JSON.stringify(safeEvent);
       
       // Send to all connected WebSocket clients, removing failed ones
-      const failedStreams = new Set<any>();
+      const failedStreams = new Set<ServerWebSocket<any>>();
       
       for (const ws of eventStreams) {
         try {
