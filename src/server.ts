@@ -1,4 +1,4 @@
-import { serve } from 'bun';
+import { serve, type ServerWebSocket } from 'bun';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
@@ -14,8 +14,11 @@ import {
   createNodeWithCredentials 
 } from './node/manager.js';
 
-// Event streaming for frontend
-const eventStreams = new Set<ReadableStreamDefaultController>();
+// WebSocket data type for event streams
+type EventStreamData = { isEventStream: true };
+
+// Event streaming for frontend - WebSocket connections
+const eventStreams = new Set<ServerWebSocket<EventStreamData>>();
 
 // Peer status tracking
 let peerStatuses = new Map<string, PeerStatus>();
@@ -67,14 +70,157 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   }
 };
 
+// WebSocket handler for event streaming and Nostr relay
+const websocketHandler = {
+  message(ws: ServerWebSocket<any>, message: string | Buffer) {
+    // Check if this is an event stream WebSocket or relay WebSocket
+    if (ws.data?.isEventStream) {
+      // Handle event stream WebSocket messages if needed
+      // Currently, event stream is one-way (server to client)
+      return;
+    } else {
+      // Delegate to NostrRelay handler
+      return relay.handler().message?.(ws, message);
+    }
+  },
+  open(ws: ServerWebSocket<any>) {
+    // Check if this is an event stream WebSocket
+    if (ws.data?.isEventStream) {
+      // Add to event streams (with type assertion for compatibility)
+      eventStreams.add(ws as ServerWebSocket<EventStreamData>);
+      
+      // Send initial connection event
+      const connectEvent = {
+        type: 'system',
+        message: 'Connected to event stream',
+        timestamp: new Date().toLocaleTimeString(),
+        id: Math.random().toString(36).substring(2, 11)
+      };
+      
+      try {
+        ws.send(JSON.stringify(connectEvent));
+      } catch (error) {
+        console.error('Error sending initial event:', error);
+      }
+    } else {
+      // Delegate to NostrRelay handler
+      return relay.handler().open?.(ws);
+    }
+  },
+  close(ws: ServerWebSocket<any>, code: number, reason: string) {
+    // Check if this is an event stream WebSocket
+    if (ws.data?.isEventStream) {
+      // Remove from event streams (with type assertion for compatibility)
+      eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
+    } else {
+      // Delegate to NostrRelay handler
+      return relay.handler().close?.(ws, code, reason);
+    }
+  },
+  error(ws: ServerWebSocket<any>, error: Error) {
+    // Check if this is an event stream WebSocket
+    if (ws.data?.isEventStream) {
+      console.error('Event stream WebSocket error:', error);
+      // Remove from event streams to prevent further errors (with type assertion)
+      eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
+    } else {
+      // Delegate to NostrRelay handler if it has an error method
+      const relayHandler = relay.handler();
+      if ('error' in relayHandler && typeof relayHandler.error === 'function') {
+        return relayHandler.error(ws, error);
+      } else {
+        console.error('Relay WebSocket error:', error);
+      }
+    }
+  }
+};
+
 // HTTP Server
 serve({
   port: CONST.HOST_PORT,
   hostname: CONST.HOST_NAME,
-  websocket: relay.handler(),
+  websocket: websocketHandler,
   fetch: async (req, server) => {
-    if (server.upgrade(req)) return;
     const url = new URL(req.url);
+    
+    // Handle WebSocket upgrade for event stream
+    if (url.pathname === '/api/events' && req.headers.get('upgrade') === 'websocket') {
+      // Check authentication for WebSocket upgrade
+      const { authenticate, AUTH_CONFIG } = await import('./routes/auth.js');
+      
+      if (AUTH_CONFIG.ENABLED) {
+        // For WebSocket, check URL parameters for auth info since headers may not be available
+        const apiKey = url.searchParams.get('apiKey');
+        const sessionId = url.searchParams.get('sessionId');
+        
+        let authReq = req;
+        
+        // If we have URL parameters, create a modified request with the auth headers
+        if (apiKey) {
+          const headers = new Headers(req.headers);
+          headers.set('X-API-Key', apiKey);
+          authReq = new Request(req.url, {
+            method: req.method,
+            headers: headers
+            // Note: WebSocket upgrade requests should not have bodies
+          });
+        } else if (sessionId) {
+          const headers = new Headers(req.headers);
+          headers.set('X-Session-ID', sessionId);
+          authReq = new Request(req.url, {
+            method: req.method,
+            headers: headers
+            // Note: WebSocket upgrade requests should not have bodies
+          });
+        }
+        
+        const authResult = authenticate(authReq);
+        if (!authResult.authenticated) {
+          return new Response('Unauthorized', { 
+            status: 401,
+            headers: {
+              'Content-Type': 'text/plain',
+              'WWW-Authenticate': 'Bearer realm="WebSocket"'
+            }
+          });
+        }
+      }
+      
+      const upgraded = server.upgrade(req, {
+        data: { isEventStream: true }
+      });
+      
+      if (upgraded) {
+        return undefined; // WebSocket upgrade successful
+      } else {
+        // WebSocket upgrade failed
+        return new Response('WebSocket upgrade failed', { 
+          status: 400,
+          headers: {
+            'Content-Type': 'text/plain'
+          }
+        });
+      }
+    }
+    
+    // Handle WebSocket upgrade for Nostr relay
+    if (url.pathname === '/' && req.headers.get('upgrade') === 'websocket') {
+      const upgraded = server.upgrade(req, {
+        data: { isEventStream: false }
+      });
+      
+      if (upgraded) {
+        return undefined; // WebSocket upgrade successful
+      } else {
+        // WebSocket upgrade failed
+        return new Response('WebSocket upgrade failed', { 
+          status: 400,
+          headers: {
+            'Content-Type': 'text/plain'
+          }
+        });
+      }
+    }
 
     // Create base (restricted) context for general routes
     const baseContext = {
