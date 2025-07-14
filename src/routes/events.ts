@@ -10,10 +10,9 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
     const authResult = authenticate(req);
     if (!authResult.authenticated) {
       const corsHeaders = getSecureCorsHeaders(req);
-      return new Response('Unauthorized', { 
+      return Response.json({ error: 'Unauthorized' }, { 
         status: 401,
         headers: {
-          'Content-Type': 'application/json',
           ...corsHeaders
         }
       });
