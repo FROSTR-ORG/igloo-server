@@ -4,6 +4,14 @@ info:
   description: |
     A server-based signing device and personal ephemeral relay for the FROSTR protocol.
 
+    ## Health Monitoring & Auto-Restart
+
+    Igloo Server includes comprehensive health monitoring with automatic restart capabilities:
+    - **Activity Tracking**: Monitors node activity and connection status
+    - **Health Checks**: Automated health checks every 30 seconds
+    - **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)
+    - **Connection Resilience**: Enhanced reconnection with exponential backoff
+
     ## Security Requirements
 
     **HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.
@@ -52,7 +60,7 @@ paths:
     get:
       operationId: getServerStatus
       summary: Get server status
-      description: Returns the current status of the server and Bifrost node
+      description: Returns the current status of the server and Bifrost node, including comprehensive health monitoring information
       tags:
         - Status
       responses:
@@ -67,7 +75,15 @@ paths:
                 nodeActive: true
                 hasCredentials: true
                 relayCount: 2
+                relays: ["wss://relay.primal.net", "wss://relay.damus.io"]
                 timestamp: "2025-01-20T12:00:00.000Z"
+                health:
+                  isHealthy: true
+                  lastActivity: "2025-01-20T11:59:30.000Z"
+                  lastHealthCheck: "2025-01-20T12:00:00.000Z"
+                  consecutiveFailures: 0
+                  restartCount: 0
+                  timeSinceLastActivity: 30000
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -849,16 +865,55 @@ components:
         relayCount:
           type: integer
           description: Number of configured relays
+        relays:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: List of configured relay URLs
         timestamp:
           type: string
           format: date-time
           description: Current server timestamp
+        health:
+          type: object
+          properties:
+            isHealthy:
+              type: boolean
+              description: Whether the node is considered healthy
+            lastActivity:
+              type: string
+              format: date-time
+              description: Timestamp of last node activity
+            lastHealthCheck:
+              type: string
+              format: date-time
+              description: Timestamp of last health check
+            consecutiveFailures:
+              type: integer
+              description: Number of consecutive health check failures
+            restartCount:
+              type: integer
+              description: Total number of automatic restarts
+            timeSinceLastActivity:
+              type: integer
+              description: Milliseconds since last activity
+          required:
+            - isHealthy
+            - lastActivity
+            - lastHealthCheck
+            - consecutiveFailures
+            - restartCount
+            - timeSinceLastActivity
+          description: Node health monitoring information
       required:
         - serverRunning
         - nodeActive
         - hasCredentials
         - relayCount
+        - relays
         - timestamp
+        - health
 
     AuthStatus:
       type: object

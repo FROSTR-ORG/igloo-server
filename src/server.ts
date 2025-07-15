@@ -8,11 +8,20 @@ import {
   ServerBifrostNode 
 } from './routes/index.js';
 import { 
-  createBroadcastEvent, 
+  createBroadcastEvent,
   createAddServerLog, 
   setupNodeEventListeners, 
-  createNodeWithCredentials 
+  createNodeWithCredentials,
+  cleanupHealthMonitoring
 } from './node/manager.js';
+
+// Node restart configuration
+const RESTART_CONFIG = {
+  INITIAL_RETRY_DELAY: parseInt(process.env.NODE_RESTART_DELAY || '30000'), // 30 seconds default
+  MAX_RETRY_ATTEMPTS: parseInt(process.env.NODE_MAX_RETRIES || '5'),
+  BACKOFF_MULTIPLIER: parseFloat(process.env.NODE_BACKOFF_MULTIPLIER || '1.5'),
+  MAX_RETRY_DELAY: parseInt(process.env.NODE_MAX_RETRY_DELAY || '300000'), // 5 minutes max
+};
 
 // WebSocket data type for event streams
 type EventStreamData = { isEventStream: true };
@@ -22,6 +31,8 @@ const eventStreams = new Set<ServerWebSocket<EventStreamData>>();
 
 // Peer status tracking
 let peerStatuses = new Map<string, PeerStatus>();
+
+
 
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
@@ -33,6 +44,109 @@ const relay = new NostrRelay();
 // Create and connect the Bifrost node using igloo-core only if credentials are available
 let node: ServerBifrostNode | null = null;
 
+// Node restart state management
+let isRestartInProgress = false;
+let currentRetryCount = 0;
+let restartTimeout: Timer | null = null;
+
+// Node restart logic with concurrency control and exponential backoff
+async function restartNode(reason: string = 'health check failure', forceRestart: boolean = false) {
+  // Prevent concurrent restarts unless forced
+  if (isRestartInProgress && !forceRestart) {
+    addServerLog('warn', `Restart already in progress, skipping restart request: ${reason}`);
+    return;
+  }
+  
+  // Clear any pending restart timeout
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
+  }
+  
+  isRestartInProgress = true;
+  addServerLog('system', `Restarting node due to: ${reason} (attempt ${currentRetryCount + 1}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
+  
+  try {
+    // Clean up existing node
+    if (node) {
+      try {
+        cleanupBifrostNode(node as any);
+      } catch (err) {
+        addServerLog('warn', 'Failed to clean up previous node during restart', err);
+      }
+    }
+    
+    // Clean up health monitoring
+    cleanupHealthMonitoring();
+    
+    // Clear peer statuses
+    peerStatuses.clear();
+    
+    // Wait a moment before recreating
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Recreate node if we have credentials
+    if (CONST.hasCredentials()) {
+      const newNode = await createNodeWithCredentials(
+        CONST.GROUP_CRED!,
+        CONST.SHARE_CRED!,
+        process.env.RELAYS,
+        addServerLog
+      );
+      
+      if (newNode) {
+        node = newNode;
+        setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+          // Controlled restart callback to prevent infinite recursion
+          scheduleRestartWithBackoff('watchdog timeout');
+        });
+        addServerLog('system', 'Node successfully restarted');
+        
+        // Reset retry count on successful restart
+        currentRetryCount = 0;
+        isRestartInProgress = false;
+        return;
+      } else {
+        throw new Error('Failed to create new node - createNodeWithCredentials returned null');
+      }
+    } else {
+      throw new Error('Cannot restart node - no credentials available');
+    }
+  } catch (error) {
+    addServerLog('error', 'Error during node restart', error);
+    
+    // Schedule retry with exponential backoff if we haven't exceeded max attempts
+    scheduleRestartWithBackoff(reason);
+  } finally {
+    isRestartInProgress = false;
+  }
+}
+
+// Schedule restart with exponential backoff and retry limit
+function scheduleRestartWithBackoff(reason: string) {
+  if (currentRetryCount >= RESTART_CONFIG.MAX_RETRY_ATTEMPTS) {
+    addServerLog('error', `Max restart attempts (${RESTART_CONFIG.MAX_RETRY_ATTEMPTS}) exceeded. Node restart abandoned.`);
+    currentRetryCount = 0;
+    return;
+  }
+  
+  // Calculate delay with exponential backoff
+  const baseDelay = RESTART_CONFIG.INITIAL_RETRY_DELAY;
+  const backoffDelay = Math.min(
+    baseDelay * Math.pow(RESTART_CONFIG.BACKOFF_MULTIPLIER, currentRetryCount),
+    RESTART_CONFIG.MAX_RETRY_DELAY
+  );
+  
+  currentRetryCount++;
+  
+  addServerLog('system', `Scheduling restart in ${Math.round(backoffDelay / 1000)}s (attempt ${currentRetryCount}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
+  
+  restartTimeout = setTimeout(() => {
+    restartNode(`retry: ${reason}`, false);
+  }, backoffDelay);
+}
+
+// Initial node setup
 if (CONST.hasCredentials()) {
   addServerLog('info', 'Creating and connecting node...');
   try {
@@ -44,7 +158,10 @@ if (CONST.hasCredentials()) {
     );
     
     if (node) {
-      setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses);
+              setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+          // Node unhealthy callback
+          scheduleRestartWithBackoff('watchdog timeout');
+        });
     }
   } catch (error) {
     addServerLog('error', 'Failed to create initial Bifrost node', error);
@@ -64,9 +181,16 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
       addServerLog('warn', 'Failed to clean up previous node', err);
     }
   }
+  
+  // Clean up health monitoring
+  cleanupHealthMonitoring();
+  
   node = newNode;
   if (newNode) {
-    setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses);
+    setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses, () => {
+      // Node unhealthy callback for dynamically created nodes
+      scheduleRestartWithBackoff('dynamic node watchdog timeout');
+    });
   }
 };
 
@@ -249,3 +373,30 @@ addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
 if (!node) {
   addServerLog('info', 'Node not initialized - credentials not available. Server is ready for configuration.');
 }
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  addServerLog('system', 'Received SIGTERM, shutting down gracefully');
+  
+  // Clear any pending restart timeout
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
+  }
+  
+  cleanupHealthMonitoring();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  addServerLog('system', 'Received SIGINT, shutting down gracefully');
+  
+  // Clear any pending restart timeout
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
+  }
+  
+  cleanupHealthMonitoring();
+  process.exit(0);
+});

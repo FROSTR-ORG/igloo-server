@@ -1,6 +1,7 @@
 import { RouteContext } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, getValidRelays } from './utils.js';
+import { getNodeHealth } from '../node/manager.js';
 
 export async function handleStatusRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
@@ -21,12 +22,24 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
       const env = await readEnvFile();
       const currentRelays = getValidRelays(env.RELAYS);
       
+      // Get node health information
+      const nodeHealth = getNodeHealth();
+      
       const status = {
         serverRunning: true,
         nodeActive: context.node !== null,
-        hasCredentials: env.SHARE_CRED && env.GROUP_CRED,
+        hasCredentials: !!(env.SHARE_CRED && env.GROUP_CRED),
         relayCount: currentRelays.length,
-        timestamp: new Date().toISOString()
+        relays: currentRelays,
+        timestamp: new Date().toISOString(),
+        health: {
+          isHealthy: nodeHealth.isHealthy,
+          lastActivity: nodeHealth.lastActivity.toISOString(),
+          lastHealthCheck: nodeHealth.lastHealthCheck.toISOString(),
+          consecutiveFailures: nodeHealth.consecutiveFailures,
+          restartCount: nodeHealth.restartCount,
+          timeSinceLastActivity: Date.now() - nodeHealth.lastActivity.getTime()
+        }
       };
       return Response.json(status, { headers });
     } catch (error) {
