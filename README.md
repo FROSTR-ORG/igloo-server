@@ -575,15 +575,23 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
 | `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
 | `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` (5 minutes) | ❌ |
+| `NODE_HEALTH_MAX_RESTARTS` | Maximum health-based restarts before giving up | `3` | ❌ |
+| `NODE_HEALTH_RESTART_DELAY` | Base delay for health restart backoff (ms) | `60000` (1 minute) | ❌ |
+| `NODE_HEALTH_BACKOFF_MULTIPLIER` | Health restart exponential backoff multiplier | `2` | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
 - **Docker deployment**: Use `HOST_NAME=0.0.0.0` to allow external connections
 
 **🔄 Node Restart Configuration**: 
-- **Exponential Backoff**: Restart delays increase with each failure using the backoff multiplier
-- **Max Retries**: After reaching the maximum retry attempts, the node restart is abandoned
-- **Example**: With defaults, retry delays would be: 30s, 45s, 67s, 100s, 150s (max 5 attempts)
+- **Main Restart System**: Handles manual restarts and major failures with configurable retry attempts
+  - **Exponential Backoff**: Restart delays increase with each failure using the backoff multiplier
+  - **Max Retries**: After reaching the maximum retry attempts, the node restart is abandoned
+  - **Example**: With defaults, retry delays would be: 30s, 45s, 67s, 100s, 150s (max 5 attempts)
+- **Health-Based Restart System**: Handles automatic restarts from health monitoring watchdog timeouts
+  - **Separate Limits**: Independent restart count and backoff to prevent infinite health restarts
+  - **Auto-Reset**: Restart count resets when node becomes healthy again
+  - **Example**: With defaults, health restart delays would be: 60s, 120s, 240s (max 3 attempts)
 
 ## Troubleshooting
 

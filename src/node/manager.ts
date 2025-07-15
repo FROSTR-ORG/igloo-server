@@ -33,6 +33,9 @@ const EVENT_MAPPINGS = {
 const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
 const NODE_ACTIVITY_TIMEOUT = 120000; // 2 minutes without activity = unhealthy
 const WATCHDOG_TIMEOUT = 300000; // 5 minutes without any activity = restart
+const MAX_HEALTH_RESTARTS = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3'); // Maximum number of health-based restarts before giving up
+const RESTART_BACKOFF_BASE = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000'); // Base delay for exponential backoff (1 minute)
+const RESTART_BACKOFF_MULTIPLIER = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2'); // Exponential backoff multiplier
 
 // Health monitoring state
 interface NodeHealth {
@@ -61,7 +64,9 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>)
   if (!nodeHealth.isHealthy) {
     nodeHealth.isHealthy = true;
     nodeHealth.consecutiveFailures = 0;
-    addServerLog('system', 'Node health restored - activity detected');
+    // Reset restart count when node becomes healthy again
+    nodeHealth.restartCount = 0;
+    addServerLog('system', 'Node health restored - activity detected, restart count reset');
   }
 }
 
@@ -88,9 +93,25 @@ function checkNodeHealth(
 
     // If node has been unhealthy for too long, trigger restart
     if (timeSinceLastActivity > WATCHDOG_TIMEOUT) {
-      addServerLog('error', `Node watchdog timeout - attempting restart (restart count: ${nodeHealth.restartCount})`);
+      // Check if we've exceeded the maximum number of health-based restarts
+      if (nodeHealth.restartCount >= MAX_HEALTH_RESTARTS) {
+        addServerLog('error', `Maximum health-based restarts (${MAX_HEALTH_RESTARTS}) exceeded. Node restart abandoned to prevent infinite loops.`);
+        return;
+      }
+      
+      // Calculate exponential backoff delay
+      const backoffDelay = RESTART_BACKOFF_BASE * Math.pow(RESTART_BACKOFF_MULTIPLIER, nodeHealth.restartCount);
+      
+      addServerLog('error', `Node watchdog timeout - scheduling restart ${nodeHealth.restartCount + 1}/${MAX_HEALTH_RESTARTS} with ${Math.round(backoffDelay / 1000)}s delay`);
+      
+      // Increment restart count
       nodeHealth.restartCount++;
-      onNodeUnhealthy();
+      
+      // Schedule restart with exponential backoff
+      setTimeout(() => {
+        addServerLog('system', `Executing delayed restart (attempt ${nodeHealth.restartCount})`);
+        onNodeUnhealthy();
+      }, backoffDelay);
     }
   }
 }
