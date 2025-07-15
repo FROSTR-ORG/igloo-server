@@ -8,7 +8,8 @@ import {
   writeEnvFile, 
   filterEnvObject, 
   validateEnvKeys, 
-  getValidRelays 
+  getValidRelays,
+  getSecureCorsHeaders 
 } from './utils.js';
 import { setupNodeEventListeners, cleanupHealthMonitoring } from '../node/manager.js';
 
@@ -107,11 +108,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   if (!url.pathname.startsWith('/api/env')) return null;
 
   // Get secure CORS headers based on request origin
-  const corsHeaders = {
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
-  };
+  const corsHeaders = getSecureCorsHeaders(req);
 
   const headers = {
     'Content-Type': 'application/json',
