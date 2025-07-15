@@ -571,10 +571,19 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `HOST_PORT` | Server port | `8002` | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
+| `NODE_RESTART_DELAY` | Initial delay before node restart (ms) | `30000` (30 seconds) | ❌ |
+| `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
+| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
+| `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` (5 minutes) | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
 - **Docker deployment**: Use `HOST_NAME=0.0.0.0` to allow external connections
+
+**🔄 Node Restart Configuration**: 
+- **Exponential Backoff**: Restart delays increase with each failure using the backoff multiplier
+- **Max Retries**: After reaching the maximum retry attempts, the node restart is abandoned
+- **Example**: With defaults, retry delays would be: 30s, 45s, 67s, 100s, 150s (max 5 attempts)
 
 ## Troubleshooting
 

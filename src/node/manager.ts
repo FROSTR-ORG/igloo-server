@@ -177,7 +177,11 @@ function setupConnectionMonitoring(
       }
     });
   }
-} return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
+}
+
+// Create broadcast event function for WebSocket streaming
+export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<EventStreamData>>) {
+  return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
     if (eventStreams.size === 0) {
       return; // No connected clients
     }
