@@ -11,7 +11,8 @@ import {
   createBroadcastEvent, 
   createAddServerLog, 
   setupNodeEventListeners, 
-  createNodeWithCredentials 
+  createNodeWithCredentials,
+  cleanupHealthMonitoring
 } from './node/manager.js';
 
 // Event streaming for frontend
@@ -30,6 +31,65 @@ const relay = new NostrRelay();
 // Create and connect the Bifrost node using igloo-core only if credentials are available
 let node: ServerBifrostNode | null = null;
 
+// Node restart logic
+async function restartNode(reason: string = 'health check failure') {
+  addServerLog('system', `Restarting node due to: ${reason}`);
+  
+  try {
+    // Clean up existing node
+    if (node) {
+      try {
+        cleanupBifrostNode(node as any);
+      } catch (err) {
+        addServerLog('warn', 'Failed to clean up previous node during restart', err);
+      }
+    }
+    
+    // Clean up health monitoring
+    cleanupHealthMonitoring();
+    
+    // Clear peer statuses
+    peerStatuses.clear();
+    
+    // Wait a moment before recreating
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    // Recreate node if we have credentials
+    if (CONST.hasCredentials()) {
+      const newNode = await createNodeWithCredentials(
+        CONST.GROUP_CRED!,
+        CONST.SHARE_CRED!,
+        process.env.RELAYS,
+        addServerLog
+      );
+      
+      if (newNode) {
+        node = newNode;
+        setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+          // Recursive restart callback
+          restartNode('recursive health check failure');
+        });
+        addServerLog('system', 'Node successfully restarted');
+      } else {
+        addServerLog('error', 'Failed to restart node - will retry later');
+        // Schedule another restart attempt
+        setTimeout(() => {
+          restartNode('retry after failed restart');
+        }, 30000); // Wait 30 seconds before retrying
+      }
+    } else {
+      addServerLog('error', 'Cannot restart node - no credentials available');
+    }
+  } catch (error) {
+    addServerLog('error', 'Error during node restart', error);
+    // Schedule another restart attempt
+    setTimeout(() => {
+      restartNode('retry after error');
+    }, 30000); // Wait 30 seconds before retrying
+  }
+}
+
+// Initial node setup
 if (CONST.hasCredentials()) {
   addServerLog('info', 'Creating and connecting node...');
   try {
@@ -41,7 +101,10 @@ if (CONST.hasCredentials()) {
     );
     
     if (node) {
-      setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses);
+      setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+        // Node unhealthy callback
+        restartNode('watchdog timeout');
+      });
     }
   } catch (error) {
     addServerLog('error', 'Failed to create initial Bifrost node', error);
@@ -61,9 +124,16 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
       addServerLog('warn', 'Failed to clean up previous node', err);
     }
   }
+  
+  // Clean up health monitoring
+  cleanupHealthMonitoring();
+  
   node = newNode;
   if (newNode) {
-    setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses);
+    setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses, () => {
+      // Node unhealthy callback for dynamically created nodes
+      restartNode('dynamic node watchdog timeout');
+    });
   }
 };
 
@@ -103,3 +173,16 @@ addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
 if (!node) {
   addServerLog('info', 'Node not initialized - credentials not available. Server is ready for configuration.');
 }
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => {
+  addServerLog('system', 'Received SIGTERM, shutting down gracefully');
+  cleanupHealthMonitoring();
+  process.exit(0);
+});
+
+process.on('SIGINT', () => {
+  addServerLog('system', 'Received SIGINT, shutting down gracefully');
+  cleanupHealthMonitoring();
+  process.exit(0);
+});

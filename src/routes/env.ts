@@ -10,6 +10,7 @@ import {
   validateEnvKeys, 
   getValidRelays 
 } from './utils.js';
+import { setupNodeEventListeners, cleanupHealthMonitoring } from '../node/manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -21,6 +22,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
     // Clean up existing node if it exists
     if (context.node) {
       context.addServerLog('info', 'Cleaning up existing Bifrost node...');
+      cleanupHealthMonitoring();
       // igloo-core handles cleanup internally
     }
 
@@ -31,6 +33,20 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
       let apiConnectionAttempts = 0;
       const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
       let newNode: ServerBifrostNode | null = null;
+      
+      // Node restart callback for health monitoring
+      const nodeRestartCallback = () => {
+        context.addServerLog('system', 'Node unhealthy - attempting restart via health monitoring');
+        // Use a timeout to prevent blocking the current operation
+        setTimeout(async () => {
+          try {
+            await createAndConnectServerNode(env, context);
+          } catch (error) {
+            context.addServerLog('error', 'Failed to restart node via health monitoring', error);
+          }
+        }, 1000);
+      };
+      
       while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
         apiConnectionAttempts++;
         try {
@@ -49,6 +65,8 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             if (context.updateNode) {
               context.updateNode(newNode);
             }
+            // Set up health monitoring with restart callback
+            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback);
             context.addServerLog('info', 'Node connected and ready');
             if (result.state) {
               context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
@@ -69,59 +87,65 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             if (context.updateNode) {
               context.updateNode(newNode);
             }
+            // Set up health monitoring with restart callback
+            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback);
             context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
         }
       }
+      
+      if (!newNode) {
+        context.addServerLog('error', 'Failed to create node after all attempts');
+      }
     } else {
-      context.addServerLog('info', 'Incomplete credentials, node not created');
-      context.addServerLog('info', `Share credential: ${env.SHARE_CRED ? 'Present' : 'Missing'}, Group credential: ${env.GROUP_CRED ? 'Present' : 'Missing'}`);
+      context.addServerLog('info', 'Insufficient credentials for node creation');
     }
   });
-  return nodeUpdateLock;
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/env')) return null;
 
-  const headers = {
-    'Content-Type': 'application/json'
+  // Get secure CORS headers based on request origin
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };
+
+  const headers = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+  };
+
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 200, headers });
+  }
 
   try {
     switch (url.pathname) {
       case '/api/env':
         if (req.method === 'GET') {
           const env = await readEnvFile();
-          return Response.json(env, { headers });
+          const { filteredEnv } = filterEnvObject(env);
+          return Response.json(filteredEnv, { headers });
         }
         
         if (req.method === 'POST') {
           const body = await req.json();
           const env = await readEnvFile();
           
-          // Security: Validate and filter incoming environment variables
-          const { filteredEnv, rejectedKeys } = filterEnvObject(body);
+          // Validate which keys are allowed to be updated
+          const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
           
-          if (rejectedKeys.length > 0) {
-            console.warn(`Rejected unauthorized environment variable keys: ${rejectedKeys.join(', ')}`);
-            context.addServerLog('warn', `Rejected unauthorized environment variable keys: ${rejectedKeys.join(', ')}`);
+          // Update only allowed keys
+          const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
+          
+          for (const key of validKeys) {
+            if (body[key] !== undefined) {
+              env[key] = body[key];
+            }
           }
-          
-          // Only proceed if we have valid keys to update
-          if (Object.keys(filteredEnv).length === 0) {
-            return Response.json({ 
-              success: false, 
-              message: 'No valid environment variables provided',
-              rejectedKeys 
-            }, { status: 400, headers });
-          }
-          
-          // Check if we're updating credentials
-          const updatingCredentials = 'SHARE_CRED' in filteredEnv || 'GROUP_CRED' in filteredEnv;
-          
-          // Update environment variables (only whitelisted ones)
-          Object.assign(env, filteredEnv);
           
           if (await writeEnvFile(env)) {
             // If credentials were updated, recreate the node
@@ -154,37 +178,19 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           const body = await req.json();
           const { keys } = body;
           
-          // Validate that keys is an array
-          if (!Array.isArray(keys)) {
-            return Response.json({ 
-              success: false, 
-              message: 'Keys must be provided as an array' 
-            }, { status: 400, headers });
+          if (!Array.isArray(keys) || keys.length === 0) {
+            return Response.json({ error: 'Keys array is required' }, { status: 400, headers });
           }
           
           const env = await readEnvFile();
           
-          // Security: Validate keys against whitelist
+          // Validate which keys are allowed to be deleted
           const { validKeys, invalidKeys } = validateEnvKeys(keys);
           
-          if (invalidKeys.length > 0) {
-            console.warn(`Rejected unauthorized deletion of environment variable keys: ${invalidKeys.join(', ')}`);
-            context.addServerLog('warn', `Rejected unauthorized deletion of environment variable keys: ${invalidKeys.join(', ')}`);
-          }
+          // Check if we're deleting credentials
+          const deletingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
           
-          // Only proceed if we have valid keys to delete
-          if (validKeys.length === 0) {
-            return Response.json({ 
-              success: false, 
-              message: 'No valid environment variables provided for deletion',
-              rejectedKeys: invalidKeys 
-            }, { status: 400, headers });
-          }
-          
-          // Check if we're deleting credentials (only from valid keys)
-          const deletingCredentials = validKeys.includes('SHARE_CRED') || validKeys.includes('GROUP_CRED');
-          
-          // Delete only whitelisted keys
+          // Delete only allowed keys
           for (const key of validKeys) {
             delete env[key];
           }
@@ -194,6 +200,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             if (deletingCredentials && context.node) {
               try {
                 context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
+                cleanupHealthMonitoring();
                 // Note: igloo-core handles cleanup internally
                 if (context.updateNode) {
                   context.updateNode(null);
