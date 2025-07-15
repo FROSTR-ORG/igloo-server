@@ -5,6 +5,13 @@ import {
 } from '@frostr/igloo-core';
 import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
+import type { ServerWebSocket } from 'bun';
+
+// WebSocket ready state constants
+const READY_STATE_OPEN = 1;
+
+// WebSocket data type for event streams
+type EventStreamData = { isEventStream: true };
 
 // Event mapping for cleaner message handling - matching Igloo Desktop
 const EVENT_MAPPINGS = {
@@ -170,11 +177,7 @@ function setupConnectionMonitoring(
       }
     });
   }
-}
-
-// Helper function to broadcast events to all connected clients
-export function createBroadcastEvent(eventStreams: Set<ReadableStreamDefaultController>) {
-  return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
+} return function broadcastEvent(event: { type: string; message: string; data?: any; timestamp: string; id: string }) {
     if (eventStreams.size === 0) {
       return; // No connected clients
     }
@@ -186,24 +189,29 @@ export function createBroadcastEvent(eventStreams: Set<ReadableStreamDefaultCont
         data: event.data ? JSON.parse(safeStringify(event.data)) : undefined
       };
       
-      const eventData = `data: ${JSON.stringify(safeEvent)}\n\n`;
-      const encodedData = new TextEncoder().encode(eventData);
+      const eventData = JSON.stringify(safeEvent);
       
-      // Send to all connected streams, removing failed ones
-      const failedStreams = new Set<ReadableStreamDefaultController>();
+      // Send to all connected WebSocket clients, removing failed ones
+      const failedStreams = new Set<ServerWebSocket<EventStreamData>>();
       
-      for (const controller of eventStreams) {
+      for (const ws of eventStreams) {
         try {
-          controller.enqueue(encodedData);
+          // Use named constant instead of magic number
+          if (ws.readyState === READY_STATE_OPEN) {
+            ws.send(eventData);
+          } else {
+            // Mark for removal if connection is not open
+            failedStreams.add(ws);
+          }
         } catch (error) {
           // Mark for removal - don't modify set while iterating
-          failedStreams.add(controller);
+          failedStreams.add(ws);
         }
       }
       
       // Remove failed streams
-      for (const failedController of failedStreams) {
-        eventStreams.delete(failedController);
+      for (const failedWs of failedStreams) {
+        eventStreams.delete(failedWs);
       }
     } catch (error) {
       console.error('Broadcast event error:', error);

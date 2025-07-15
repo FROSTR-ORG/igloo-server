@@ -58,11 +58,16 @@ export interface AuthContext {
   authenticated: boolean;
 }
 
+import type { ServerWebSocket } from 'bun';
+
+// WebSocket data type for event streams
+type EventStreamData = { isEventStream: true };
+
 // Base context for all routes - without updateNode function
 export interface RouteContext {
   node: ServerBifrostNode | null;
   peerStatuses: Map<string, PeerStatus>;
-  eventStreams: Set<ReadableStreamDefaultController>;
+  eventStreams: Set<ServerWebSocket<EventStreamData>>;
   addServerLog: (type: string, message: string, data?: any) => void;
   broadcastEvent: (event: { type: string; message: string; data?: any; timestamp: string; id: string }) => void;
   auth?: AuthContext;

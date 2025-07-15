@@ -46,6 +46,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [📋 Quick Security Setup](#-quick-security-setup)
   - [🛡️ Security Features](#️-security-features)
 - [Security Notes](#security-notes)
+- [WebSocket Migration](WEBSOCKET_MIGRATION.md)
 - [License](#license)
 - [Contributing](#contributing)
 
@@ -82,7 +83,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Web UI Mode**: Full React interface for interactive management
 - **Headless Mode**: Server-only operation via environment variables and APIs
 - **API Access**: RESTful endpoints for programmatic control
-- **Event Streaming**: Server-Sent Events for real-time updates
+- **Event Streaming**: WebSocket-based real-time updates with automatic reconnection
 
 ## Architecture
 
@@ -342,14 +343,21 @@ Content-Type: application/json
 
 ### Real-time Events
 ```bash
-# Subscribe to live event stream
-GET /api/events
-Accept: text/event-stream
+# Subscribe to live event stream via WebSocket
+WebSocket: ws://localhost:8002/api/events
+# Or secure WebSocket: wss://yourdomain.com/api/events
 
-# Receives events like:
-data: {"type":"sign","message":"Signature request received","timestamp":"12:34:56","id":"abc123"}
-data: {"type":"bifrost","message":"Peer connected","timestamp":"12:34:57","id":"def456"}
+# Authentication (if enabled) via URL parameters:
+ws://localhost:8002/api/events?apiKey=your-api-key
+ws://localhost:8002/api/events?sessionId=your-session-id
+
+# Receives JSON events like:
+{"type":"sign","message":"Signature request received","timestamp":"12:34:56","id":"abc123"}
+{"type":"bifrost","message":"Peer connected","timestamp":"12:34:57","id":"def456"}
+{"type":"system","message":"Connected to event stream","timestamp":"12:34:58","id":"ghi789"}
 ```
+
+💡 **Note**: Real-time events have been migrated from Server-Sent Events (SSE) to **WebSockets** for better performance and reliability. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
 
 ## Deployment
 
