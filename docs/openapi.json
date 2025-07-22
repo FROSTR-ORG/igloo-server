@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Igloo Server API",
-    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol. \n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
+    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol. \n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
     "version": "0.1.5",
     "contact": {
       "name": "FROSTR Organization",
@@ -68,7 +68,7 @@
     "/api/status": {
       "get": {
         "summary": "Get server status",
-        "description": "Returns the current status of the server and Bifrost node",
+        "description": "Returns the current status of the server and Bifrost node, including comprehensive health monitoring information",
         "tags": [
           "Status"
         ],
@@ -85,7 +85,16 @@
                   "nodeActive": true,
                   "hasCredentials": true,
                   "relayCount": 2,
-                  "timestamp": "2025-01-20T12:00:00.000Z"
+                  "relays": ["wss://relay.primal.net", "wss://relay.damus.io"],
+                  "timestamp": "2025-01-20T12:00:00.000Z",
+                  "health": {
+                    "isHealthy": true,
+                    "lastActivity": "2025-01-20T11:59:30.000Z",
+                    "lastHealthCheck": "2025-01-20T12:00:00.000Z",
+                    "consecutiveFailures": 0,
+                    "restartCount": 0,
+                    "timeSinceLastActivity": 30000
+                  }
                 }
               }
             }
@@ -1180,10 +1189,58 @@
             "type": "integer",
             "description": "Number of configured relays"
           },
+          "relays": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uri"
+            },
+            "description": "List of configured relay URLs"
+          },
           "timestamp": {
             "type": "string",
             "format": "date-time",
             "description": "Current server timestamp"
+          },
+          "health": {
+            "type": "object",
+            "properties": {
+              "isHealthy": {
+                "type": "boolean",
+                "description": "Whether the node is considered healthy"
+              },
+              "lastActivity": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "Timestamp of last node activity"
+              },
+              "lastHealthCheck": {
+                "type": ["string", "null"],
+                "format": "date-time",
+                "description": "Timestamp of last health check"
+              },
+              "consecutiveFailures": {
+                "type": "integer",
+                "description": "Number of consecutive health check failures"
+              },
+              "restartCount": {
+                "type": "integer",
+                "description": "Total number of automatic restarts"
+              },
+              "timeSinceLastActivity": {
+                "type": ["integer", "null"],
+                "description": "Milliseconds since last activity"
+              }
+            },
+            "required": [
+              "isHealthy",
+              "lastActivity",
+              "lastHealthCheck",
+              "consecutiveFailures",
+              "restartCount",
+              "timeSinceLastActivity"
+            ],
+            "description": "Node health monitoring information"
           }
         },
         "required": [
@@ -1191,7 +1248,9 @@
           "nodeActive",
           "hasCredentials",
           "relayCount",
-          "timestamp"
+          "relays",
+          "timestamp",
+          "health"
         ]
       },
       "AuthStatus": {

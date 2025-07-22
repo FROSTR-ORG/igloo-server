@@ -13,6 +13,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [📡 Ephemeral Nostr Relay](#-ephemeral-nostr-relay)
   - [⚙️ Flexible Operation Modes](#️-flexible-operation-modes)
 - [Architecture](#architecture)
+- [Health Monitoring & Auto-Restart](#health-monitoring--auto-restart)
 - [Quick Start](#quick-start)
   - [Prerequisites](#prerequisites)
   - [Installation & Setup](#installation--setup)
@@ -60,6 +61,9 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Share-Based Security**: Uses FROST threshold signatures with your nsec shares - never reconstructs the full private key
 - **Multi-Relay Support**: Connects to multiple Nostr relays for redundancy and coordination
 - **Real-time Monitoring**: Live peer status tracking and event logging
+- **Health Monitoring**: Automatic node health checks with activity tracking every 30 seconds
+- **Auto-Restart**: Automatic recovery from silent failures with watchdog timer (5-minute timeout)
+- **Connection Resilience**: Enhanced reconnection logic with exponential backoff and extended timeouts
 
 ### 🌐 **Modern Web Interface** 
 - **React Frontend**: Modern, responsive UI built with TypeScript and Tailwind CSS
@@ -88,6 +92,36 @@ The server provides three integrated services:
 1. **FROSTR Signing Node** - Built on igloo-core with bifrost protocol implementation
 2. **Web Interface** - React frontend for configuration and monitoring  
 3. **Ephemeral Test Relay** - In-memory relay included for development/testing convenience; not suitable for production
+
+## Health Monitoring & Auto-Restart
+
+Igloo Server includes a comprehensive health monitoring system designed to prevent silent failures and ensure reliable operation during long-running deployments:
+
+### 🔍 **Health Monitoring**
+- **Activity Tracking**: Every bifrost message, event, and connection update updates a `lastActivity` timestamp
+- **Periodic Health Checks**: System checks node health every 30 seconds
+- **Real-time Status**: Health information available via `/api/status` endpoint
+
+### ⚡ **Auto-Restart System** 
+- **Unhealthy Detection**: Node is considered unhealthy if no activity for 2 minutes
+- **Watchdog Timer**: Automatic restart triggered if no activity for 5 minutes
+- **Progressive Retry**: Uses exponential backoff for connection attempts
+- **Graceful Recovery**: Maintains peer status and connection state through restarts
+
+### 📊 **Health Metrics**
+- **Last Activity**: Timestamp of most recent node activity
+- **Health Status**: Boolean indicating if node is healthy
+- **Consecutive Failures**: Number of consecutive health check failures
+- **Restart Count**: Total number of automatic restarts
+- **Time Since Activity**: Milliseconds since last activity
+
+### 🛡️ **Connection Resilience**
+- **Extended Timeouts**: Increased connection timeout to 30 seconds
+- **More Retries**: Up to 5 connection attempts with exponential backoff
+- **Enhanced Event Listening**: Comprehensive coverage of all node state changes
+- **Silent Failure Recovery**: Detects and recovers from unresponsive nodes
+
+This system addresses common issues with long-running deployments where nodes may silently stop responding after extended periods, ensuring your signing node remains operational and responsive.
 
 ## Quick Start
 
@@ -237,8 +271,17 @@ GET /api/status
   "serverRunning": true,
   "nodeActive": true,
   "hasCredentials": true,
-  "relayCount": 1,
-  "timestamp": "2025-01-20T12:00:00.000Z"
+  "relayCount": 2,
+  "relays": ["wss://relay.primal.net", "wss://relay.damus.io"],
+  "timestamp": "2025-01-20T12:00:00.000Z",
+  "health": {
+    "isHealthy": true,
+    "lastActivity": "2025-01-20T11:59:30.000Z",
+    "lastHealthCheck": "2025-01-20T12:00:00.000Z",
+    "consecutiveFailures": 0,
+    "restartCount": 0,
+    "timeSinceLastActivity": 30000
+  }
 }
 ```
 
@@ -377,6 +420,7 @@ docker-compose up -d
 # Allow HTTP/HTTPS traffic
 sudo ufw allow 80
 sudo ufw allow 443
+sudo ufw allow 22
 sudo ufw allow 8002  # If accessing directly without reverse proxy
 
 # Enable firewall
@@ -528,10 +572,27 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `HOST_PORT` | Server port | `8002` | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
+| `NODE_RESTART_DELAY` | Initial delay before node restart (ms) | `30000` (30 seconds) | ❌ |
+| `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
+| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
+| `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` (5 minutes) | ❌ |
+| `NODE_HEALTH_MAX_RESTARTS` | Maximum health-based restarts before giving up | `3` | ❌ |
+| `NODE_HEALTH_RESTART_DELAY` | Base delay for health restart backoff (ms) | `60000` (1 minute) | ❌ |
+| `NODE_HEALTH_BACKOFF_MULTIPLIER` | Health restart exponential backoff multiplier | `2` | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
 - **Docker deployment**: Use `HOST_NAME=0.0.0.0` to allow external connections
+
+**🔄 Node Restart Configuration**: 
+- **Main Restart System**: Handles manual restarts and major failures with configurable retry attempts
+  - **Exponential Backoff**: Restart delays increase with each failure using the backoff multiplier
+  - **Max Retries**: After reaching the maximum retry attempts, the node restart is abandoned
+  - **Example**: With defaults, retry delays would be: 30s, 45s, 67s, 100s, 150s (max 5 attempts)
+- **Health-Based Restart System**: Handles automatic restarts from health monitoring watchdog timeouts
+  - **Separate Limits**: Independent restart count and backoff to prevent infinite health restarts
+  - **Auto-Reset**: Restart count resets when node becomes healthy again
+  - **Example**: With defaults, health restart delays would be: 60s, 120s, 240s (max 3 attempts)
 
 ## Troubleshooting
 
