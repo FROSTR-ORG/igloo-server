@@ -882,11 +882,11 @@ components:
               type: boolean
               description: Whether the node is considered healthy
             lastActivity:
-              type: string
+              type: [string, "null"]
               format: date-time
               description: Timestamp of last node activity
             lastHealthCheck:
-              type: string
+              type: [string, "null"]
               format: date-time
               description: Timestamp of last health check
             consecutiveFailures:
@@ -896,7 +896,7 @@ components:
               type: integer
               description: Total number of automatic restarts
             timeSinceLastActivity:
-              type: integer
+              type: [integer, "null"]
               description: Milliseconds since last activity
           required:
             - isHealthy
