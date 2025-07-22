@@ -420,6 +420,7 @@ docker-compose up -d
 # Allow HTTP/HTTPS traffic
 sudo ufw allow 80
 sudo ufw allow 443
+sudo ufw allow 22
 sudo ufw allow 8002  # If accessing directly without reverse proxy
 
 # Enable firewall
