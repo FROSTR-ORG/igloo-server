@@ -37,15 +37,9 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
       
       // Node restart callback for health monitoring
       const nodeRestartCallback = () => {
-        context.addServerLog('system', 'Node unhealthy - attempting restart via health monitoring');
-        // Use a timeout to prevent blocking the current operation
-        setTimeout(async () => {
-          try {
-            await createAndConnectServerNode(env, context);
-          } catch (error) {
-            context.addServerLog('error', 'Failed to restart node via health monitoring', error);
-          }
-        }, 1000);
+        context.addServerLog('warning', 'Node unhealthy detected in env route - restart handling delegated to main server');
+        // Environment route should not handle node restarts directly
+        // The main server's health monitoring system will handle restarts
       };
       
       while (apiConnectionAttempts < apiMaxAttempts && !newNode) {

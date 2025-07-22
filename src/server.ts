@@ -27,7 +27,7 @@ const parseRestartConfig = () => {
   const validatedConfig = {
     INITIAL_RETRY_DELAY: (initialRetryDelay > 0 && initialRetryDelay <= 3600000) ? initialRetryDelay : 30000, // 1ms to 1 hour max
     MAX_RETRY_ATTEMPTS: (maxRetryAttempts > 0 && maxRetryAttempts <= 100) ? maxRetryAttempts : 5, // 1 to 100 attempts max
-    BACKOFF_MULTIPLIER: (backoffMultiplier > 0 && backoffMultiplier <= 10) ? backoffMultiplier : 1.5, // 0.1 to 10x multiplier
+    BACKOFF_MULTIPLIER: (backoffMultiplier >= 1.0 && backoffMultiplier <= 10) ? backoffMultiplier : 1.5, // 1.0 to 10x multiplier
     MAX_RETRY_DELAY: (maxRetryDelay > 0 && maxRetryDelay <= 7200000) ? maxRetryDelay : 300000, // 1ms to 2 hours max
   };
 

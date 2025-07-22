@@ -42,7 +42,7 @@ const parseHealthConstants = () => {
     WATCHDOG_TIMEOUT: 300000, // Fixed at 5 minutes
     MAX_HEALTH_RESTARTS: (maxHealthRestarts > 0 && maxHealthRestarts <= 50) ? maxHealthRestarts : 3, // 1 to 50 restarts max
     RESTART_BACKOFF_BASE: (restartBackoffBase > 0 && restartBackoffBase <= 3600000) ? restartBackoffBase : 60000, // 1ms to 1 hour max
-    RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier > 0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 0.1 to 10x multiplier
+    RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier >= 1.0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 1.0 to 10x multiplier
     RESTART_COUNT_RESET_TIMEOUT: 600000, // Fixed at 10 minutes
   };
 
