@@ -29,14 +29,46 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
-// Health monitoring constants
-const HEALTH_CHECK_INTERVAL = 30000; // 30 seconds
-const NODE_ACTIVITY_TIMEOUT = 120000; // 2 minutes without activity = unhealthy
-const WATCHDOG_TIMEOUT = 300000; // 5 minutes without any activity = restart
-const MAX_HEALTH_RESTARTS = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3'); // Maximum number of health-based restarts before giving up
-const RESTART_BACKOFF_BASE = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000'); // Base delay for exponential backoff (1 minute)
-const RESTART_BACKOFF_MULTIPLIER = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2'); // Exponential backoff multiplier
-const RESTART_COUNT_RESET_TIMEOUT = 600000; // 10 minutes of health before resetting restart count
+// Health monitoring constants with validation
+const parseHealthConstants = () => {
+  const maxHealthRestarts = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3');
+  const restartBackoffBase = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000');
+  const restartBackoffMultiplier = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2');
+
+  // Validation with safe defaults
+  const validatedConstants = {
+    HEALTH_CHECK_INTERVAL: 30000, // Fixed at 30 seconds
+    NODE_ACTIVITY_TIMEOUT: 120000, // Fixed at 2 minutes
+    WATCHDOG_TIMEOUT: 300000, // Fixed at 5 minutes
+    MAX_HEALTH_RESTARTS: (maxHealthRestarts > 0 && maxHealthRestarts <= 50) ? maxHealthRestarts : 3, // 1 to 50 restarts max
+    RESTART_BACKOFF_BASE: (restartBackoffBase > 0 && restartBackoffBase <= 3600000) ? restartBackoffBase : 60000, // 1ms to 1 hour max
+    RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier > 0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 0.1 to 10x multiplier
+    RESTART_COUNT_RESET_TIMEOUT: 600000, // Fixed at 10 minutes
+  };
+
+  // Log validation warnings if defaults were used
+  if (maxHealthRestarts !== validatedConstants.MAX_HEALTH_RESTARTS) {
+    console.warn(`Invalid NODE_HEALTH_MAX_RESTARTS: ${maxHealthRestarts}. Using default: ${validatedConstants.MAX_HEALTH_RESTARTS}`);
+  }
+  if (restartBackoffBase !== validatedConstants.RESTART_BACKOFF_BASE) {
+    console.warn(`Invalid NODE_HEALTH_RESTART_DELAY: ${restartBackoffBase}. Using default: ${validatedConstants.RESTART_BACKOFF_BASE}ms`);
+  }
+  if (restartBackoffMultiplier !== validatedConstants.RESTART_BACKOFF_MULTIPLIER) {
+    console.warn(`Invalid NODE_HEALTH_BACKOFF_MULTIPLIER: ${restartBackoffMultiplier}. Using default: ${validatedConstants.RESTART_BACKOFF_MULTIPLIER}`);
+  }
+
+  return validatedConstants;
+};
+
+const {
+  HEALTH_CHECK_INTERVAL,
+  NODE_ACTIVITY_TIMEOUT,
+  WATCHDOG_TIMEOUT,
+  MAX_HEALTH_RESTARTS,
+  RESTART_BACKOFF_BASE,
+  RESTART_BACKOFF_MULTIPLIER,
+  RESTART_COUNT_RESET_TIMEOUT
+} = parseHealthConstants();
 
 // Health monitoring state
 interface NodeHealth {

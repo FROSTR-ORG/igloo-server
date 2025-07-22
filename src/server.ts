@@ -16,13 +16,39 @@ import {
   resetHealthMonitoring
 } from './node/manager.js';
 
-// Node restart configuration
-const RESTART_CONFIG = {
-  INITIAL_RETRY_DELAY: parseInt(process.env.NODE_RESTART_DELAY || '30000'), // 30 seconds default
-  MAX_RETRY_ATTEMPTS: parseInt(process.env.NODE_MAX_RETRIES || '5'),
-  BACKOFF_MULTIPLIER: parseFloat(process.env.NODE_BACKOFF_MULTIPLIER || '1.5'),
-  MAX_RETRY_DELAY: parseInt(process.env.NODE_MAX_RETRY_DELAY || '300000'), // 5 minutes max
+// Node restart configuration with validation
+const parseRestartConfig = () => {
+  const initialRetryDelay = parseInt(process.env.NODE_RESTART_DELAY || '30000');
+  const maxRetryAttempts = parseInt(process.env.NODE_MAX_RETRIES || '5');
+  const backoffMultiplier = parseFloat(process.env.NODE_BACKOFF_MULTIPLIER || '1.5');
+  const maxRetryDelay = parseInt(process.env.NODE_MAX_RETRY_DELAY || '300000');
+
+  // Validation with safe defaults
+  const validatedConfig = {
+    INITIAL_RETRY_DELAY: (initialRetryDelay > 0 && initialRetryDelay <= 3600000) ? initialRetryDelay : 30000, // 1ms to 1 hour max
+    MAX_RETRY_ATTEMPTS: (maxRetryAttempts > 0 && maxRetryAttempts <= 100) ? maxRetryAttempts : 5, // 1 to 100 attempts max
+    BACKOFF_MULTIPLIER: (backoffMultiplier > 0 && backoffMultiplier <= 10) ? backoffMultiplier : 1.5, // 0.1 to 10x multiplier
+    MAX_RETRY_DELAY: (maxRetryDelay > 0 && maxRetryDelay <= 7200000) ? maxRetryDelay : 300000, // 1ms to 2 hours max
+  };
+
+  // Log validation warnings if defaults were used
+  if (initialRetryDelay !== validatedConfig.INITIAL_RETRY_DELAY) {
+    console.warn(`Invalid NODE_RESTART_DELAY: ${initialRetryDelay}. Using default: ${validatedConfig.INITIAL_RETRY_DELAY}ms`);
+  }
+  if (maxRetryAttempts !== validatedConfig.MAX_RETRY_ATTEMPTS) {
+    console.warn(`Invalid NODE_MAX_RETRIES: ${maxRetryAttempts}. Using default: ${validatedConfig.MAX_RETRY_ATTEMPTS}`);
+  }
+  if (backoffMultiplier !== validatedConfig.BACKOFF_MULTIPLIER) {
+    console.warn(`Invalid NODE_BACKOFF_MULTIPLIER: ${backoffMultiplier}. Using default: ${validatedConfig.BACKOFF_MULTIPLIER}`);
+  }
+  if (maxRetryDelay !== validatedConfig.MAX_RETRY_DELAY) {
+    console.warn(`Invalid NODE_MAX_RETRY_DELAY: ${maxRetryDelay}. Using default: ${validatedConfig.MAX_RETRY_DELAY}ms`);
+  }
+
+  return validatedConfig;
 };
+
+const RESTART_CONFIG = parseRestartConfig();
 
 // WebSocket data type for event streams
 type EventStreamData = { isEventStream: true };
