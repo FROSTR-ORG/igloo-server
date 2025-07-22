@@ -2,7 +2,7 @@ import { RouteContext } from './types.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
 import { getSecureCorsHeaders } from './utils.js';
 
-export function handleEventsRoute(req: Request, url: URL, context: RouteContext): Response | null {
+export function handleEventsRoute(req: Request, url: URL, _context: RouteContext): Response | null {
   if (url.pathname !== '/api/events') return null;
 
   // Check authentication first
@@ -11,7 +11,7 @@ export function handleEventsRoute(req: Request, url: URL, context: RouteContext)
     if (!authResult.authenticated) {
       const corsHeaders = getSecureCorsHeaders(req);
       return Response.json({ error: 'Unauthorized' }, { 
-        status: 401,
+        status: 403,
         headers: {
           ...corsHeaders
         }
