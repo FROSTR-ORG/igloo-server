@@ -12,7 +12,8 @@ import {
   createAddServerLog, 
   setupNodeEventListeners, 
   createNodeWithCredentials,
-  cleanupHealthMonitoring
+  cleanupHealthMonitoring,
+  resetHealthMonitoring
 } from './node/manager.js';
 
 // Node restart configuration
@@ -78,6 +79,9 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     
     // Clean up health monitoring
     cleanupHealthMonitoring();
+    
+    // Reset health monitoring state for fresh start
+    resetHealthMonitoring();
     
     // Clear peer statuses
     peerStatuses.clear();
@@ -184,6 +188,9 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   
   // Clean up health monitoring
   cleanupHealthMonitoring();
+  
+  // Reset health monitoring state for fresh start
+  resetHealthMonitoring();
   
   node = newNode;
   if (newNode) {

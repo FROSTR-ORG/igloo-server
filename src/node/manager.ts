@@ -36,6 +36,7 @@ const WATCHDOG_TIMEOUT = 300000; // 5 minutes without any activity = restart
 const MAX_HEALTH_RESTARTS = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3'); // Maximum number of health-based restarts before giving up
 const RESTART_BACKOFF_BASE = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000'); // Base delay for exponential backoff (1 minute)
 const RESTART_BACKOFF_MULTIPLIER = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2'); // Exponential backoff multiplier
+const RESTART_COUNT_RESET_TIMEOUT = 600000; // 10 minutes of health before resetting restart count
 
 // Health monitoring state
 interface NodeHealth {
@@ -44,6 +45,7 @@ interface NodeHealth {
   isHealthy: boolean;
   consecutiveFailures: number;
   restartCount: number;
+  lastHealthyPeriodStart: Date | null;
 }
 
 let nodeHealth: NodeHealth = {
@@ -51,7 +53,8 @@ let nodeHealth: NodeHealth = {
   lastHealthCheck: new Date(),
   isHealthy: true,
   consecutiveFailures: 0,
-  restartCount: 0
+  restartCount: 0,
+  lastHealthyPeriodStart: new Date()
 };
 
 let healthCheckInterval: NodeJS.Timeout | null = null;
@@ -64,9 +67,8 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>)
   if (!nodeHealth.isHealthy) {
     nodeHealth.isHealthy = true;
     nodeHealth.consecutiveFailures = 0;
-    // Reset restart count when node becomes healthy again
-    nodeHealth.restartCount = 0;
-    addServerLog('system', 'Node health restored - activity detected, restart count reset');
+    nodeHealth.lastHealthyPeriodStart = now;
+    addServerLog('system', 'Node health restored - activity detected');
   }
 }
 
@@ -83,6 +85,16 @@ function checkNodeHealth(
   
   nodeHealth.lastHealthCheck = now;
 
+  // Check if we should reset restart count after sustained healthy period
+  if (nodeHealth.isHealthy && nodeHealth.lastHealthyPeriodStart && nodeHealth.restartCount > 0) {
+    const healthyPeriod = now.getTime() - nodeHealth.lastHealthyPeriodStart.getTime();
+    if (healthyPeriod > RESTART_COUNT_RESET_TIMEOUT) {
+      const previousRestartCount = nodeHealth.restartCount;
+      nodeHealth.restartCount = 0;
+      addServerLog('system', `Restart count reset from ${previousRestartCount} to 0 after ${Math.round(healthyPeriod / 60000)} minutes of healthy operation`);
+    }
+  }
+
   if (timeSinceLastActivity > NODE_ACTIVITY_TIMEOUT) {
     nodeHealth.consecutiveFailures++;
     
@@ -95,7 +107,8 @@ function checkNodeHealth(
     if (timeSinceLastActivity > WATCHDOG_TIMEOUT) {
       // Check if we've exceeded the maximum number of health-based restarts
       if (nodeHealth.restartCount >= MAX_HEALTH_RESTARTS) {
-        addServerLog('error', `Maximum health-based restarts (${MAX_HEALTH_RESTARTS}) exceeded. Node restart abandoned to prevent infinite loops.`);
+        addServerLog('error', `Maximum health-based restarts (${MAX_HEALTH_RESTARTS}) exceeded. Stopping health monitoring to prevent infinite loops.`);
+        stopHealthMonitoring();
         return;
       }
       
@@ -138,7 +151,8 @@ function startHealthMonitoring(
     lastHealthCheck: new Date(),
     isHealthy: true,
     consecutiveFailures: 0,
-    restartCount: nodeHealth.restartCount // Preserve restart count
+    restartCount: nodeHealth.restartCount, // Preserve restart count
+    lastHealthyPeriodStart: new Date()
   };
 }
 
@@ -634,4 +648,16 @@ export function getNodeHealth() {
 // Export cleanup function
 export function cleanupHealthMonitoring() {
   stopHealthMonitoring();
+}
+
+// Reset health monitoring state completely (for manual restarts)
+export function resetHealthMonitoring() {
+  nodeHealth = {
+    lastActivity: new Date(),
+    lastHealthCheck: new Date(),
+    isHealthy: true,
+    consecutiveFailures: 0,
+    restartCount: 0,
+    lastHealthyPeriodStart: new Date()
+  };
 } 
