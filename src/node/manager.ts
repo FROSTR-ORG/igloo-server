@@ -78,6 +78,7 @@ interface NodeHealth {
   consecutiveFailures: number;
   restartCount: number;
   lastHealthyPeriodStart: Date | null;
+  restartScheduled: boolean;
 }
 
 let nodeHealth: NodeHealth = {
@@ -86,7 +87,8 @@ let nodeHealth: NodeHealth = {
   isHealthy: true,
   consecutiveFailures: 0,
   restartCount: 0,
-  lastHealthyPeriodStart: new Date()
+  lastHealthyPeriodStart: new Date(),
+  restartScheduled: false
 };
 
 let healthCheckInterval: NodeJS.Timeout | null = null;
@@ -144,6 +146,11 @@ function checkNodeHealth(
         return;
       }
       
+      // Check if restart is already scheduled
+      if (nodeHealth.restartScheduled) {
+        return; // Skip scheduling if restart already pending
+      }
+      
       // Calculate exponential backoff delay
       const backoffDelay = RESTART_BACKOFF_BASE * Math.pow(RESTART_BACKOFF_MULTIPLIER, nodeHealth.restartCount);
       
@@ -151,10 +158,12 @@ function checkNodeHealth(
       
       // Increment restart count
       nodeHealth.restartCount++;
+      nodeHealth.restartScheduled = true; // Set flag to prevent overlapping restarts
       
       // Schedule restart with exponential backoff
       setTimeout(() => {
         addServerLog('system', `Executing delayed restart (attempt ${nodeHealth.restartCount})`);
+        nodeHealth.restartScheduled = false; // Reset flag
         onNodeUnhealthy();
       }, backoffDelay);
     }
@@ -184,7 +193,8 @@ function startHealthMonitoring(
     isHealthy: true,
     consecutiveFailures: 0,
     restartCount: nodeHealth.restartCount, // Preserve restart count
-    lastHealthyPeriodStart: new Date()
+    lastHealthyPeriodStart: new Date(),
+    restartScheduled: false
   };
 }
 
@@ -690,6 +700,7 @@ export function resetHealthMonitoring() {
     isHealthy: true,
     consecutiveFailures: 0,
     restartCount: 0,
-    lastHealthyPeriodStart: new Date()
+    lastHealthyPeriodStart: new Date(),
+    restartScheduled: false
   };
 } 
