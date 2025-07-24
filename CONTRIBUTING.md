@@ -136,6 +136,8 @@ git commit -m "chore: update dependencies"
 
 ## Release Process
 
+> 📖 **Quick Reference**: See [RELEASE.md](RELEASE.md) for a streamlined release guide
+
 ### Automatic Releases
 
 The project uses automated releases through GitHub Actions:
@@ -147,6 +149,93 @@ The project uses automated releases through GitHub Actions:
    - `BREAKING CHANGE:` → major version bump
 
 3. **Manual releases** can be triggered via GitHub Actions UI
+
+### Quick Release Commands
+
+```bash
+# For new features (minor version bump)
+bun run release:minor
+
+# For bug fixes (patch version bump)  
+bun run release:patch
+
+# For breaking changes (major version bump)
+bun run release:major
+```
+
+### Dev-to-Master Release Workflow
+
+When you're ready to create a new release, follow this process:
+
+#### 1. **Pre-Release Preparation**
+
+```bash
+# Switch to dev branch and ensure it's up to date
+git checkout dev
+git pull origin dev
+
+# Run full test suite
+bun run build
+bun run start  # Verify server starts
+docker build -t igloo-server-test .  # Test Docker build
+
+# Validate documentation
+bun run docs:validate
+```
+
+#### 2. **Review and Prepare Release**
+
+- [ ] **Review all changes** since last release
+- [ ] **Test critical functionality** (authentication, signing, recovery)
+- [ ] **Update documentation** if needed
+- [ ] **Check for breaking changes** requiring major version bump
+- [ ] **Verify all PRs are properly merged** with conventional commit format
+
+#### 3. **Create Release PR**
+
+```bash
+# Create release preparation branch
+git checkout -b release/prepare-vX.X.X
+git push origin release/prepare-vX.X.X
+```
+
+Create a PR from `release/prepare-vX.X.X` → `master` with:
+- **Title**: `release: prepare for vX.X.X`
+- **Description**: Summary of changes, breaking changes, migration notes
+- **Checklist**: Verify all tests pass, documentation updated
+
+#### 4. **Merge and Release**
+
+Once the release PR is approved:
+1. **Merge release PR** to master (this triggers automatic release)
+2. **Monitor GitHub Actions** for successful release
+3. **Verify release artifacts**:
+   - GitHub release created
+   - Docker images published
+   - CHANGELOG.md updated
+4. **Sync dev branch**: `git checkout dev && git merge master && git push origin dev`
+
+#### 5. **Post-Release Verification**
+
+- [ ] **Test Docker deployment**: `docker pull ghcr.io/frostr-org/igloo-server:latest`
+- [ ] **Verify GitHub release** has correct assets and changelog
+- [ ] **Update any dependent repositories** or documentation
+
+### Emergency Releases
+
+For critical bug fixes:
+
+```bash
+# Create hotfix branch from master
+git checkout master
+git checkout -b hotfix/critical-fix
+
+# Make fix and commit
+git commit -m "fix: critical security issue"
+
+# Push and create PR to master
+git push origin hotfix/critical-fix
+```
 
 ### Release Commands
 
