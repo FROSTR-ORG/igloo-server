@@ -45,6 +45,12 @@ else
     CURRENT_VERSION=$(node -p "require('./package.json').version")
     echo "📊 Current version: $CURRENT_VERSION"
     echo "📈 Version bump type: $VERSION_TYPE"
+    
+    # Compute new version using npm version command
+    NEW_VERSION=$(npm version $VERSION_TYPE --no-git-tag-version)
+    # Remove 'v' prefix from version (npm version returns v1.2.3)
+    NEW_VERSION=${NEW_VERSION#v}
+    echo "🎯 New version: $NEW_VERSION"
 fi
 
 # Create release branch
