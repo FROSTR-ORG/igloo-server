@@ -33,7 +33,51 @@ bun install
 bun run build
 
 echo "✅ Testing server startup..."
-timeout 10s bun run start || echo "✅ Server test completed"
+# Check if port 8002 is already in use
+if lsof -i :8002 > /dev/null 2>&1; then
+    echo "❌ Port 8002 is already in use. Please stop any running servers."
+    exit 1
+fi
+
+# Start server in background and capture PID
+bun run start &
+SERVER_PID=$!
+
+# Set up cleanup trap
+cleanup_server() {
+    if [ ! -z "$SERVER_PID" ]; then
+        kill $SERVER_PID 2>/dev/null
+        wait $SERVER_PID 2>/dev/null
+    fi
+}
+trap cleanup_server EXIT INT TERM
+
+# Wait for server to initialize
+sleep 3
+
+# Test server health with retry logic
+echo "🔍 Checking server health..."
+SERVER_HEALTHY=false
+for i in {1..5}; do
+    if curl -f -s http://localhost:8002/api/status > /dev/null; then
+        echo "✅ Server is responding correctly"
+        SERVER_HEALTHY=true
+        break
+    else
+        echo "⏳ Health check attempt $i/5 failed, retrying..."
+        sleep 1
+    fi
+done
+
+if [ "$SERVER_HEALTHY" = false ]; then
+    echo "❌ Server failed to respond after 5 attempts"
+fi
+
+# Cleanup will be handled by trap, just check if we should fail
+if [ "$SERVER_HEALTHY" = false ]; then
+    echo "❌ Server startup test failed - cannot proceed with release"
+    exit 1
+fi
 
 echo "📋 Validating documentation..."
 bun run docs:validate
