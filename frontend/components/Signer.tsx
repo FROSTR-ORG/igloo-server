@@ -248,44 +248,148 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     fetchSelfPubkey();
   }, [isSignerRunning, isGroupValid, isShareValid]);
 
-  // Connect to server event stream
+  // Connect to server event stream via WebSocket
   useEffect(() => {
-    const eventSource = new EventSource('/api/events');
-    
-    eventSource.onmessage = (event) => {
+    let ws: WebSocket | null = null;
+    let reconnectTimeout: NodeJS.Timeout | null = null;
+    let isConnecting = false;
+    let isMounted = true;
+    let reconnectAttempts = 0;
+
+    // Exponential backoff configuration
+    const BASE_DELAY = 1000; // 1 second base delay
+    const MAX_DELAY = 30000; // 30 seconds maximum delay
+    const JITTER_RANGE = 1000; // 0-1 second jitter
+
+    /**
+     * Calculate reconnection delay using exponential backoff with jitter
+     * @param attempt - Current attempt number (0-based)
+     * @returns Delay in milliseconds
+     */
+    const calculateReconnectDelay = (attempt: number): number => {
+      const exponentialDelay = BASE_DELAY * Math.pow(2, attempt);
+      const cappedDelay = Math.min(exponentialDelay, MAX_DELAY);
+      const jitter = Math.random() * JITTER_RANGE;
+      return cappedDelay + jitter;
+    };
+
+    const connect = () => {
+      if (!isMounted || isConnecting) return;
+      
+      isConnecting = true;
+      
       try {
-        const logEntry = JSON.parse(event.data);
+                 // Determine WebSocket URL (handle both http and https)
+         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+         let wsUrl = `${protocol}//${window.location.host}/api/events`;
+         
+         // Add authentication parameters for WebSocket connection
+         // Since WebSocket doesn't support custom headers during upgrade,
+         // we need to pass auth info via URL parameters
+         const params = new URLSearchParams();
+         
+         // Check if we have auth headers and convert them to URL params
+         if (authHeaders['X-API-Key']) {
+           params.set('apiKey', authHeaders['X-API-Key']);
+         } else if (authHeaders['X-Session-ID']) {
+           params.set('sessionId', authHeaders['X-Session-ID']);
+         } else if (authHeaders['Authorization'] && authHeaders['Authorization'].startsWith('Basic ')) {
+           // For basic auth, we'll rely on cookies or handle it server-side
+           // The server should accept the connection if the user is already authenticated
+         }
+         
+         if (params.toString()) {
+           wsUrl += '?' + params.toString();
+         }
+         
+         ws = new WebSocket(wsUrl);
         
-        // Handle internal peer events (don't add to logs but dispatch for peer list)
-        if (logEntry.type === 'peer-status-internal' && logEntry.data) {
-          window.dispatchEvent(new CustomEvent('peerStatusUpdate', {
-            detail: logEntry.data
-          }));
-          return; // Don't add to event log
-        }
+        ws.onopen = () => {
+          isConnecting = false;
+          reconnectAttempts = 0; // Reset attempt count on successful connection
+          console.log('WebSocket connected to event stream');
+        };
         
-        if (logEntry.type === 'peer-ping-internal' && logEntry.data) {
-          window.dispatchEvent(new CustomEvent('peerPingUpdate', {
-            detail: logEntry.data
-          }));
-          return; // Don't add to event log
-        }
+        ws.onmessage = (event) => {
+          try {
+            const logEntry = JSON.parse(event.data);
+            
+            // Handle internal peer events (don't add to logs but dispatch for peer list)
+            if (logEntry.type === 'peer-status-internal' && logEntry.data) {
+              window.dispatchEvent(new CustomEvent('peerStatusUpdate', {
+                detail: logEntry.data
+              }));
+              return; // Don't add to event log
+            }
+            
+            if (logEntry.type === 'peer-ping-internal' && logEntry.data) {
+              window.dispatchEvent(new CustomEvent('peerPingUpdate', {
+                detail: logEntry.data
+              }));
+              return; // Don't add to event log
+            }
+            
+            // Add all other server log entries to our local logs (original Igloo Desktop events)
+            setLogs(prev => [...prev, logEntry]);
+          } catch (error) {
+            console.error('Error parsing WebSocket event:', error);
+          }
+        };
         
-        // Add all other server log entries to our local logs (original Igloo Desktop events)
-        setLogs(prev => [...prev, logEntry]);
+        ws.onerror = (error) => {
+          console.error('WebSocket connection error:', error);
+          isConnecting = false;
+        };
+        
+        ws.onclose = (event) => {
+          isConnecting = false;
+          console.log('WebSocket connection closed:', event.code, event.reason);
+          
+          // Attempt to reconnect if the component is still mounted and close wasn't intentional
+          if (isMounted && event.code !== 1000) { // 1000 = normal closure
+            const delay = calculateReconnectDelay(reconnectAttempts);
+            console.log(`Attempting to reconnect WebSocket in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts + 1})...`);
+            reconnectAttempts++;
+            
+            reconnectTimeout = setTimeout(() => {
+              if (isMounted) {
+                connect();
+              }
+            }, delay);
+          }
+        };
+        
       } catch (error) {
-        console.error('Error parsing server event:', error);
+        console.error('Failed to create WebSocket connection:', error);
+        isConnecting = false;
+        
+        // Retry connection after delay using exponential backoff
+        if (isMounted) {
+          const delay = calculateReconnectDelay(reconnectAttempts);
+          console.log(`Retrying WebSocket connection in ${Math.round(delay / 1000)}s (attempt ${reconnectAttempts + 1})...`);
+          reconnectAttempts++;
+          
+          reconnectTimeout = setTimeout(() => {
+            if (isMounted) {
+              connect();
+            }
+          }, delay);
+        }
       }
     };
-    
-    eventSource.onerror = (error) => {
-      console.error('EventSource connection error:', error);
-      // The connection will automatically retry
-    };
+
+    // Initial connection
+    connect();
     
     // Cleanup on unmount
     return () => {
-      eventSource.close();
+      isMounted = false;
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (ws) {
+        ws.close(1000, 'Component unmounting'); // Normal closure
+      }
     };
   }, []);
 
