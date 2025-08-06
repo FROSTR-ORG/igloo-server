@@ -93,16 +93,24 @@ let nodeHealth: NodeHealth = {
 
 let healthCheckInterval: NodeJS.Timeout | null = null;
 let watchdogTimer: NodeJS.Timeout | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
 
 // Helper function to update node activity
-function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>) {
+function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isHeartbeat: boolean = false) {
   const now = new Date();
   nodeHealth.lastActivity = now;
-  if (!nodeHealth.isHealthy) {
+  
+  // Only log health restoration for real activity, not heartbeats
+  if (!nodeHealth.isHealthy && !isHeartbeat) {
     nodeHealth.isHealthy = true;
     nodeHealth.consecutiveFailures = 0;
     nodeHealth.lastHealthyPeriodStart = now;
     addServerLog('system', 'Node health restored - activity detected');
+  } else if (!nodeHealth.isHealthy && isHeartbeat) {
+    // Silently restore health on heartbeat
+    nodeHealth.isHealthy = true;
+    nodeHealth.consecutiveFailures = 0;
+    nodeHealth.lastHealthyPeriodStart = now;
   }
 }
 
@@ -186,6 +194,14 @@ function startHealthMonitoring(
     checkNodeHealth(node, addServerLog, onNodeUnhealthy);
   }, HEALTH_CHECK_INTERVAL);
 
+  // Start heartbeat to keep node "active" even when idle
+  // This prevents false positive unhealthy states when there's no actual traffic
+  heartbeatInterval = setInterval(() => {
+    // Simply update activity timestamp to indicate the node is still responsive
+    // This is a lightweight operation that doesn't involve any network calls
+    updateNodeActivity(addServerLog, true);
+  }, 60000); // Heartbeat every 60 seconds (well below the 2-minute activity timeout)
+
   // Reset health state for new node
   nodeHealth = {
     lastActivity: new Date(),
@@ -207,6 +223,10 @@ function stopHealthMonitoring() {
   if (watchdogTimer) {
     clearTimeout(watchdogTimer);
     watchdogTimer = null;
+  }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 }
 
@@ -440,7 +460,7 @@ export function setupNodeEventListeners(
                   eventType: tag
                 },
                 timestamp: new Date().toLocaleTimeString(),
-                id: Math.random().toString(36).substr(2, 9)
+                id: Math.random().toString(36).substring(2, 11)
               });
               
             }
