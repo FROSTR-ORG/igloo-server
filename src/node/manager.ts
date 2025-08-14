@@ -199,6 +199,8 @@ function startHealthMonitoring(
 
   // Start intelligent keepalive that only acts when truly idle
   // This prevents WebSocket disconnections without constant pinging
+  let consecutiveKeepaliveFailures = 0; // Track consecutive failures for debouncing
+  
   heartbeatInterval = setInterval(async () => {
     const now = new Date();
     const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
@@ -224,13 +226,22 @@ function startHealthMonitoring(
             node.req.ping(selfPubkey),
             new Promise((_, reject) => setTimeout(() => reject(new Error('Keepalive timeout')), 3000))
           ]);
-          // Silently update activity - don't log unless in debug mode
+          
+          // SUCCESS: Update activity only on successful keepalive
           updateNodeActivity(addServerLog, true);
+          consecutiveKeepaliveFailures = 0; // Reset failure counter on success
         }
       } catch (error) {
-        // Silently handle keepalive failures - connections will auto-reconnect if needed
-        // Only update activity timestamp to prevent false unhealthy detection
-        updateNodeActivity(addServerLog, true);
+        // FAILURE: Don't update activity - let normal health monitoring detect real issues
+        consecutiveKeepaliveFailures++;
+        
+        // Only log persistent failures (more than 2 consecutive) to avoid noise
+        if (consecutiveKeepaliveFailures > 2) {
+          addServerLog('debug', `Keepalive failed ${consecutiveKeepaliveFailures} times - connection may be degraded`);
+        }
+        
+        // DO NOT update activity here - this masks real connection issues
+        // Let the normal health monitoring and watchdog handle actual outages
       }
     }
   }, 30000); // Check every 30 seconds, but only ping if idle for 45+ seconds
@@ -509,19 +520,47 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
-            // Check if this is a self-ping (keepalive) by examining the message
+            // Check if this is a self-ping (keepalive) by comparing pubkeys
             let isSelfPing = false;
             try {
-              // For ping responses, check if we're pinging ourself
-              if (tag === '/ping/res' && 'data' in msg) {
-                const data = msg.data as any;
-                if (data && typeof data === 'object' && 'from' in data) {
-                  // This might be a self-ping response - don't log it
-                  isSelfPing = true;
+              // Extract self pubkey if we have credentials
+              let selfPubkey: string | undefined;
+              if (groupCred && shareCred) {
+                const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
+                selfPubkey = selfPubkeyResult.pubkey || undefined;
+              }
+              
+              // If we have self pubkey, check if this ping involves ourself
+              if (selfPubkey) {
+                const normalizedSelf = normalizePubkey(selfPubkey);
+                
+                // Check various message structures for the from/to pubkey
+                let fromPubkey: string | undefined;
+                
+                // Try to extract from env.pubkey (standard Nostr event structure)
+                if ('env' in messageData && typeof messageData.env === 'object' && messageData.env !== null) {
+                  const env = messageData.env as any;
+                  if ('pubkey' in env && typeof env.pubkey === 'string') {
+                    fromPubkey = env.pubkey;
+                  }
+                }
+                
+                // Fallback to data.from if available
+                if (!fromPubkey && 'data' in messageData && typeof messageData.data === 'object' && messageData.data !== null) {
+                  const data = messageData.data as any;
+                  if ('from' in data && typeof data.from === 'string') {
+                    fromPubkey = data.from;
+                  }
+                }
+                
+                // Check if this is a self-ping
+                if (fromPubkey) {
+                  const normalizedFrom = normalizePubkey(fromPubkey);
+                  isSelfPing = normalizedFrom === normalizedSelf;
                 }
               }
             } catch (error) {
-              // If we can't determine, log it anyway
+              // If we can't determine, log it anyway (safer to log than miss real pings)
             }
             
             // Only log non-keepalive pings
