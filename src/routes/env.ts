@@ -11,7 +11,7 @@ import {
   getValidRelays,
   getSecureCorsHeaders 
 } from './utils.js';
-import { setupNodeEventListeners, cleanupHealthMonitoring } from '../node/manager.js';
+import { cleanupHealthMonitoring } from '../node/manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -35,13 +35,6 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
       const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
       let newNode: ServerBifrostNode | null = null;
       
-      // Node restart callback for health monitoring
-      const nodeRestartCallback = () => {
-        context.addServerLog('warning', 'Node unhealthy detected in env route - restart handling delegated to main server');
-        // Environment route should not handle node restarts directly
-        // The main server's health monitoring system will handle restarts
-      };
-      
       while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
         apiConnectionAttempts++;
         try {
@@ -60,8 +53,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             if (context.updateNode) {
               context.updateNode(newNode);
             }
-            // Set up health monitoring with restart callback
-            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback, env.GROUP_CRED, env.SHARE_CRED);
+            // updateNode already sets up event listeners and health monitoring
             context.addServerLog('info', 'Node connected and ready');
             if (result.state) {
               context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
@@ -82,8 +74,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             if (context.updateNode) {
               context.updateNode(newNode);
             }
-            // Set up health monitoring with restart callback
-            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback, env.GROUP_CRED, env.SHARE_CRED);
+            // updateNode already sets up event listeners and health monitoring
             context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
         }
