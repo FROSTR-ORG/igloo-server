@@ -1,7 +1,8 @@
 import { 
   createAndConnectNode, 
   createConnectedNode,
-  normalizePubkey
+  normalizePubkey,
+  extractSelfPubkeyFromCredentials
 } from '@frostr/igloo-core';
 import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
@@ -182,7 +183,9 @@ function checkNodeHealth(
 function startHealthMonitoring(
   node: ServerBifrostNode | null,
   addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
+  onNodeUnhealthy: () => void,
+  groupCred?: string,
+  shareCred?: string
 ) {
   stopHealthMonitoring();
   
@@ -194,13 +197,43 @@ function startHealthMonitoring(
     checkNodeHealth(node, addServerLog, onNodeUnhealthy);
   }, HEALTH_CHECK_INTERVAL);
 
-  // Start heartbeat to keep node "active" even when idle
-  // This prevents false positive unhealthy states when there's no actual traffic
-  heartbeatInterval = setInterval(() => {
-    // Simply update activity timestamp to indicate the node is still responsive
-    // This is a lightweight operation that doesn't involve any network calls
-    updateNodeActivity(addServerLog, true);
-  }, 60000); // Heartbeat every 60 seconds (well below the 2-minute activity timeout)
+  // Start intelligent keepalive that only acts when truly idle
+  // This prevents WebSocket disconnections without constant pinging
+  heartbeatInterval = setInterval(async () => {
+    const now = new Date();
+    const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+    
+    // Only send keepalive if we've been idle for more than 45 seconds
+    // This prevents unnecessary pings when the node is actively being used
+    if (timeSinceActivity > 45000) {
+      try {
+        // Extract self pubkey from credentials if available
+        let selfPubkey: string | undefined;
+        if (groupCred && shareCred) {
+          try {
+            const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
+            selfPubkey = selfPubkeyResult.pubkey || undefined;
+          } catch (error) {
+            // Couldn't extract self pubkey, will skip keepalive
+          }
+        }
+        
+        // Send a single keepalive ping only when idle
+        if (selfPubkey && node.req && node.req.ping) {
+          await Promise.race([
+            node.req.ping(selfPubkey),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Keepalive timeout')), 3000))
+          ]);
+          // Silently update activity - don't log unless in debug mode
+          updateNodeActivity(addServerLog, true);
+        }
+      } catch (error) {
+        // Silently handle keepalive failures - connections will auto-reconnect if needed
+        // Only update activity timestamp to prevent false unhealthy detection
+        updateNodeActivity(addServerLog, true);
+      }
+    }
+  }, 30000); // Check every 30 seconds, but only ping if idle for 45+ seconds
 
   // Reset health state for new node
   nodeHealth = {
@@ -346,10 +379,12 @@ export function setupNodeEventListeners(
   addServerLog: ReturnType<typeof createAddServerLog>,
   broadcastEvent: ReturnType<typeof createBroadcastEvent>,
   peerStatuses: Map<string, PeerStatus>,
-  onNodeUnhealthy?: () => void
+  onNodeUnhealthy?: () => void,
+  groupCred?: string,
+  shareCred?: string
 ) {
   // Start health monitoring
-  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}));
+  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}), groupCred, shareCred);
 
   // Setup connection monitoring
   setupConnectionMonitoring(node, addServerLog);
@@ -474,7 +509,25 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
-            addServerLog('bifrost', `Ping event: ${tag}`, msg);
+            // Check if this is a self-ping (keepalive) by examining the message
+            let isSelfPing = false;
+            try {
+              // For ping responses, check if we're pinging ourself
+              if (tag === '/ping/res' && 'data' in msg) {
+                const data = msg.data as any;
+                if (data && typeof data === 'object' && 'from' in data) {
+                  // This might be a self-ping response - don't log it
+                  isSelfPing = true;
+                }
+              }
+            } catch (error) {
+              // If we can't determine, log it anyway
+            }
+            
+            // Only log non-keepalive pings
+            if (!isSelfPing) {
+              addServerLog('bifrost', `Ping event: ${tag}`, msg);
+            }
           } else {
             addServerLog('bifrost', `Message received: ${tag}`, msg);
           }

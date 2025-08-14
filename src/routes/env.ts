@@ -61,7 +61,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
               context.updateNode(newNode);
             }
             // Set up health monitoring with restart callback
-            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback);
+            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback, env.GROUP_CRED, env.SHARE_CRED);
             context.addServerLog('info', 'Node connected and ready');
             if (result.state) {
               context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
@@ -83,7 +83,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
               context.updateNode(newNode);
             }
             // Set up health monitoring with restart callback
-            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback);
+            setupNodeEventListeners(newNode, context.addServerLog, context.broadcastEvent, context.peerStatuses, nodeRestartCallback, env.GROUP_CRED, env.SHARE_CRED);
             context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
         }

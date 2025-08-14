@@ -23,8 +23,15 @@ bun run start          # Runs on http://localhost:8002
 # Development with hot reload
 bun run dev            # Watches frontend files for changes
 
+# Individual builds
+bun run build:js       # Frontend JavaScript only
+bun run build:js:prod  # Minified production JavaScript
+bun run build:css      # Tailwind CSS with watch mode
+bun run build:css:prod # Minified production CSS
+
 # Release process (must be on dev branch)
-bun run release        # Patch release
+bun run release        # Patch release (alias for release:patch)
+bun run release:patch  # Patch release
 bun run release:minor  # Minor release  
 bun run release:major  # Major release
 ```
@@ -62,8 +69,8 @@ curl http://localhost:8002/api/status
 ### Node Restart System
 
 Two independent restart mechanisms:
-1. **Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES)
-2. **Health Restart**: Automatic recovery from 5-minute inactivity timeouts (env vars: NODE_HEALTH_MAX_RESTARTS, NODE_HEALTH_RESTART_DELAY)
+1. **Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
+2. **Health Restart**: Automatic recovery from 5-minute inactivity timeouts (env vars: NODE_HEALTH_MAX_RESTARTS, NODE_HEALTH_RESTART_DELAY, NODE_HEALTH_BACKOFF_MULTIPLIER)
 
 ### Security Architecture
 
@@ -105,7 +112,7 @@ Two independent restart mechanisms:
    - `SHARE_CRED`: Your secret share (bfshare1...)
    - `SESSION_SECRET`: Required in production (32+ chars)
 
-4. **Health Monitoring**: Node automatically restarts after 5 minutes of inactivity, with progressive backoff
+4. **Health Monitoring**: Node automatically restarts after 5 minutes of inactivity, with progressive backoff. A 60-second heartbeat prevents false-positive unhealthy states
 
 5. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 
