@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Igloo Server is a server-based signing device and personal ephemeral relay for the FROSTR protocol. It provides a k-of-n remote signing client for Nostr, built on @frostr/igloo-core for reliable FROSTR protocol operations.
 
+**Core Purpose**: Always-on FROSTR signing node that handles Nostr signature requests automatically using threshold signatures without ever reconstructing the full private key.
+
 ## Key Commands
 
 ### Development
@@ -72,6 +74,13 @@ Two independent restart mechanisms:
 1. **Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
 2. **Health Restart**: Automatic recovery from 5-minute inactivity timeouts (env vars: NODE_HEALTH_MAX_RESTARTS, NODE_HEALTH_RESTART_DELAY, NODE_HEALTH_BACKOFF_MULTIPLIER)
 
+### Keepalive System
+
+- **Intelligent keepalive**: Only pings when idle >45 seconds to prevent WebSocket timeouts
+- **Self-ping detection**: Filters keepalive pings from logs by comparing normalized pubkeys
+- **Failure tracking**: Consecutive failure counter for debouncing transient issues
+- **Activity updates**: Only on successful keepalive, not on failures (to detect real outages)
+
 ### Security Architecture
 
 - Multiple auth methods: API Key, Basic Auth, Session-based
@@ -112,11 +121,21 @@ Two independent restart mechanisms:
    - `SHARE_CRED`: Your secret share (bfshare1...)
    - `SESSION_SECRET`: Required in production (32+ chars)
 
-4. **Health Monitoring**: Node automatically restarts after 5 minutes of inactivity, with progressive backoff. A 60-second heartbeat prevents false-positive unhealthy states
+4. **Health Monitoring**: 
+   - Node health checked every 30 seconds
+   - Unhealthy after 2 minutes of inactivity
+   - Automatic restart after 5 minutes (watchdog timeout)
+   - Intelligent keepalive only when idle >45 seconds
+   - Activity updated only on successful operations (not failures)
 
 5. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 
 6. **Release Process**: Must be on `dev` branch, merges to `master` after tests pass
+
+7. **Node Event Flow**: 
+   - All Bifrost events update `lastActivity` timestamp
+   - Self-pings filtered from logs via pubkey comparison
+   - Peer status tracked independently from health monitoring
 
 ## Dependencies
 

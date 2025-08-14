@@ -17,6 +17,9 @@ jobs:
     permissions:
       contents: write
       pull-requests: write
+    outputs:
+      new_version: ${{ steps.new_version.outputs.new_version }}
+      version_number: ${{ steps.new_version.outputs.version_number }}
     
     steps:
     - name: Checkout code
@@ -47,14 +50,15 @@ jobs:
           # Auto-determine version based on commit messages since last tag
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
           if [ -n "$LAST_TAG" ]; then
-            COMMIT_RANGE="$LAST_TAG..HEAD"
+            LOG_CMD="git log --format=%s $LAST_TAG..HEAD"
           else
-            COMMIT_RANGE="HEAD~10..HEAD"
+            # No tags yet: inspect the last 50 commits (avoids HEAD~N issues on shallow/short histories)
+            LOG_CMD="git log --format=%s -n 50"
           fi
-          
-          if git log --format=%s $COMMIT_RANGE | grep -q "BREAKING CHANGE\|feat!"; then
+
+          if eval "$LOG_CMD" | grep -Eq 'BREAKING CHANGE|^feat\([^)]+\)?!'; then
             VERSION="major"
-          elif git log --format=%s $COMMIT_RANGE | grep -q "^feat"; then
+          elif eval "$LOG_CMD" | grep -Eq '^feat\([^)]+\)?:'; then
             VERSION="minor"
           else
             VERSION="patch"
@@ -199,12 +203,6 @@ jobs:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Get version
-      id: version
-      run: |
-        VERSION=$(node -p "require('./package.json').version")
-        echo "version=$VERSION" >> $GITHUB_OUTPUT
-
     - name: Build and push Docker image
       uses: docker/build-push-action@v5
       with:
@@ -213,12 +211,12 @@ jobs:
         platforms: linux/amd64,linux/arm64
         tags: |
           ghcr.io/frostr-org/igloo-server:latest
-          ghcr.io/frostr-org/igloo-server:${{ steps.version.outputs.version }}
+          ghcr.io/frostr-org/igloo-server:${{ needs.release.outputs.version_number }}
         labels: |
           org.opencontainers.image.title=Igloo Server
           org.opencontainers.image.description=A server-based signing device for the FROSTR protocol
           org.opencontainers.image.source=https://github.com/FROSTR-ORG/igloo-server
-          org.opencontainers.image.version=${{ steps.version.outputs.version }}
+          org.opencontainers.image.version=${{ needs.release.outputs.version_number }}
           org.opencontainers.image.revision=${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max 
