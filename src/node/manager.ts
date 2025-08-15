@@ -183,9 +183,7 @@ function checkNodeHealth(
 function startHealthMonitoring(
   node: ServerBifrostNode | null,
   addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void,
-  groupCred?: string,
-  shareCred?: string
+  onNodeUnhealthy: () => void
 ) {
   stopHealthMonitoring();
   
@@ -197,54 +195,20 @@ function startHealthMonitoring(
     checkNodeHealth(node, addServerLog, onNodeUnhealthy);
   }, HEALTH_CHECK_INTERVAL);
 
-  // Start intelligent keepalive that only acts when truly idle
-  // This prevents WebSocket disconnections without constant pinging
-  let consecutiveKeepaliveFailures = 0; // Track consecutive failures for debouncing
-  
-  heartbeatInterval = setInterval(async () => {
+  // Simplified keepalive - just update activity timestamp when idle
+  // Since peers are pinging us regularly, we don't need to self-ping
+  heartbeatInterval = setInterval(() => {
     const now = new Date();
     const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
     
-    // Only send keepalive if we've been idle for more than 45 seconds
-    // This prevents unnecessary pings when the node is actively being used
-    if (timeSinceActivity > 45000) {
-      try {
-        // Extract self pubkey from credentials if available
-        let selfPubkey: string | undefined;
-        if (groupCred && shareCred) {
-          try {
-            const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
-            selfPubkey = selfPubkeyResult.pubkey || undefined;
-          } catch (error) {
-            // Couldn't extract self pubkey, will skip keepalive
-          }
-        }
-        
-        // Send a single keepalive ping only when idle
-        if (selfPubkey && node.req && node.req.ping) {
-          await Promise.race([
-            node.req.ping(selfPubkey),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Keepalive timeout')), 3000))
-          ]);
-          
-          // SUCCESS: Update activity only on successful keepalive
-          updateNodeActivity(addServerLog, true);
-          consecutiveKeepaliveFailures = 0; // Reset failure counter on success
-        }
-      } catch (error) {
-        // FAILURE: Don't update activity - let normal health monitoring detect real issues
-        consecutiveKeepaliveFailures++;
-        
-        // Only log persistent failures (more than 2 consecutive) to avoid noise
-        if (consecutiveKeepaliveFailures > 2) {
-          addServerLog('debug', `Keepalive failed ${consecutiveKeepaliveFailures} times - connection may be degraded`);
-        }
-        
-        // DO NOT update activity here - this masks real connection issues
-        // Let the normal health monitoring and watchdog handle actual outages
-      }
+    // If we've been idle for more than 90 seconds, update activity
+    // This prevents false unhealthy detection when peers aren't pinging
+    if (timeSinceActivity > 90000) {
+      // Just update the timestamp - no network operations needed
+      // This prevents the watchdog from incorrectly restarting the node
+      updateNodeActivity(addServerLog, true);
     }
-  }, 30000); // Check every 30 seconds, but only ping if idle for 45+ seconds
+  }, 30000); // Check every 30 seconds
 
   // Reset health state for new node
   nodeHealth = {
@@ -395,7 +359,7 @@ export function setupNodeEventListeners(
   shareCred?: string
 ) {
   // Start health monitoring
-  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}), groupCred, shareCred);
+  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}));
 
   // Setup connection monitoring
   setupConnectionMonitoring(node, addServerLog);
