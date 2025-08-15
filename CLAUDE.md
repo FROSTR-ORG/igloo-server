@@ -76,10 +76,10 @@ Two independent restart mechanisms:
 
 ### Keepalive System
 
-- **Intelligent keepalive**: Only pings when idle >45 seconds to prevent WebSocket timeouts
-- **Self-ping detection**: Filters keepalive pings from logs by comparing normalized pubkeys
-- **Failure tracking**: Consecutive failure counter for debouncing transient issues
-- **Activity updates**: Only on successful keepalive, not on failures (to detect real outages)
+- **Simplified keepalive**: Updates activity timestamp after 90 seconds of idle time
+- **No self-pings**: Relies on peer activity and real operations to maintain connections
+- **Self-ping detection**: Filters any self-pings from logs by comparing normalized pubkeys
+- **Production-ready**: No debug logging, minimal overhead
 
 ### Security Architecture
 

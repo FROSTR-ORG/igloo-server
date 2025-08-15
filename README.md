@@ -99,6 +99,7 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 
 ### 🔍 **Health Monitoring**
 - **Activity Tracking**: Every bifrost message, event, and connection update updates a `lastActivity` timestamp
+- **Keepalive System**: Simple timestamp-based keepalive that runs every 30 seconds to prevent false unhealthy detection
 - **Periodic Health Checks**: System checks node health every 30 seconds
 - **Real-time Status**: Health information available via `/api/status` endpoint
 
@@ -120,6 +121,7 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 - **More Retries**: Up to 5 connection attempts with exponential backoff
 - **Enhanced Event Listening**: Comprehensive coverage of all node state changes
 - **Silent Failure Recovery**: Detects and recovers from unresponsive nodes
+- **Simplified Keepalive**: Updates activity timestamps locally without network operations when idle for over 90 seconds
 
 This system addresses common issues with long-running deployments where nodes may silently stop responding after extended periods, ensuring your signing node remains operational and responsive.
 
