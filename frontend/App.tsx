@@ -3,6 +3,7 @@ import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
 import Login from "./components/Login"
+import { NIP46 } from "./components/NIP46"
 import type { SignerHandle } from "./types"
 import { Button } from "./components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
@@ -255,9 +256,12 @@ const App: React.FC = () => {
             value={activeTab}
             onValueChange={handleTabChange}
           >
-            <TabsList className="grid grid-cols-2 mb-4 bg-gray-800/50 w-full">
+            <TabsList className="grid grid-cols-3 mb-4 bg-gray-800/50 w-full">
               <TabsTrigger value="signer" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Signer
+              </TabsTrigger>
+              <TabsTrigger value="nip46" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
+                NIP-46
               </TabsTrigger>
               <TabsTrigger value="recover" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Recover
@@ -268,6 +272,13 @@ const App: React.FC = () => {
               <Signer 
                 initialData={signerData} 
                 ref={signerRef}
+                authHeaders={getAuthHeaders()}
+              />
+            </TabsContent>
+            
+            <TabsContent value="nip46" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
+              <NIP46 
+                privateKey={signerData?.share}
                 authHeaders={getAuthHeaders()}
               />
             </TabsContent>
