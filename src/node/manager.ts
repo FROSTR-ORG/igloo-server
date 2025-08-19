@@ -45,6 +45,8 @@ const parseHealthConstants = () => {
     RESTART_BACKOFF_BASE: (restartBackoffBase > 0 && restartBackoffBase <= 3600000) ? restartBackoffBase : 60000, // 1ms to 1 hour max
     RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier >= 1.0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 1.0 to 10x multiplier
     RESTART_COUNT_RESET_TIMEOUT: 600000, // Fixed at 10 minutes
+    CONNECTIVITY_CHECK_INTERVAL: 60000, // Check connectivity every minute
+    CONNECTIVITY_PING_TIMEOUT: 10000, // 10 second timeout for connectivity pings
   };
 
   // Log validation warnings if defaults were used
@@ -68,7 +70,9 @@ const {
   MAX_HEALTH_RESTARTS,
   RESTART_BACKOFF_BASE,
   RESTART_BACKOFF_MULTIPLIER,
-  RESTART_COUNT_RESET_TIMEOUT
+  RESTART_COUNT_RESET_TIMEOUT,
+  CONNECTIVITY_CHECK_INTERVAL,
+  CONNECTIVITY_PING_TIMEOUT
 } = parseHealthConstants();
 
 // Health monitoring state
@@ -80,6 +84,9 @@ interface NodeHealth {
   restartCount: number;
   lastHealthyPeriodStart: Date | null;
   restartScheduled: boolean;
+  lastConnectivityCheck: Date;
+  isConnected: boolean;
+  consecutiveConnectivityFailures: number;
 }
 
 let nodeHealth: NodeHealth = {
@@ -89,12 +96,17 @@ let nodeHealth: NodeHealth = {
   consecutiveFailures: 0,
   restartCount: 0,
   lastHealthyPeriodStart: new Date(),
-  restartScheduled: false
+  restartScheduled: false,
+  lastConnectivityCheck: new Date(),
+  isConnected: true,
+  consecutiveConnectivityFailures: 0
 };
 
 let healthCheckInterval: NodeJS.Timeout | null = null;
 let watchdogTimer: NodeJS.Timeout | null = null;
 let heartbeatInterval: NodeJS.Timeout | null = null;
+let connectivityCheckInterval: NodeJS.Timeout | null = null;
+let currentNode: ServerBifrostNode | null = null;
 
 // Helper function to update node activity
 function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isHeartbeat: boolean = false) {
@@ -112,6 +124,144 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>,
     nodeHealth.isHealthy = true;
     nodeHealth.consecutiveFailures = 0;
     nodeHealth.lastHealthyPeriodStart = now;
+  }
+  
+  // Reset connectivity failures on real activity
+  if (!isHeartbeat && nodeHealth.consecutiveConnectivityFailures > 0) {
+    nodeHealth.consecutiveConnectivityFailures = 0;
+    nodeHealth.isConnected = true;
+  }
+}
+
+// Helper function to check relay connectivity
+async function checkRelayConnectivity(
+  node: ServerBifrostNode | null,
+  addServerLog: ReturnType<typeof createAddServerLog>,
+  onNodeUnhealthy: () => void
+): Promise<boolean> {
+  if (!node) return false;
+  
+  const now = new Date();
+  nodeHealth.lastConnectivityCheck = now;
+  
+  try {
+    // Multiple connectivity verification methods
+    let isConnected = false;
+    
+    // Method 1: Check if node client is connected (if available)
+    if ((node as any).client) {
+      const client = (node as any).client;
+      if (client.is_ready || client.connected || client.readyState === 1) {
+        isConnected = true;
+      }
+    }
+    
+    // Method 2: Check for recent message activity
+    const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+    if (timeSinceLastActivity < 120000) { // Activity within last 2 minutes
+      isConnected = true;
+    }
+    
+    // Method 3: Try to emit a test event and see if it goes through
+    if (!isConnected) {
+      try {
+        // Try to emit a test event - this will fail if disconnected
+        const testEvent = await Promise.race([
+          new Promise<boolean>((resolve) => {
+            const testId = Math.random().toString(36).substring(2, 11);
+            let eventEmitted = false;
+            
+            // Set up a one-time listener for our test event
+            const testHandler = () => {
+              eventEmitted = true;
+              resolve(true);
+            };
+            
+            // Listen for the test event
+            node.once(`test-connectivity-${testId}`, testHandler);
+            
+            // Emit the test event
+            try {
+              node.emit(`test-connectivity-${testId}`);
+              // If emit succeeds, consider it connected
+              setTimeout(() => {
+                if (!eventEmitted) {
+                  node.off(`test-connectivity-${testId}`, testHandler);
+                  resolve(true); // Emit worked, so we're connected
+                }
+              }, 100);
+            } catch (e) {
+              resolve(false);
+            }
+          }),
+          new Promise<boolean>((resolve) => {
+            setTimeout(() => resolve(false), 1000);
+          })
+        ]);
+        
+        if (testEvent) {
+          isConnected = true;
+        }
+      } catch (e) {
+        // Test failed
+      }
+    }
+    
+    // Method 4: Check relay connection status if exposed
+    if (!isConnected && (node as any).relays) {
+      const relays = (node as any).relays;
+      if (Array.isArray(relays)) {
+        const connectedRelays = relays.filter((r: any) => 
+          r.connected || r.readyState === 1 || r.status === 'connected'
+        );
+        if (connectedRelays.length > 0) {
+          isConnected = true;
+        }
+      }
+    }
+    
+    if (isConnected) {
+      // Connectivity verified
+      if (!nodeHealth.isConnected) {
+        addServerLog('system', 'Node connectivity verified');
+      }
+      nodeHealth.isConnected = true;
+      nodeHealth.consecutiveConnectivityFailures = 0;
+      return true;
+    } else {
+      // Connectivity test failed
+      nodeHealth.consecutiveConnectivityFailures++;
+      
+      if (nodeHealth.isConnected) {
+        nodeHealth.isConnected = false;
+        addServerLog('warning', `Node connectivity check failed (${nodeHealth.consecutiveConnectivityFailures} consecutive failures)`);
+      }
+      
+      // Log diagnostic information
+      if (nodeHealth.consecutiveConnectivityFailures === 2) {
+        addServerLog('info', 'Connectivity diagnostics', {
+          lastActivity: nodeHealth.lastActivity.toISOString(),
+          timeSinceActivity: `${Math.round(timeSinceLastActivity / 1000)}s`,
+          nodeState: {
+            hasClient: !!(node as any).client,
+            hasRelays: !!(node as any).relays,
+            isReady: (node as any).is_ready
+          }
+        });
+      }
+      
+      // If connectivity has been lost for too long, trigger restart
+      if (nodeHealth.consecutiveConnectivityFailures >= 3) {
+        addServerLog('error', 'Node connectivity lost for 3+ checks, triggering restart');
+        onNodeUnhealthy();
+      }
+      
+      return false;
+    }
+  } catch (error) {
+    addServerLog('error', 'Connectivity check error', error);
+    nodeHealth.consecutiveConnectivityFailures++;
+    return false;
   }
 }
 
@@ -189,11 +339,19 @@ function startHealthMonitoring(
   
   if (!node) return;
 
-  addServerLog('system', 'Starting node health monitoring');
+  // Store node reference for connectivity checks
+  currentNode = node;
+
+  addServerLog('system', 'Starting node health monitoring with connectivity checks');
   
   healthCheckInterval = setInterval(() => {
     checkNodeHealth(node, addServerLog, onNodeUnhealthy);
   }, HEALTH_CHECK_INTERVAL);
+
+  // Active connectivity monitoring - test relay connections periodically
+  connectivityCheckInterval = setInterval(async () => {
+    await checkRelayConnectivity(node, addServerLog, onNodeUnhealthy);
+  }, CONNECTIVITY_CHECK_INTERVAL);
 
   // Simplified keepalive - just update activity timestamp when idle
   // Since peers are pinging us regularly, we don't need to self-ping
@@ -218,7 +376,10 @@ function startHealthMonitoring(
     consecutiveFailures: 0,
     restartCount: nodeHealth.restartCount, // Preserve restart count
     lastHealthyPeriodStart: new Date(),
-    restartScheduled: false
+    restartScheduled: false,
+    lastConnectivityCheck: new Date(),
+    isConnected: true,
+    consecutiveConnectivityFailures: 0
   };
 }
 
@@ -236,6 +397,11 @@ function stopHealthMonitoring() {
     clearInterval(heartbeatInterval);
     heartbeatInterval = null;
   }
+  if (connectivityCheckInterval) {
+    clearInterval(connectivityCheckInterval);
+    connectivityCheckInterval = null;
+  }
+  currentNode = null;
 }
 
 // Enhanced connection monitoring
@@ -706,8 +872,24 @@ export async function createNodeWithCredentials(
               if (result.state.connectedRelays.length > 0) {
                 addServerLog('info', `Active relays: ${result.state.connectedRelays.join(', ')}`);
               }
+              
+              // Log detailed node state for diagnostics
+              addServerLog('debug', 'Node state details', {
+                isReady: result.state.isReady,
+                isConnected: result.state.isConnected,
+                isConnecting: result.state.isConnecting,
+                relayCount: result.state.connectedRelays.length
+              });
             }
           }
+          
+          // Perform initial connectivity check
+          setTimeout(async () => {
+            const isConnected = await checkRelayConnectivity(node, addServerLog, () => {});
+            if (addServerLog) {
+              addServerLog('info', `Initial connectivity check: ${isConnected ? 'PASSED' : 'FAILED'}`);
+            }
+          }, 5000);
           
           return node;
         } else {
@@ -760,7 +942,11 @@ export async function createNodeWithCredentials(
 
 // Export health information
 export function getNodeHealth() {
-  return { ...nodeHealth };
+  return { 
+    ...nodeHealth,
+    timeSinceLastActivity: Date.now() - nodeHealth.lastActivity.getTime(),
+    timeSinceLastConnectivityCheck: Date.now() - nodeHealth.lastConnectivityCheck.getTime()
+  };
 }
 
 // Export cleanup function
@@ -777,6 +963,9 @@ export function resetHealthMonitoring() {
     consecutiveFailures: 0,
     restartCount: 0,
     lastHealthyPeriodStart: new Date(),
-    restartScheduled: false
+    restartScheduled: false,
+    lastConnectivityCheck: new Date(),
+    isConnected: true,
+    consecutiveConnectivityFailures: 0
   };
 } 
