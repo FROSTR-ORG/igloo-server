@@ -162,77 +162,7 @@ async function checkRelayConnectivity(
       isConnected = true;
     }
     
-    // Method 3: Try to emit a test event and see if it goes through
-    if (!isConnected) {
-      try {
-        // Try to emit a test event - this will fail if disconnected
-        const testEvent = await Promise.race([
-          new Promise<boolean>((resolve) => {
-            const testId = Math.random().toString(36).substring(2, 11);
-            const eventName = `test-connectivity-${testId}`;
-            let eventEmitted = false;
-            let cleanupDone = false;
-            
-            // Set up a one-time listener for our test event
-            const testHandler = () => {
-              eventEmitted = true;
-              cleanupDone = true;
-              resolve(true);
-            };
-            
-            // Cleanup function to ensure listener is removed
-            const cleanup = () => {
-              if (!cleanupDone) {
-                cleanupDone = true;
-                try {
-                  node.off(eventName, testHandler);
-                } catch (e) {
-                  // Ignore cleanup errors
-                }
-              }
-            };
-            
-            // Listen for the test event
-            node.once(eventName, testHandler);
-            
-            // Emit the test event
-            try {
-              node.emit(eventName);
-              // If emit succeeds, wait briefly then resolve as connected
-              setTimeout(() => {
-                if (!eventEmitted) {
-                  cleanup();
-                  resolve(true); // Emit worked, so we're connected
-                }
-              }, 100);
-            } catch (e) {
-              cleanup();
-              resolve(false);
-            }
-            
-            // Ensure cleanup after timeout
-            setTimeout(() => {
-              cleanup();
-              if (!eventEmitted) {
-                resolve(false);
-              }
-            }, CONNECTIVITY_PING_TIMEOUT - 100);
-          }),
-          new Promise<boolean>((resolve) => {
-            // Use the configured timeout constant
-            setTimeout(() => resolve(false), CONNECTIVITY_PING_TIMEOUT);
-          })
-        ]);
-        
-        if (testEvent) {
-          isConnected = true;
-        }
-      } catch (e) {
-        // Test failed
-      }
-    }
-    
-    // Method 4: Check relay connection status if exposed
+    // Method 3: Check relay connection status if exposed
     if (!isConnected && (node as any).relays) {
       const relays = (node as any).relays;
       if (Array.isArray(relays)) {
