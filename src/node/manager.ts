@@ -169,33 +169,58 @@ async function checkRelayConnectivity(
         const testEvent = await Promise.race([
           new Promise<boolean>((resolve) => {
             const testId = Math.random().toString(36).substring(2, 11);
+            const eventName = `test-connectivity-${testId}`;
             let eventEmitted = false;
+            let cleanupDone = false;
             
             // Set up a one-time listener for our test event
             const testHandler = () => {
               eventEmitted = true;
+              cleanupDone = true;
               resolve(true);
             };
             
+            // Cleanup function to ensure listener is removed
+            const cleanup = () => {
+              if (!cleanupDone) {
+                cleanupDone = true;
+                try {
+                  node.off(eventName, testHandler);
+                } catch (e) {
+                  // Ignore cleanup errors
+                }
+              }
+            };
+            
             // Listen for the test event
-            node.once(`test-connectivity-${testId}`, testHandler);
+            node.once(eventName, testHandler);
             
             // Emit the test event
             try {
-              node.emit(`test-connectivity-${testId}`);
-              // If emit succeeds, consider it connected
+              node.emit(eventName);
+              // If emit succeeds, wait briefly then resolve as connected
               setTimeout(() => {
                 if (!eventEmitted) {
-                  node.off(`test-connectivity-${testId}`, testHandler);
+                  cleanup();
                   resolve(true); // Emit worked, so we're connected
                 }
               }, 100);
             } catch (e) {
+              cleanup();
               resolve(false);
             }
+            
+            // Ensure cleanup after timeout
+            setTimeout(() => {
+              cleanup();
+              if (!eventEmitted) {
+                resolve(false);
+              }
+            }, CONNECTIVITY_PING_TIMEOUT - 100);
           }),
           new Promise<boolean>((resolve) => {
-            setTimeout(() => resolve(false), 1000);
+            // Use the configured timeout constant
+            setTimeout(() => resolve(false), CONNECTIVITY_PING_TIMEOUT);
           })
         ]);
         
@@ -350,7 +375,17 @@ function startHealthMonitoring(
 
   // Active connectivity monitoring - test relay connections periodically
   connectivityCheckInterval = setInterval(async () => {
-    await checkRelayConnectivity(node, addServerLog, onNodeUnhealthy);
+    try {
+      await checkRelayConnectivity(node, addServerLog, onNodeUnhealthy);
+    } catch (error) {
+      addServerLog('error', 'Connectivity check interval error', error);
+      // Increment failure count and trigger unhealthy state if critical
+      nodeHealth.consecutiveConnectivityFailures++;
+      if (nodeHealth.consecutiveConnectivityFailures >= 3) {
+        addServerLog('error', 'Connectivity check failures exceeded threshold, triggering restart');
+        onNodeUnhealthy();
+      }
+    }
   }, CONNECTIVITY_CHECK_INTERVAL);
 
   // Simplified keepalive - just update activity timestamp when idle
