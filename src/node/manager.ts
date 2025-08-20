@@ -57,11 +57,15 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>,
   const now = new Date();
   nodeHealth.lastActivity = now;
   
-  // Reset connectivity failures on real activity
+  // Reset connectivity failures on real activity (not keepalive)
   if (!isKeepalive && nodeHealth.consecutiveConnectivityFailures > 0) {
     nodeHealth.consecutiveConnectivityFailures = 0;
     nodeHealth.isConnected = true;
     addServerLog('info', 'Node activity detected - connectivity restored');
+  } else if (!isKeepalive && !nodeHealth.isConnected) {
+    // Only log if we were previously disconnected
+    nodeHealth.isConnected = true;
+    addServerLog('info', 'Node activity detected - connection active');
   }
 }
 
@@ -76,7 +80,7 @@ async function checkRelayConnectivity(
   nodeHealth.lastConnectivityCheck = now;
   
   try {
-    // First check if the node client itself is ready
+    // First check if the node client itself exists
     const client = (node as any)._client || (node as any).client;
     if (!client) {
       addServerLog('warning', 'Node client not available, will recreate on next check');
@@ -94,10 +98,8 @@ async function checkRelayConnectivity(
     const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
     const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
     
-    // If we're idle, actively ping a peer to maintain relay connections
+    // If we're idle, send a keepalive ping to maintain relay connections
     if (isIdle) {
-      addServerLog('info', `Idle for ${Math.round(timeSinceLastActivity / 1000)}s, sending keepalive ping`);
-      
       try {
         // Get list of peer pubkeys from the node
         const peers = (node as any)._peers || (node as any).peers || [];
@@ -112,72 +114,51 @@ async function checkRelayConnectivity(
             const pingResult = await (node as any).ping(peerPubkey);
             
             if (pingResult && pingResult.ok) {
-              addServerLog('info', 'Keepalive ping sent successfully');
+              // Ping succeeded - connection is good!
               updateNodeActivity(addServerLog, true);
               nodeHealth.isConnected = true;
               nodeHealth.consecutiveConnectivityFailures = 0;
+              // Don't log success every time to reduce noise
               return true;
             } else {
+              // Ping failed - this is a real connectivity issue
               const error = pingResult?.err || 'unknown';
-              addServerLog('warning', `Keepalive ping failed: ${error}`);
-              nodeHealth.consecutiveConnectivityFailures++;
               
-              // If we've had too many failures, trigger recreation
-              if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-                addServerLog('info', 'Too many ping failures, recreating node');
-                await nodeRecreateCallback();
+              // Only log and increment failures for real network errors
+              if (error.includes('timeout') || error.includes('closed') || error.includes('disconnect')) {
+                addServerLog('warning', `Connectivity lost: ${error}`);
+                nodeHealth.consecutiveConnectivityFailures++;
+                
+                // If we've had too many failures, trigger recreation
+                if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+                  addServerLog('info', 'Connection lost, recreating node');
+                  await nodeRecreateCallback();
+                }
+                return false;
               }
+              // For other errors (like peer offline), connection is still OK
+              return true;
             }
           }
-        } else {
-          addServerLog('warning', 'No peers available for keepalive ping');
         }
-      } catch (pingError) {
-        addServerLog('warning', 'Keepalive ping error', pingError);
-        nodeHealth.consecutiveConnectivityFailures++;
-        
-        // Recreate node on repeated failures
-        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-          addServerLog('info', 'Ping errors exceeded threshold, recreating node');
-          await nodeRecreateCallback();
+      } catch (pingError: any) {
+        // Only treat network errors as connectivity failures
+        if (pingError?.message?.includes('timeout') || pingError?.message?.includes('closed')) {
+          addServerLog('warning', 'Network error during ping', pingError);
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('info', 'Network errors exceeded threshold, recreating node');
+            await nodeRecreateCallback();
+          }
           return false;
         }
+        // For other errors, assume connection is OK
+        return true;
       }
     }
     
-    // Check client ready state
-    const isReady = client._is_ready || client.is_ready || false;
-    
-    if (!isReady) {
-      addServerLog('warning', 'Node client not ready');
-      nodeHealth.consecutiveConnectivityFailures++;
-      
-      // Try simple reconnect first
-      if (typeof client.connect === 'function') {
-        try {
-          await client.connect(10000); // 10 second timeout
-          addServerLog('info', 'Successfully reconnected to relays');
-          nodeHealth.isConnected = true;
-          nodeHealth.consecutiveConnectivityFailures = 0;
-          updateNodeActivity(addServerLog, false);
-          return true;
-        } catch (connectError) {
-          addServerLog('warning', 'Reconnection failed', connectError);
-        }
-      }
-      
-      // If reconnect failed and we've had too many failures, recreate
-      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-        addServerLog('info', 'Client not ready after 3 checks, recreating node');
-        await nodeRecreateCallback();
-      }
-      return false;
-    }
-    
-    // If we get here, client is ready
-    if (!nodeHealth.isConnected) {
-      addServerLog('system', 'Node connectivity verified');
-    }
+    // Not idle, assume everything is fine
     nodeHealth.isConnected = true;
     nodeHealth.consecutiveConnectivityFailures = 0;
     return true;
