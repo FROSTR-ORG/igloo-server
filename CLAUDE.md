@@ -70,16 +70,15 @@ curl http://localhost:8002/api/status
 
 ### Node Restart System
 
-Two independent restart mechanisms:
-1. **Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
-2. **Health Restart**: Automatic recovery from 5-minute inactivity timeouts (env vars: NODE_HEALTH_MAX_RESTARTS, NODE_HEALTH_RESTART_DELAY, NODE_HEALTH_BACKOFF_MULTIPLIER)
+**Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
 
-### Keepalive System
+### Connectivity Monitoring
 
-- **Simplified keepalive**: Updates activity timestamp after 90 seconds of idle time
-- **No self-pings**: Relies on peer activity and real operations to maintain connections
+- **Active keepalive**: Sends pings to peers when idle > 45 seconds to maintain relay connections
+- **Simple monitoring**: Single 60-second check interval, no complex health tracking
+- **Auto-recovery**: Recreates node after 3 consecutive connectivity failures
 - **Self-ping detection**: Filters any self-pings from logs by comparing normalized pubkeys
-- **Production-ready**: No debug logging, minimal overhead
+- **Production-ready**: Minimal overhead, clear logging
 
 ### Security Architecture
 
@@ -121,12 +120,11 @@ Two independent restart mechanisms:
    - `SHARE_CRED`: Your secret share (bfshare1...)
    - `SESSION_SECRET`: Required in production (32+ chars)
 
-4. **Health Monitoring**: 
-   - Node health checked every 30 seconds
-   - Unhealthy after 2 minutes of inactivity
-   - Automatic restart after 5 minutes (watchdog timeout)
-   - Intelligent keepalive only when idle >45 seconds
-   - Activity updated only on successful operations (not failures)
+4. **Connectivity Monitoring**: 
+   - Connectivity checked every 60 seconds
+   - Sends keepalive pings when idle > 45 seconds
+   - Automatic node recreation after 3 consecutive failures
+   - Activity updated on successful operations and keepalive pings
 
 5. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 

@@ -30,60 +30,13 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
-// Health monitoring constants with validation
-const parseHealthConstants = () => {
-  const maxHealthRestarts = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3');
-  const restartBackoffBase = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000');
-  const restartBackoffMultiplier = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2');
+// Simplified monitoring constants
+const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
+const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
 
-  // Validation with safe defaults
-  const validatedConstants = {
-    HEALTH_CHECK_INTERVAL: 30000, // Fixed at 30 seconds
-    NODE_ACTIVITY_TIMEOUT: 120000, // Fixed at 2 minutes
-    WATCHDOG_TIMEOUT: 300000, // Fixed at 5 minutes
-    MAX_HEALTH_RESTARTS: (maxHealthRestarts > 0 && maxHealthRestarts <= 50) ? maxHealthRestarts : 3, // 1 to 50 restarts max
-    RESTART_BACKOFF_BASE: (restartBackoffBase > 0 && restartBackoffBase <= 3600000) ? restartBackoffBase : 60000, // 1ms to 1 hour max
-    RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier >= 1.0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 1.0 to 10x multiplier
-    RESTART_COUNT_RESET_TIMEOUT: 600000, // Fixed at 10 minutes
-    CONNECTIVITY_CHECK_INTERVAL: 60000, // Check connectivity every minute
-    CONNECTIVITY_PING_TIMEOUT: 10000, // 10 second timeout for connectivity pings
-  };
-
-  // Log validation warnings if defaults were used
-  if (maxHealthRestarts !== validatedConstants.MAX_HEALTH_RESTARTS) {
-    console.warn(`Invalid NODE_HEALTH_MAX_RESTARTS: ${maxHealthRestarts}. Using default: ${validatedConstants.MAX_HEALTH_RESTARTS}`);
-  }
-  if (restartBackoffBase !== validatedConstants.RESTART_BACKOFF_BASE) {
-    console.warn(`Invalid NODE_HEALTH_RESTART_DELAY: ${restartBackoffBase}. Using default: ${validatedConstants.RESTART_BACKOFF_BASE}ms`);
-  }
-  if (restartBackoffMultiplier !== validatedConstants.RESTART_BACKOFF_MULTIPLIER) {
-    console.warn(`Invalid NODE_HEALTH_BACKOFF_MULTIPLIER: ${restartBackoffMultiplier}. Using default: ${validatedConstants.RESTART_BACKOFF_MULTIPLIER}`);
-  }
-
-  return validatedConstants;
-};
-
-const {
-  HEALTH_CHECK_INTERVAL,
-  NODE_ACTIVITY_TIMEOUT,
-  WATCHDOG_TIMEOUT,
-  MAX_HEALTH_RESTARTS,
-  RESTART_BACKOFF_BASE,
-  RESTART_BACKOFF_MULTIPLIER,
-  RESTART_COUNT_RESET_TIMEOUT,
-  CONNECTIVITY_CHECK_INTERVAL,
-  CONNECTIVITY_PING_TIMEOUT
-} = parseHealthConstants();
-
-// Health monitoring state
+// Simplified monitoring state
 interface NodeHealth {
   lastActivity: Date;
-  lastHealthCheck: Date;
-  isHealthy: boolean;
-  consecutiveFailures: number;
-  restartCount: number;
-  lastHealthyPeriodStart: Date | null;
-  restartScheduled: boolean;
   lastConnectivityCheck: Date;
   isConnected: boolean;
   consecutiveConnectivityFailures: number;
@@ -91,53 +44,31 @@ interface NodeHealth {
 
 let nodeHealth: NodeHealth = {
   lastActivity: new Date(),
-  lastHealthCheck: new Date(),
-  isHealthy: true,
-  consecutiveFailures: 0,
-  restartCount: 0,
-  lastHealthyPeriodStart: new Date(),
-  restartScheduled: false,
   lastConnectivityCheck: new Date(),
   isConnected: true,
   consecutiveConnectivityFailures: 0
 };
 
-let healthCheckInterval: NodeJS.Timeout | null = null;
-let watchdogTimer: NodeJS.Timeout | null = null;
-let heartbeatInterval: NodeJS.Timeout | null = null;
 let connectivityCheckInterval: NodeJS.Timeout | null = null;
-let currentNode: ServerBifrostNode | null = null;
+let nodeRecreateCallback: (() => Promise<void>) | null = null;
 
 // Helper function to update node activity
-function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isHeartbeat: boolean = false) {
+function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isKeepalive: boolean = false) {
   const now = new Date();
   nodeHealth.lastActivity = now;
   
-  // Only log health restoration for real activity, not heartbeats
-  if (!nodeHealth.isHealthy && !isHeartbeat) {
-    nodeHealth.isHealthy = true;
-    nodeHealth.consecutiveFailures = 0;
-    nodeHealth.lastHealthyPeriodStart = now;
-    addServerLog('system', 'Node health restored - activity detected');
-  } else if (!nodeHealth.isHealthy && isHeartbeat) {
-    // Silently restore health on heartbeat
-    nodeHealth.isHealthy = true;
-    nodeHealth.consecutiveFailures = 0;
-    nodeHealth.lastHealthyPeriodStart = now;
-  }
-  
   // Reset connectivity failures on real activity
-  if (!isHeartbeat && nodeHealth.consecutiveConnectivityFailures > 0) {
+  if (!isKeepalive && nodeHealth.consecutiveConnectivityFailures > 0) {
     nodeHealth.consecutiveConnectivityFailures = 0;
     nodeHealth.isConnected = true;
+    addServerLog('info', 'Node activity detected - connectivity restored');
   }
 }
 
-// Helper function to check relay connectivity
+// Helper function to check and maintain relay connectivity
 async function checkRelayConnectivity(
   node: ServerBifrostNode | null,
-  addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
+  addServerLog: ReturnType<typeof createAddServerLog>
 ): Promise<boolean> {
   if (!node) return false;
   
@@ -145,228 +76,186 @@ async function checkRelayConnectivity(
   nodeHealth.lastConnectivityCheck = now;
   
   try {
-    // Multiple connectivity verification methods
-    let isConnected = false;
-    
-    // Method 1: Check if node client is connected (if available)
-    if ((node as any).client) {
-      const client = (node as any).client;
-      if (client.is_ready || client.connected || client.readyState === 1) {
-        isConnected = true;
+    // First check if the node client itself is ready
+    const client = (node as any)._client || (node as any).client;
+    if (!client) {
+      addServerLog('warning', 'Node client not available, will recreate on next check');
+      nodeHealth.consecutiveConnectivityFailures++;
+      
+      // Trigger node recreation if client is missing for too long
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Recreating node after 3 failed checks');
+        await nodeRecreateCallback();
       }
+      return false;
     }
     
-    // Method 2: Check for recent message activity
+    // Check if we've been idle too long
     const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
-    if (timeSinceLastActivity < 120000) { // Activity within last 2 minutes
-      isConnected = true;
-    }
+    const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
     
-    // Method 3: Check relay connection status if exposed
-    if (!isConnected && (node as any).relays) {
-      const relays = (node as any).relays;
-      if (Array.isArray(relays)) {
-        const connectedRelays = relays.filter((r: any) => 
-          r.connected || r.readyState === 1 || r.status === 'connected'
-        );
-        if (connectedRelays.length > 0) {
-          isConnected = true;
+    // If we're idle, actively ping a peer to maintain relay connections
+    if (isIdle) {
+      addServerLog('info', `Idle for ${Math.round(timeSinceLastActivity / 1000)}s, sending keepalive ping`);
+      
+      try {
+        // Get list of peer pubkeys from the node
+        const peers = (node as any)._peers || (node as any).peers || [];
+        
+        if (peers.length > 0) {
+          // Send a ping to the first available peer
+          const targetPeer = peers[0];
+          const peerPubkey = targetPeer.pubkey || targetPeer;
+          
+          // The Bifrost node exposes ping via node.ping (from API.ping_request_api)
+          if (typeof (node as any).ping === 'function') {
+            const pingResult = await (node as any).ping(peerPubkey);
+            
+            if (pingResult && pingResult.ok) {
+              addServerLog('info', 'Keepalive ping sent successfully');
+              updateNodeActivity(addServerLog, true);
+              nodeHealth.isConnected = true;
+              nodeHealth.consecutiveConnectivityFailures = 0;
+              return true;
+            } else {
+              const error = pingResult?.err || 'unknown';
+              addServerLog('warning', `Keepalive ping failed: ${error}`);
+              nodeHealth.consecutiveConnectivityFailures++;
+              
+              // If we've had too many failures, trigger recreation
+              if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+                addServerLog('info', 'Too many ping failures, recreating node');
+                await nodeRecreateCallback();
+              }
+            }
+          }
+        } else {
+          addServerLog('warning', 'No peers available for keepalive ping');
+        }
+      } catch (pingError) {
+        addServerLog('warning', 'Keepalive ping error', pingError);
+        nodeHealth.consecutiveConnectivityFailures++;
+        
+        // Recreate node on repeated failures
+        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+          addServerLog('info', 'Ping errors exceeded threshold, recreating node');
+          await nodeRecreateCallback();
+          return false;
         }
       }
     }
     
-    if (isConnected) {
-      // Connectivity verified
-      if (!nodeHealth.isConnected) {
-        addServerLog('system', 'Node connectivity verified');
-      }
-      nodeHealth.isConnected = true;
-      nodeHealth.consecutiveConnectivityFailures = 0;
-      return true;
-    } else {
-      // Connectivity test failed
+    // Check client ready state
+    const isReady = client._is_ready || client.is_ready || false;
+    
+    if (!isReady) {
+      addServerLog('warning', 'Node client not ready');
       nodeHealth.consecutiveConnectivityFailures++;
       
-      if (nodeHealth.isConnected) {
-        nodeHealth.isConnected = false;
-        addServerLog('warning', `Node connectivity check failed (${nodeHealth.consecutiveConnectivityFailures} consecutive failures)`);
+      // Try simple reconnect first
+      if (typeof client.connect === 'function') {
+        try {
+          await client.connect(10000); // 10 second timeout
+          addServerLog('info', 'Successfully reconnected to relays');
+          nodeHealth.isConnected = true;
+          nodeHealth.consecutiveConnectivityFailures = 0;
+          updateNodeActivity(addServerLog, false);
+          return true;
+        } catch (connectError) {
+          addServerLog('warning', 'Reconnection failed', connectError);
+        }
       }
       
-      // Log diagnostic information
-      if (nodeHealth.consecutiveConnectivityFailures === 2) {
-        addServerLog('info', 'Connectivity diagnostics', {
-          lastActivity: nodeHealth.lastActivity.toISOString(),
-          timeSinceActivity: `${Math.round(timeSinceLastActivity / 1000)}s`,
-          nodeState: {
-            hasClient: !!(node as any).client,
-            hasRelays: !!(node as any).relays,
-            isReady: (node as any).is_ready
-          }
-        });
+      // If reconnect failed and we've had too many failures, recreate
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Client not ready after 3 checks, recreating node');
+        await nodeRecreateCallback();
       }
-      
-      // If connectivity has been lost for too long, trigger restart
-      if (nodeHealth.consecutiveConnectivityFailures >= 3) {
-        addServerLog('error', 'Node connectivity lost for 3+ checks, triggering restart');
-        onNodeUnhealthy();
-      }
-      
       return false;
     }
+    
+    // If we get here, client is ready
+    if (!nodeHealth.isConnected) {
+      addServerLog('system', 'Node connectivity verified');
+    }
+    nodeHealth.isConnected = true;
+    nodeHealth.consecutiveConnectivityFailures = 0;
+    return true;
+    
   } catch (error) {
     addServerLog('error', 'Connectivity check error', error);
     nodeHealth.consecutiveConnectivityFailures++;
+    
+    // Simple recreation after repeated failures
+    if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+      addServerLog('info', 'Connectivity errors exceeded threshold, recreating node');
+      await nodeRecreateCallback();
+    }
     return false;
   }
 }
 
-// Helper function to check node health
-function checkNodeHealth(
+
+// Start simplified connectivity monitoring
+function startConnectivityMonitoring(
   node: ServerBifrostNode | null,
   addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
+  recreateNodeFn: () => Promise<void>
 ) {
-  if (!node) return;
-
-  const now = new Date();
-  const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
-  
-  nodeHealth.lastHealthCheck = now;
-
-  // Check if we should reset restart count after sustained healthy period
-  if (nodeHealth.isHealthy && nodeHealth.lastHealthyPeriodStart && nodeHealth.restartCount > 0) {
-    const healthyPeriod = now.getTime() - nodeHealth.lastHealthyPeriodStart.getTime();
-    if (healthyPeriod > RESTART_COUNT_RESET_TIMEOUT) {
-      const previousRestartCount = nodeHealth.restartCount;
-      nodeHealth.restartCount = 0;
-      addServerLog('system', `Restart count reset from ${previousRestartCount} to 0 after ${Math.round(healthyPeriod / 60000)} minutes of healthy operation`);
-    }
-  }
-
-  if (timeSinceLastActivity > NODE_ACTIVITY_TIMEOUT) {
-    nodeHealth.consecutiveFailures++;
-    
-    if (nodeHealth.isHealthy) {
-      nodeHealth.isHealthy = false;
-      addServerLog('warning', `Node appears unhealthy - no activity for ${timeSinceLastActivity}ms`);
-    }
-
-    // If node has been unhealthy for too long, trigger restart
-    if (timeSinceLastActivity > WATCHDOG_TIMEOUT) {
-      // Check if we've exceeded the maximum number of health-based restarts
-      if (nodeHealth.restartCount >= MAX_HEALTH_RESTARTS) {
-        addServerLog('error', `Maximum health-based restarts (${MAX_HEALTH_RESTARTS}) exceeded. Stopping health monitoring to prevent infinite loops.`);
-        stopHealthMonitoring();
-        return;
-      }
-      
-      // Check if restart is already scheduled
-      if (nodeHealth.restartScheduled) {
-        return; // Skip scheduling if restart already pending
-      }
-      
-      // Calculate exponential backoff delay
-      const backoffDelay = RESTART_BACKOFF_BASE * Math.pow(RESTART_BACKOFF_MULTIPLIER, nodeHealth.restartCount);
-      
-      addServerLog('error', `Node watchdog timeout - scheduling restart ${nodeHealth.restartCount + 1}/${MAX_HEALTH_RESTARTS} with ${Math.round(backoffDelay / 1000)}s delay`);
-      
-      // Increment restart count
-      nodeHealth.restartCount++;
-      nodeHealth.restartScheduled = true; // Set flag to prevent overlapping restarts
-      
-      // Schedule restart with exponential backoff
-      setTimeout(() => {
-        addServerLog('system', `Executing delayed restart (attempt ${nodeHealth.restartCount})`);
-        nodeHealth.restartScheduled = false; // Reset flag
-        onNodeUnhealthy();
-      }, backoffDelay);
-    }
-  }
-}
-
-// Start health monitoring
-function startHealthMonitoring(
-  node: ServerBifrostNode | null,
-  addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
-) {
-  stopHealthMonitoring();
+  stopConnectivityMonitoring();
   
   if (!node) return;
 
-  // Store node reference for connectivity checks
-  currentNode = node;
+  // Store recreation callback
+  nodeRecreateCallback = recreateNodeFn;
 
-  addServerLog('system', 'Starting node health monitoring with connectivity checks');
-  
-  healthCheckInterval = setInterval(() => {
-    checkNodeHealth(node, addServerLog, onNodeUnhealthy);
-  }, HEALTH_CHECK_INTERVAL);
+  addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings');
 
   // Active connectivity monitoring - test relay connections periodically
+  // This runs every 60 seconds to maintain relay connections
   connectivityCheckInterval = setInterval(async () => {
     try {
-      await checkRelayConnectivity(node, addServerLog, onNodeUnhealthy);
+      const isConnected = await checkRelayConnectivity(node, addServerLog);
+      
+      // Simple logging without complex tracking
+      if (!isConnected && nodeHealth.consecutiveConnectivityFailures === 1) {
+        addServerLog('info', 'Connectivity check failed, will retry');
+      } else if (isConnected && nodeHealth.consecutiveConnectivityFailures === 0) {
+        // Log every 10 successful checks (10 minutes)
+        const timeSinceStart = Date.now() - nodeHealth.lastConnectivityCheck.getTime();
+        const checkCount = Math.floor(timeSinceStart / CONNECTIVITY_CHECK_INTERVAL);
+        if (checkCount % 10 === 0 && checkCount > 0) {
+          addServerLog('info', `Connectivity maintained for ${Math.round(timeSinceStart / 60000)} minutes`);
+        }
+      }
     } catch (error) {
-      addServerLog('error', 'Connectivity check interval error', error);
-      // Increment failure count and trigger unhealthy state if critical
+      addServerLog('error', 'Connectivity check error', error);
       nodeHealth.consecutiveConnectivityFailures++;
-      if (nodeHealth.consecutiveConnectivityFailures >= 3) {
-        addServerLog('error', 'Connectivity check failures exceeded threshold, triggering restart');
-        onNodeUnhealthy();
+      
+      // Simple recreation after 3 failures
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Too many connectivity failures, recreating node');
+        await nodeRecreateCallback();
       }
     }
   }, CONNECTIVITY_CHECK_INTERVAL);
 
-  // Simplified keepalive - just update activity timestamp when idle
-  // Since peers are pinging us regularly, we don't need to self-ping
-  heartbeatInterval = setInterval(() => {
-    const now = new Date();
-    const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
-    
-    // If we've been idle for more than 90 seconds, update activity
-    // This prevents false unhealthy detection when peers aren't pinging
-    if (timeSinceActivity > 90000) {
-      // Just update the timestamp - no network operations needed
-      // This prevents the watchdog from incorrectly restarting the node
-      updateNodeActivity(addServerLog, true);
-    }
-  }, 30000); // Check every 30 seconds
-
   // Reset health state for new node
   nodeHealth = {
     lastActivity: new Date(),
-    lastHealthCheck: new Date(),
-    isHealthy: true,
-    consecutiveFailures: 0,
-    restartCount: nodeHealth.restartCount, // Preserve restart count
-    lastHealthyPeriodStart: new Date(),
-    restartScheduled: false,
     lastConnectivityCheck: new Date(),
     isConnected: true,
     consecutiveConnectivityFailures: 0
   };
 }
 
-// Stop health monitoring
-function stopHealthMonitoring() {
-  if (healthCheckInterval) {
-    clearInterval(healthCheckInterval);
-    healthCheckInterval = null;
-  }
-  if (watchdogTimer) {
-    clearTimeout(watchdogTimer);
-    watchdogTimer = null;
-  }
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
+// Stop connectivity monitoring
+function stopConnectivityMonitoring() {
   if (connectivityCheckInterval) {
     clearInterval(connectivityCheckInterval);
     connectivityCheckInterval = null;
   }
-  currentNode = null;
+  nodeRecreateCallback = null;
 }
 
 // Enhanced connection monitoring
@@ -485,12 +374,20 @@ export function setupNodeEventListeners(
   addServerLog: ReturnType<typeof createAddServerLog>,
   broadcastEvent: ReturnType<typeof createBroadcastEvent>,
   peerStatuses: Map<string, PeerStatus>,
-  onNodeUnhealthy?: () => void,
+  onNodeUnhealthy?: () => Promise<void> | void,
   groupCred?: string,
   shareCred?: string
 ) {
-  // Start health monitoring
-  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}));
+  // Start simplified connectivity monitoring
+  const recreateNodeFn = async () => {
+    if (onNodeUnhealthy) {
+      const result = onNodeUnhealthy();
+      if (result instanceof Promise) {
+        await result;
+      }
+    }
+  };
+  startConnectivityMonitoring(node, addServerLog, recreateNodeFn);
 
   // Setup connection monitoring
   setupConnectionMonitoring(node, addServerLog);
@@ -498,7 +395,7 @@ export function setupNodeEventListeners(
   // Basic node events - matching Igloo Desktop
   node.on('closed', () => {
     addServerLog('bifrost', 'Bifrost node is closed');
-    stopHealthMonitoring();
+    stopConnectivityMonitoring();
   });
 
   node.on('error', (error: unknown) => {
@@ -846,15 +743,32 @@ export async function createNodeWithCredentials(
                 relayCount: result.state.connectedRelays.length
               });
             }
+            
+            // Log internal client details for debugging keepalive
+            const client = (node as any)._client || (node as any).client;
+            if (client) {
+              addServerLog('debug', 'Node client capabilities', {
+                hasConnect: typeof client.connect === 'function',
+                hasPing: typeof client.ping === 'function',
+                hasClose: typeof client.close === 'function',
+                hasUpdate: typeof client.update === 'function',
+                isReady: client._is_ready || client.is_ready || false
+              });
+            }
+            
+            // Check if node has ping capability
+            if (typeof (node as any).ping === 'function') {
+              addServerLog('debug', 'Node has ping capability');
+            }
           }
           
           // Perform initial connectivity check
-          setTimeout(async () => {
-            const isConnected = await checkRelayConnectivity(node, addServerLog, () => {});
-            if (addServerLog) {
+          if (addServerLog) {
+            setTimeout(async () => {
+              const isConnected = await checkRelayConnectivity(node, addServerLog);
               addServerLog('info', `Initial connectivity check: ${isConnected ? 'PASSED' : 'FAILED'}`);
-            }
-          }, 5000);
+            }, 5000);
+          }
           
           return node;
         } else {
@@ -915,20 +829,14 @@ export function getNodeHealth() {
 }
 
 // Export cleanup function
-export function cleanupHealthMonitoring() {
-  stopHealthMonitoring();
+export function cleanupMonitoring() {
+  stopConnectivityMonitoring();
 }
 
-// Reset health monitoring state completely (for manual restarts)
+// Reset monitoring state completely (for manual restarts)
 export function resetHealthMonitoring() {
   nodeHealth = {
     lastActivity: new Date(),
-    lastHealthCheck: new Date(),
-    isHealthy: true,
-    consecutiveFailures: 0,
-    restartCount: 0,
-    lastHealthyPeriodStart: new Date(),
-    restartScheduled: false,
     lastConnectivityCheck: new Date(),
     isConnected: true,
     consecutiveConnectivityFailures: 0

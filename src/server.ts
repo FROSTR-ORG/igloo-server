@@ -12,7 +12,7 @@ import {
   createAddServerLog, 
   setupNodeEventListeners, 
   createNodeWithCredentials,
-  cleanupHealthMonitoring,
+  cleanupMonitoring,
   resetHealthMonitoring
 } from './node/manager.js';
 
@@ -104,7 +104,7 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     }
     
     // Clean up health monitoring
-    cleanupHealthMonitoring();
+    cleanupMonitoring();
     
     // Reset health monitoring state for fresh start
     resetHealthMonitoring();
@@ -213,7 +213,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   }
   
   // Clean up health monitoring
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   
   // Reset health monitoring state for fresh start
   resetHealthMonitoring();
@@ -417,7 +417,7 @@ process.on('SIGTERM', () => {
     restartTimeout = null;
   }
   
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   process.exit(0);
 });
 
@@ -430,6 +430,6 @@ process.on('SIGINT', () => {
     restartTimeout = null;
   }
   
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   process.exit(0);
 });

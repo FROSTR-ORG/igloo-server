@@ -578,9 +578,6 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
 | `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
 | `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` (5 minutes) | ❌ |
-| `NODE_HEALTH_MAX_RESTARTS` | Maximum health-based restarts before giving up | `3` | ❌ |
-| `NODE_HEALTH_RESTART_DELAY` | Base delay for health restart backoff (ms) | `60000` (1 minute) | ❌ |
-| `NODE_HEALTH_BACKOFF_MULTIPLIER` | Health restart exponential backoff multiplier | `2` | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
