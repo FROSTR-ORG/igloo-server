@@ -11,7 +11,6 @@ import {
   getValidRelays,
   getSecureCorsHeaders 
 } from './utils.js';
-import { cleanupMonitoring } from '../node/manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -20,11 +19,10 @@ let nodeUpdateLock: Promise<void> = Promise.resolve();
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
   // Synchronize node updates to prevent race conditions
   nodeUpdateLock = nodeUpdateLock.then(async () => {
-    // Clean up existing node if it exists
+    // Note: updateNode will handle cleanup of the old node and its monitoring
+    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
     if (context.node) {
-      context.addServerLog('info', 'Cleaning up existing Bifrost node...');
-      cleanupMonitoring();
-      // igloo-core handles cleanup internally
+      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
     }
 
     // Check if we now have both credentials
@@ -182,8 +180,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             if (deletingCredentials && context.node) {
               try {
                 context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
-                cleanupMonitoring();
-                // Note: igloo-core handles cleanup internally
+                // updateNode(null) will handle all cleanup atomically
                 if (context.updateNode) {
                   context.updateNode(null);
                 }
