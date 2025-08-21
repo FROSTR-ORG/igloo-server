@@ -94,11 +94,61 @@ async function checkRelayConnectivity(
       return false;
     }
     
+    // CRITICAL: Check if SimplePool connections are actually alive
+    // SimplePool doesn't auto-reconnect, so we need to manually check and reconnect
+    const pool = client._pool || client.pool;
+    if (pool && typeof pool.listConnectionStatus === 'function') {
+      const connectionStatuses = pool.listConnectionStatus();
+      let disconnectedRelays = [];
+      
+      for (const [url, isConnected] of connectionStatuses) {
+        if (!isConnected) {
+          disconnectedRelays.push(url);
+        }
+      }
+      
+      // If we have disconnected relays, try to reconnect them
+      if (disconnectedRelays.length > 0) {
+        addServerLog('warning', `Found ${disconnectedRelays.length} disconnected relay(s), attempting reconnection`);
+        
+        for (const url of disconnectedRelays) {
+          try {
+            // Use ensureRelay to reconnect
+            if (typeof pool.ensureRelay === 'function') {
+              await pool.ensureRelay(url, { connectionTimeout: 10000 });
+              addServerLog('info', `Reconnected to relay: ${url}`);
+            }
+          } catch (reconnectError) {
+            addServerLog('error', `Failed to reconnect to ${url}`, reconnectError);
+          }
+        }
+        
+        // Check again after reconnection attempts
+        const newStatuses = pool.listConnectionStatus();
+        let stillDisconnected = 0;
+        for (const [_, connected] of newStatuses) {
+          if (!connected) stillDisconnected++;
+        }
+        
+        if (stillDisconnected > 0) {
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('error', 'Unable to reconnect to relays after 3 attempts, recreating node');
+            await nodeRecreateCallback();
+            return false;
+          }
+          
+          return false;
+        }
+      }
+    }
+    
     // Check if we've been idle too long
     const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
     const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
     
-    // If we're idle, send a keepalive ping to maintain relay connections
+    // If we're idle AND connected, send a keepalive ping
     if (isIdle) {
       try {
         // Get list of peer pubkeys from the node
@@ -118,31 +168,29 @@ async function checkRelayConnectivity(
               updateNodeActivity(addServerLog, true);
               nodeHealth.isConnected = true;
               nodeHealth.consecutiveConnectivityFailures = 0;
-              // Don't log success every time to reduce noise
               return true;
             } else {
-              // Ping failed - this is a real connectivity issue
+              // Ping failed but connections might still be OK
               const error = pingResult?.err || 'unknown';
               
-              // Only log and increment failures for real network errors
+              // Check if it's a connection issue or just peer issue
               if (error.includes('timeout') || error.includes('closed') || error.includes('disconnect')) {
-                addServerLog('warning', `Connectivity lost: ${error}`);
+                addServerLog('warning', `Ping failed with connection error: ${error}`);
                 nodeHealth.consecutiveConnectivityFailures++;
                 
-                // If we've had too many failures, trigger recreation
                 if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-                  addServerLog('info', 'Connection lost, recreating node');
+                  addServerLog('info', 'Persistent connection issues, recreating node');
                   await nodeRecreateCallback();
                 }
                 return false;
               }
-              // For other errors (like peer offline), connection is still OK
+              // Peer might be offline but our connection is OK
               return true;
             }
           }
         }
       } catch (pingError: any) {
-        // Only treat network errors as connectivity failures
+        // Check if it's a network error
         if (pingError?.message?.includes('timeout') || pingError?.message?.includes('closed')) {
           addServerLog('warning', 'Network error during ping', pingError);
           nodeHealth.consecutiveConnectivityFailures++;
@@ -153,12 +201,11 @@ async function checkRelayConnectivity(
           }
           return false;
         }
-        // For other errors, assume connection is OK
         return true;
       }
     }
     
-    // Not idle, assume everything is fine
+    // Everything looks good
     nodeHealth.isConnected = true;
     nodeHealth.consecutiveConnectivityFailures = 0;
     return true;
