@@ -18,73 +18,85 @@ let nodeUpdateLock: Promise<void> = Promise.resolve();
 // Extracted node creation and connection logic with reduced timeout and retries
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
   // Synchronize node updates to prevent race conditions
-  nodeUpdateLock = nodeUpdateLock.then(async () => {
-    // Note: updateNode will handle cleanup of the old node and its monitoring
-    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
-    if (context.node) {
-      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
-    }
+  nodeUpdateLock = nodeUpdateLock
+    .then(async () => {
+      // Note: updateNode will handle cleanup of the old node and its monitoring
+      // We don't call cleanupMonitoring() here to avoid a gap in monitoring
+      if (context.node) {
+        context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
+      }
 
-    // Check if we now have both credentials
-    if (env.SHARE_CRED && env.GROUP_CRED) {
-      context.addServerLog('info', 'Creating and connecting node...');
-      const nodeRelays = getValidRelays(env.RELAYS);
-      let apiConnectionAttempts = 0;
-      const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
-      let newNode: ServerBifrostNode | null = null;
-      
-      while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
-        apiConnectionAttempts++;
-        try {
-          const result = await createConnectedNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays,
-            connectionTimeout: 5000, // 5 seconds for fast API response
-            autoReconnect: true
-          }, {
-            enableLogging: false,
-            logLevel: 'error'
-          });
-          if (result.node) {
-            newNode = result.node as unknown as ServerBifrostNode;
-            if (context.updateNode) {
-              context.updateNode(newNode);
+      // Check if we now have both credentials
+      if (env.SHARE_CRED && env.GROUP_CRED) {
+        context.addServerLog('info', 'Creating and connecting node...');
+        const nodeRelays = getValidRelays(env.RELAYS);
+        let apiConnectionAttempts = 0;
+        const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
+        let newNode: ServerBifrostNode | null = null;
+        
+        while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
+          apiConnectionAttempts++;
+          try {
+            const result = await createConnectedNode({
+              group: env.GROUP_CRED,
+              share: env.SHARE_CRED,
+              relays: nodeRelays,
+              connectionTimeout: 5000, // 5 seconds for fast API response
+              autoReconnect: true
+            }, {
+              enableLogging: false,
+              logLevel: 'error'
+            });
+            if (result.node) {
+              newNode = result.node as unknown as ServerBifrostNode;
+              if (context.updateNode) {
+                context.updateNode(newNode);
+              }
+              // updateNode already sets up event listeners and health monitoring
+              context.addServerLog('info', 'Node connected and ready');
+              if (result.state) {
+                context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
+              }
+              break;
+            } else {
+              throw new Error('Enhanced node creation returned no node');
             }
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready');
-            if (result.state) {
-              context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
+          } catch (enhancedError) {
+            context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
+            const basicNode = await createAndConnectNode({
+              group: env.GROUP_CRED,
+              share: env.SHARE_CRED,
+              relays: nodeRelays
+            });
+            if (basicNode) {
+              newNode = basicNode as unknown as ServerBifrostNode;
+              if (context.updateNode) {
+                context.updateNode(newNode);
+              }
+              // updateNode already sets up event listeners and health monitoring
+              context.addServerLog('info', 'Node connected and ready (basic mode)');
             }
-            break;
-          } else {
-            throw new Error('Enhanced node creation returned no node');
-          }
-        } catch (enhancedError) {
-          context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
-          const basicNode = await createAndConnectNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays
-          });
-          if (basicNode) {
-            newNode = basicNode as unknown as ServerBifrostNode;
-            if (context.updateNode) {
-              context.updateNode(newNode);
-            }
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
         }
+        
+        if (!newNode) {
+          context.addServerLog('error', 'Failed to create node after all attempts');
+        }
+      } else {
+        context.addServerLog('info', 'Insufficient credentials for node creation');
       }
-      
-      if (!newNode) {
-        context.addServerLog('error', 'Failed to create node after all attempts');
-      }
-    } else {
-      context.addServerLog('info', 'Insufficient credentials for node creation');
-    }
-  });
+    })
+    .catch((error) => {
+      // Log the error and prevent poisoning the queue
+      context.addServerLog('error', 'Failed to update node', error);
+      // Reset the lock to a resolved promise to clear the rejection
+      nodeUpdateLock = Promise.resolve();
+      // Re-throw to let caller handle
+      throw error;
+    });
+
+  // Wait for the lock to complete and return the result
+  return nodeUpdateLock;
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
