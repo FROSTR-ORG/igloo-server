@@ -154,54 +154,92 @@ async function checkRelayConnectivity(
         // Get list of peer pubkeys from the node
         const peers = (node as any)._peers || (node as any).peers || [];
         
-        if (peers.length > 0) {
-          // Send a ping to the first available peer
-          const targetPeer = peers[0];
-          const peerPubkey = targetPeer.pubkey || targetPeer;
-          
-          // The Bifrost node exposes ping via node.ping (from API.ping_request_api)
-          if (typeof (node as any).ping === 'function') {
-            const pingResult = await (node as any).ping(peerPubkey);
-            
-            if (pingResult && pingResult.ok) {
-              // Ping succeeded - connection is good!
-              updateNodeActivity(addServerLog, true);
-              nodeHealth.isConnected = true;
-              nodeHealth.consecutiveConnectivityFailures = 0;
-              return true;
-            } else {
-              // Ping failed but connections might still be OK
-              const error = pingResult?.err || 'unknown';
-              
-              // Check if it's a connection issue or just peer issue
-              if (error.includes('timeout') || error.includes('closed') || error.includes('disconnect')) {
-                addServerLog('warning', `Ping failed with connection error: ${error}`);
-                nodeHealth.consecutiveConnectivityFailures++;
-                
-                if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-                  addServerLog('info', 'Persistent connection issues, recreating node');
-                  await nodeRecreateCallback();
-                }
-                return false;
-              }
-              // Peer might be offline but our connection is OK
-              return true;
-            }
-          }
-        }
-      } catch (pingError: any) {
-        // Check if it's a network error
-        if (pingError?.message?.includes('timeout') || pingError?.message?.includes('closed')) {
-          addServerLog('warning', 'Network error during ping', pingError);
+        if (peers.length === 0) {
+          // No peers available - treat as disconnected
+          addServerLog('warning', 'No peers available for keepalive ping');
+          nodeHealth.isConnected = false;
           nodeHealth.consecutiveConnectivityFailures++;
           
           if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-            addServerLog('info', 'Network errors exceeded threshold, recreating node');
+            addServerLog('info', 'No peers available after 3 checks, recreating node');
             await nodeRecreateCallback();
           }
           return false;
         }
-        return true;
+        
+        // Send a ping to the first available peer
+        const targetPeer = peers[0];
+        const peerPubkey = targetPeer.pubkey || targetPeer;
+        
+        // Check if ping function exists
+        if (typeof (node as any).ping !== 'function') {
+          addServerLog('warning', 'Node does not have ping capability');
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('info', 'No ping capability after 3 checks, recreating node');
+            await nodeRecreateCallback();
+          }
+          return false;
+        }
+        
+        // Create a timeout promise
+        const PING_TIMEOUT = 10000; // 10 seconds
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Ping timeout')), PING_TIMEOUT)
+        );
+        
+        // Race between ping and timeout
+        const pingResult = await Promise.race([
+          (node as any).ping(peerPubkey),
+          timeoutPromise
+        ]).catch(err => ({ ok: false, err: err.message || 'ping failed' }));
+        
+        if (pingResult && pingResult.ok) {
+          // Ping succeeded - connection is good!
+          updateNodeActivity(addServerLog, true);
+          nodeHealth.isConnected = true;
+          nodeHealth.consecutiveConnectivityFailures = 0;
+          return true;
+        } else {
+          // Ping failed - always mark as disconnected and increment failures
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          // Safely convert error to string for checking
+          const errorStr = String(pingResult?.err || 'unknown').toLowerCase();
+          
+          // Log appropriate message based on error type
+          if (errorStr.includes('timeout')) {
+            addServerLog('warning', `Keepalive ping timed out after ${PING_TIMEOUT}ms`);
+          } else if (errorStr.includes('closed') || errorStr.includes('disconnect')) {
+            addServerLog('warning', `Ping failed with connection error: ${errorStr}`);
+          } else {
+            addServerLog('warning', `Ping failed: ${errorStr}`);
+          }
+          
+          // Recreate after 3 failures
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('info', 'Persistent ping failures, recreating node');
+            await nodeRecreateCallback();
+          }
+          return false;
+        }
+      } catch (pingError: any) {
+        // Any exception is a failure - mark as disconnected
+        nodeHealth.isConnected = false;
+        nodeHealth.consecutiveConnectivityFailures++;
+        
+        // Safely convert error to string
+        const errorStr = String(pingError?.message || pingError || 'unknown error').toLowerCase();
+        addServerLog('warning', `Keepalive ping error: ${errorStr}`);
+        
+        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+          addServerLog('info', 'Ping errors exceeded threshold, recreating node');
+          await nodeRecreateCallback();
+        }
+        return false;
       }
     }
     

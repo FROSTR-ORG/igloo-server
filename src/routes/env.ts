@@ -132,6 +132,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           
           // Update only allowed keys
           const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
+          const updatingRelays = validKeys.includes('RELAYS');
           
           for (const key of validKeys) {
             if (body[key] !== undefined) {
@@ -140,8 +141,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
-            // If credentials were updated, recreate the node
-            if (updatingCredentials) {
+            // If credentials or relays were updated, recreate the node
+            if (updatingCredentials || updatingRelays) {
               try {
                 await createAndConnectServerNode(env, context);
               } catch (error) {
