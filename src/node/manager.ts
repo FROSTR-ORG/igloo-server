@@ -33,6 +33,7 @@ const EVENT_MAPPINGS = {
 // Simplified monitoring constants
 const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
 const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
+const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
 
 // Simplified monitoring state
 interface NodeHealth {
@@ -49,7 +50,8 @@ let nodeHealth: NodeHealth = {
   consecutiveConnectivityFailures: 0
 };
 
-let connectivityCheckInterval: NodeJS.Timeout | null = null;
+let connectivityCheckInterval: ReturnType<typeof setInterval> | null = null;
+let connectivityCheckInFlight = false;
 let nodeRecreateCallback: (() => Promise<void>) | null = null;
 
 // Helper function to update node activity
@@ -84,6 +86,7 @@ async function checkRelayConnectivity(
     const client = (node as any)._client || (node as any).client;
     if (!client) {
       addServerLog('warning', 'Node client not available, will recreate on next check');
+      nodeHealth.isConnected = false; // Explicitly mark as disconnected
       nodeHealth.consecutiveConnectivityFailures++;
       
       // Trigger node recreation if client is missing for too long
@@ -184,10 +187,9 @@ async function checkRelayConnectivity(
           return false;
         }
         
-        // Create a timeout promise
-        const PING_TIMEOUT = 10000; // 10 seconds
+        // Create a timeout promise using shared constant
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Ping timeout')), PING_TIMEOUT)
+          setTimeout(() => reject(new Error('Ping timeout')), CONNECTIVITY_PING_TIMEOUT)
         );
         
         // Race between ping and timeout
@@ -212,7 +214,7 @@ async function checkRelayConnectivity(
           
           // Log appropriate message based on error type
           if (errorStr.includes('timeout')) {
-            addServerLog('warning', `Keepalive ping timed out after ${PING_TIMEOUT}ms`);
+            addServerLog('warning', `Keepalive ping timed out after ${CONNECTIVITY_PING_TIMEOUT}ms`);
           } else if (errorStr.includes('closed') || errorStr.includes('disconnect')) {
             addServerLog('warning', `Ping failed with connection error: ${errorStr}`);
           } else {
@@ -280,6 +282,12 @@ function startConnectivityMonitoring(
   // Active connectivity monitoring - test relay connections periodically
   // This runs every 60 seconds to maintain relay connections
   connectivityCheckInterval = setInterval(async () => {
+    // Prevent overlapping checks
+    if (connectivityCheckInFlight) {
+      return;
+    }
+    connectivityCheckInFlight = true;
+    
     try {
       const isConnected = await checkRelayConnectivity(node, addServerLog);
       
@@ -303,6 +311,8 @@ function startConnectivityMonitoring(
         addServerLog('info', 'Too many connectivity failures, recreating node');
         await nodeRecreateCallback();
       }
+    } finally {
+      connectivityCheckInFlight = false;
     }
   }, CONNECTIVITY_CHECK_INTERVAL);
 
@@ -321,6 +331,7 @@ function stopConnectivityMonitoring() {
     clearInterval(connectivityCheckInterval);
     connectivityCheckInterval = null;
   }
+  connectivityCheckInFlight = false;
   nodeRecreateCallback = null;
 }
 

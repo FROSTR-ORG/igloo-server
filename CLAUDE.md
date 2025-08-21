@@ -120,17 +120,11 @@ curl http://localhost:8002/api/status
    - `SHARE_CRED`: Your secret share (bfshare1...)
    - `SESSION_SECRET`: Required in production (32+ chars)
 
-4. **Connectivity Monitoring**: 
-   - Connectivity checked every 60 seconds
-   - Sends keepalive pings when idle > 45 seconds
-   - Automatic node recreation after 3 consecutive failures
-   - Activity updated on successful operations and keepalive pings
+4. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 
-5. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
+5. **Release Process**: Must be on `dev` branch, merges to `master` after tests pass
 
-6. **Release Process**: Must be on `dev` branch, merges to `master` after tests pass
-
-7. **Node Event Flow**: 
+6. **Node Event Flow**: 
    - All Bifrost events update `lastActivity` timestamp
    - Self-pings filtered from logs via pubkey comparison
    - Peer status tracked independently from health monitoring
