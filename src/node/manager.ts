@@ -82,6 +82,17 @@ async function checkRelayConnectivity(
   nodeHealth.lastConnectivityCheck = now;
   
   try {
+    // Validate node before accessing its properties
+    if (node === null || typeof node !== 'object') {
+      addServerLog('warning', 'Invalid node reference, will recreate on next check', { nodeType: typeof node });
+      nodeHealth.isConnected = false;
+      nodeHealth.consecutiveConnectivityFailures++;
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Recreating node after 3 failed checks');
+        await nodeRecreateCallback();
+      }
+      return false;
+    }
     // First check if the node client itself exists
     const client = (node as any)._client || (node as any).client;
     if (!client) {
@@ -477,6 +488,56 @@ export function createAddServerLog(broadcastEvent: ReturnType<typeof createBroad
   };
 }
 
+/**
+ * Determine if a ping message is a self-ping based on credentials and message content.
+ * Safely extracts our pubkey from credentials, normalizes it, and compares it against
+ * the pubkey found in the message data (env.pubkey or data.from). Returns false on any error.
+ */
+function isSelfPing(messageData: any, groupCred?: string, shareCred?: string): boolean {
+  try {
+    if (!groupCred || !shareCred) return false;
+    const result = extractSelfPubkeyFromCredentials(groupCred, shareCred);
+    const selfPubkey = result?.pubkey;
+    if (!selfPubkey) return false;
+    const normalizedSelf = normalizePubkey(selfPubkey);
+
+    let fromPubkey: string | undefined;
+
+    if (
+      messageData &&
+      typeof messageData === 'object' &&
+      'env' in messageData &&
+      messageData.env !== null &&
+      typeof (messageData as any).env === 'object'
+    ) {
+      const env = (messageData as any).env as any;
+      if ('pubkey' in env && typeof env.pubkey === 'string') {
+        fromPubkey = env.pubkey;
+      }
+    }
+
+    if (
+      !fromPubkey &&
+      messageData &&
+      typeof messageData === 'object' &&
+      'data' in messageData &&
+      (messageData as any).data !== null &&
+      typeof (messageData as any).data === 'object'
+    ) {
+      const data = (messageData as any).data as any;
+      if ('from' in data && typeof data.from === 'string') {
+        fromPubkey = data.from;
+      }
+    }
+
+    if (!fromPubkey) return false;
+    const normalizedFrom = normalizePubkey(fromPubkey);
+    return normalizedFrom === normalizedSelf;
+  } catch {
+    return false;
+  }
+}
+
 // Setup comprehensive event listeners for the Bifrost node
 export function setupNodeEventListeners(
   node: any, 
@@ -621,51 +682,8 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
-            // Check if this is a self-ping (keepalive) by comparing pubkeys
-            let isSelfPing = false;
-            try {
-              // Extract self pubkey if we have credentials
-              let selfPubkey: string | undefined;
-              if (groupCred && shareCred) {
-                const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
-                selfPubkey = selfPubkeyResult.pubkey || undefined;
-              }
-              
-              // If we have self pubkey, check if this ping involves ourself
-              if (selfPubkey) {
-                const normalizedSelf = normalizePubkey(selfPubkey);
-                
-                // Check various message structures for the from/to pubkey
-                let fromPubkey: string | undefined;
-                
-                // Try to extract from env.pubkey (standard Nostr event structure)
-                if ('env' in messageData && typeof messageData.env === 'object' && messageData.env !== null) {
-                  const env = messageData.env as any;
-                  if ('pubkey' in env && typeof env.pubkey === 'string') {
-                    fromPubkey = env.pubkey;
-                  }
-                }
-                
-                // Fallback to data.from if available
-                if (!fromPubkey && 'data' in messageData && typeof messageData.data === 'object' && messageData.data !== null) {
-                  const data = messageData.data as any;
-                  if ('from' in data && typeof data.from === 'string') {
-                    fromPubkey = data.from;
-                  }
-                }
-                
-                // Check if this is a self-ping
-                if (fromPubkey) {
-                  const normalizedFrom = normalizePubkey(fromPubkey);
-                  isSelfPing = normalizedFrom === normalizedSelf;
-                }
-              }
-            } catch (error) {
-              // If we can't determine, log it anyway (safer to log than miss real pings)
-            }
-            
-            // Only log non-keepalive pings
-            if (!isSelfPing) {
+            const selfPing = isSelfPing(messageData, groupCred, shareCred);
+            if (!selfPing) {
               addServerLog('bifrost', `Ping event: ${tag}`, msg);
             }
           } else {
