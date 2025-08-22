@@ -49,9 +49,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             });
             if (result.node) {
               newNode = result.node as unknown as ServerBifrostNode;
-              if (context.updateNode) {
-                context.updateNode(newNode);
-              }
+              context.updateNode(newNode);
               // updateNode already sets up event listeners and health monitoring
               context.addServerLog('info', 'Node connected and ready');
               if (result.state) {
@@ -70,9 +68,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
             });
             if (basicNode) {
               newNode = basicNode as unknown as ServerBifrostNode;
-              if (context.updateNode) {
-                context.updateNode(newNode);
-              }
+              context.updateNode(newNode);
               // updateNode already sets up event listeners and health monitoring
               context.addServerLog('info', 'Node connected and ready (basic mode)');
             }
@@ -194,9 +190,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               try {
                 context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
                 // updateNode(null) will handle all cleanup atomically
-                if (context.updateNode) {
-                  context.updateNode(null);
-                }
+                context.updateNode(null);
                 context.addServerLog('info', 'Bifrost node cleaned up successfully');
               } catch (error) {
                 context.addServerLog('error', 'Error cleaning up Bifrost node', error);
