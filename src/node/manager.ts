@@ -151,20 +151,55 @@ async function checkRelayConnectivity(
     const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
     const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
     
-    // If we're idle AND connected, send a keepalive ping
+    // If we're idle AND connected, send a keepalive ping (if available)
     if (isIdle) {
+      // Check if ping function exists
+      if (typeof (node as any).ping !== 'function') {
+        // No ping capability - this is not a critical failure
+        // The relay reconnection logic above is sufficient for maintaining connectivity
+        // Check if we have any connected relays from the pool check above
+        if (pool && typeof pool.listConnectionStatus === 'function') {
+          const connectionStatuses = pool.listConnectionStatus();
+          const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
+          if (hasConnectedRelays) {
+            nodeHealth.isConnected = true;
+            nodeHealth.consecutiveConnectivityFailures = 0;
+            return true;
+          }
+        }
+        // No connected relays and no ping capability
+        nodeHealth.isConnected = false;
+        nodeHealth.consecutiveConnectivityFailures++;
+        
+        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+          addServerLog('info', 'No connected relays and no ping capability, recreating node');
+          await nodeRecreateCallback();
+        }
+        return false;
+      }
+      
       try {
         // Get list of peer pubkeys from the node
         const peers = (node as any)._peers || (node as any).peers || [];
         
         if (peers.length === 0) {
-          // No peers available - treat as disconnected
-          addServerLog('warning', 'No peers available for keepalive ping');
+          // No peers available - not critical if relays are connected
+          addServerLog('debug', 'No peers available for keepalive ping, relying on relay connections');
+          // Check relay connections again
+          if (pool && typeof pool.listConnectionStatus === 'function') {
+            const connectionStatuses = pool.listConnectionStatus();
+            const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
+            if (hasConnectedRelays) {
+              nodeHealth.isConnected = true;
+              nodeHealth.consecutiveConnectivityFailures = 0;
+              return true;
+            }
+          }
           nodeHealth.isConnected = false;
           nodeHealth.consecutiveConnectivityFailures++;
           
           if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-            addServerLog('info', 'No peers available after 3 checks, recreating node');
+            addServerLog('info', 'No peers and no connected relays, recreating node');
             await nodeRecreateCallback();
           }
           return false;
@@ -173,19 +208,6 @@ async function checkRelayConnectivity(
         // Send a ping to the first available peer
         const targetPeer = peers[0];
         const peerPubkey = targetPeer.pubkey || targetPeer;
-        
-        // Check if ping function exists
-        if (typeof (node as any).ping !== 'function') {
-          addServerLog('warning', 'Node does not have ping capability');
-          nodeHealth.isConnected = false;
-          nodeHealth.consecutiveConnectivityFailures++;
-          
-          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-            addServerLog('info', 'No ping capability after 3 checks, recreating node');
-            await nodeRecreateCallback();
-          }
-          return false;
-        }
         
         // Create a timeout promise using shared constant
         const timeoutPromise = new Promise((_, reject) => 
@@ -291,15 +313,19 @@ function startConnectivityMonitoring(
     try {
       const isConnected = await checkRelayConnectivity(node, addServerLog);
       
-      // Simple logging without complex tracking
+      // Reduced logging for better signal-to-noise ratio
       if (!isConnected && nodeHealth.consecutiveConnectivityFailures === 1) {
-        addServerLog('info', 'Connectivity check failed, will retry');
+        // Only log first failure if it's not just missing ping capability
+        const client = (node as any)._client || (node as any).client;
+        if (client) {
+          addServerLog('info', 'Connectivity check failed, will retry');
+        }
       } else if (isConnected && nodeHealth.consecutiveConnectivityFailures === 0) {
         // Log every 10 successful checks (10 minutes)
         const timeSinceStart = Date.now() - nodeHealth.lastConnectivityCheck.getTime();
         const checkCount = Math.floor(timeSinceStart / CONNECTIVITY_CHECK_INTERVAL);
         if (checkCount % 10 === 0 && checkCount > 0) {
-          addServerLog('info', `Connectivity maintained for ${Math.round(timeSinceStart / 60000)} minutes`);
+          addServerLog('debug', `Connectivity maintained for ${Math.round(timeSinceStart / 60000)} minutes`);
         }
       }
     } catch (error) {
@@ -835,7 +861,9 @@ export async function createNodeWithCredentials(
             
             // Check if node has ping capability
             if (typeof (node as any).ping === 'function') {
-              addServerLog('debug', 'Node has ping capability');
+              addServerLog('debug', 'Node has ping capability for keepalive');
+            } else {
+              addServerLog('debug', 'Node lacks ping capability - will rely on relay reconnection for connectivity');
             }
           }
           
