@@ -125,14 +125,28 @@ async function checkRelayConnectivity(
       if (disconnectedRelays.length > 0) {
         addServerLog('warning', `Found ${disconnectedRelays.length} disconnected relay(s), attempting reconnection`);
         
+        // Check if it's been too long since real activity (not just keepalive)
+        const timeSinceRealActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+        const tooLongWithoutActivity = timeSinceRealActivity > 300000; // 5 minutes
+        
+        if (tooLongWithoutActivity) {
+          // If no real activity for 5+ minutes AND relays are disconnecting, recreate node
+          addServerLog('warning', `No real activity for ${Math.round(timeSinceRealActivity / 60000)} minutes and relays disconnected`);
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeRecreateCallback) {
+            addServerLog('info', 'Recreating node due to prolonged inactivity with relay issues');
+            await nodeRecreateCallback();
+            return false;
+          }
+        }
+        
         for (const url of disconnectedRelays) {
           try {
             // Use ensureRelay to reconnect
             if (typeof pool.ensureRelay === 'function') {
               await pool.ensureRelay(url, { connectionTimeout: 10000 });
               addServerLog('info', `Reconnected to relay: ${url}`);
-              // Update activity since we successfully reconnected
-              updateNodeActivity(addServerLog, true);
             }
           } catch (reconnectError) {
             addServerLog('error', `Failed to reconnect to ${url}`, reconnectError);
@@ -156,6 +170,10 @@ async function checkRelayConnectivity(
           }
           
           return false;
+        } else {
+          // Successfully reconnected but don't update activity here
+          // Only real events should update activity
+          nodeHealth.consecutiveConnectivityFailures = 0;
         }
       }
     }
@@ -163,6 +181,16 @@ async function checkRelayConnectivity(
     // Check if we've been idle too long
     const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
     const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
+    
+    // If no real activity for 10 minutes, recreate node regardless of connection status
+    // This handles cases where subscriptions are lost but connections appear OK
+    if (timeSinceLastActivity > 600000) { // 10 minutes
+      addServerLog('warning', `No real activity for ${Math.round(timeSinceLastActivity / 60000)} minutes, recreating node`);
+      if (nodeRecreateCallback) {
+        await nodeRecreateCallback();
+        return false;
+      }
+    }
     
     // If we're idle AND connected, send a keepalive ping (if available)
     if (isIdle) {
@@ -175,8 +203,7 @@ async function checkRelayConnectivity(
           const connectionStatuses = pool.listConnectionStatus();
           const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
           if (hasConnectedRelays) {
-            // Update activity since we verified connectivity
-            updateNodeActivity(addServerLog, true);
+            // Don't update activity here - only real events should update it
             nodeHealth.isConnected = true;
             nodeHealth.consecutiveConnectivityFailures = 0;
             return true;
@@ -205,8 +232,7 @@ async function checkRelayConnectivity(
             const connectionStatuses = pool.listConnectionStatus();
             const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
             if (hasConnectedRelays) {
-              // Update activity since we verified connectivity
-              updateNodeActivity(addServerLog, true);
+              // Don't update activity here - only real events should update it
               nodeHealth.isConnected = true;
               nodeHealth.consecutiveConnectivityFailures = 0;
               return true;
