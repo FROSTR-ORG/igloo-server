@@ -120,6 +120,8 @@ async function checkRelayConnectivity(
             if (typeof pool.ensureRelay === 'function') {
               await pool.ensureRelay(url, { connectionTimeout: 10000 });
               addServerLog('info', `Reconnected to relay: ${url}`);
+              // Update activity since we successfully reconnected
+              updateNodeActivity(addServerLog, true);
             }
           } catch (reconnectError) {
             addServerLog('error', `Failed to reconnect to ${url}`, reconnectError);
@@ -162,6 +164,8 @@ async function checkRelayConnectivity(
           const connectionStatuses = pool.listConnectionStatus();
           const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
           if (hasConnectedRelays) {
+            // Update activity since we verified connectivity
+            updateNodeActivity(addServerLog, true);
             nodeHealth.isConnected = true;
             nodeHealth.consecutiveConnectivityFailures = 0;
             return true;
@@ -190,6 +194,8 @@ async function checkRelayConnectivity(
             const connectionStatuses = pool.listConnectionStatus();
             const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
             if (hasConnectedRelays) {
+              // Update activity since we verified connectivity
+              updateNodeActivity(addServerLog, true);
               nodeHealth.isConnected = true;
               nodeHealth.consecutiveConnectivityFailures = 0;
               return true;
