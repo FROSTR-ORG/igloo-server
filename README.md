@@ -277,12 +277,12 @@ GET /api/status
   "relays": ["wss://relay.primal.net", "wss://relay.damus.io"],
   "timestamp": "2025-01-20T12:00:00.000Z",
   "health": {
-    "isHealthy": true,
+    "isConnected": true,
     "lastActivity": "2025-01-20T11:59:30.000Z",
-    "lastHealthCheck": "2025-01-20T12:00:00.000Z",
-    "consecutiveFailures": 0,
-    "restartCount": 0,
-    "timeSinceLastActivity": 30000
+    "lastConnectivityCheck": "2025-01-20T12:00:00.000Z",
+    "consecutiveConnectivityFailures": 0,
+    "timeSinceLastActivity": 30000,
+    "timeSinceLastConnectivityCheck": 5000
   }
 }
 ```
