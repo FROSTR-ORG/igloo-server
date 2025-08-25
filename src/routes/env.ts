@@ -15,84 +15,103 @@ import {
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
 
+// Helper function to execute node operations under lock without poisoning the queue
+async function executeUnderNodeLock<T>(
+  operation: () => Promise<T>,
+  context: PrivilegedRouteContext
+): Promise<T> {
+  // Create a promise for this specific operation
+  const run = nodeUpdateLock.then(operation);
+  
+  // Keep the queue alive even if this run fails
+  nodeUpdateLock = run
+    .catch((error) => {
+      context.addServerLog('error', 'Node operation failed', error);
+      // Don't re-throw here - just log and continue
+    })
+    .then(() => undefined); // Ensure queue always resolves
+  
+  // Return the result of this specific operation (may throw)
+  return run;
+}
+
+// Synchronized node cleanup function
+async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise<void> {
+  return executeUnderNodeLock(async () => {
+    if (context.node) {
+      context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
+      // updateNode(null) will handle all cleanup atomically
+      context.updateNode(null);
+      context.addServerLog('info', 'Bifrost node cleaned up successfully');
+    }
+  }, context);
+}
+
 // Extracted node creation and connection logic with reduced timeout and retries
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
-  // Synchronize node updates to prevent race conditions
-  nodeUpdateLock = nodeUpdateLock
-    .then(async () => {
-      // Note: updateNode will handle cleanup of the old node and its monitoring
-      // We don't call cleanupMonitoring() here to avoid a gap in monitoring
-      if (context.node) {
-        context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
-      }
+  return executeUnderNodeLock(async () => {
+    // Note: updateNode will handle cleanup of the old node and its monitoring
+    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
+    if (context.node) {
+      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
+    }
 
-      // Check if we now have both credentials
-      if (env.SHARE_CRED && env.GROUP_CRED) {
-        // Log handled in createAndConnectServerNode to avoid duplication
-        const nodeRelays = getValidRelays(env.RELAYS);
-        let apiConnectionAttempts = 0;
-        const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
-        let newNode: ServerBifrostNode | null = null;
-        
-        while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
-          apiConnectionAttempts++;
-          try {
-            const result = await createConnectedNode({
-              group: env.GROUP_CRED,
-              share: env.SHARE_CRED,
-              relays: nodeRelays,
-              connectionTimeout: 5000, // 5 seconds for fast API response
-              autoReconnect: true
-            }, {
-              enableLogging: false,
-              logLevel: 'error'
-            });
-            if (result.node) {
-              newNode = result.node as unknown as ServerBifrostNode;
-              context.updateNode(newNode);
-              // updateNode already sets up event listeners and health monitoring
-              context.addServerLog('info', 'Node connected and ready');
-              if (result.state) {
-                context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
-              }
-              break;
-            } else {
-              throw new Error('Enhanced node creation returned no node');
+    // Check if we now have both credentials
+    if (env.SHARE_CRED && env.GROUP_CRED) {
+      // Log handled in createAndConnectServerNode to avoid duplication
+      const nodeRelays = getValidRelays(env.RELAYS);
+      let apiConnectionAttempts = 0;
+      const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
+      let newNode: ServerBifrostNode | null = null;
+      
+      while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
+        apiConnectionAttempts++;
+        try {
+          const result = await createConnectedNode({
+            group: env.GROUP_CRED,
+            share: env.SHARE_CRED,
+            relays: nodeRelays,
+            connectionTimeout: 5000, // 5 seconds for fast API response
+            autoReconnect: true
+          }, {
+            enableLogging: false,
+            logLevel: 'error'
+          });
+          if (result.node) {
+            newNode = result.node as unknown as ServerBifrostNode;
+            context.updateNode(newNode);
+            // updateNode already sets up event listeners and health monitoring
+            context.addServerLog('info', 'Node connected and ready');
+            if (result.state) {
+              context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
             }
-          } catch (enhancedError) {
-            context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
-            const basicNode = await createAndConnectNode({
-              group: env.GROUP_CRED,
-              share: env.SHARE_CRED,
-              relays: nodeRelays
-            });
-            if (basicNode) {
-              newNode = basicNode as unknown as ServerBifrostNode;
-              context.updateNode(newNode);
-              // updateNode already sets up event listeners and health monitoring
-              context.addServerLog('info', 'Node connected and ready (basic mode)');
-            }
+            break;
+          } else {
+            throw new Error('Enhanced node creation returned no node');
+          }
+        } catch (enhancedError) {
+          context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
+          const basicNode = await createAndConnectNode({
+            group: env.GROUP_CRED,
+            share: env.SHARE_CRED,
+            relays: nodeRelays
+          });
+          if (basicNode) {
+            newNode = basicNode as unknown as ServerBifrostNode;
+            context.updateNode(newNode);
+            // updateNode already sets up event listeners and health monitoring
+            context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
         }
-        
-        if (!newNode) {
-          context.addServerLog('error', 'Failed to create node after all attempts');
-        }
-      } else {
-        context.addServerLog('info', 'Insufficient credentials for node creation');
       }
-    })
-    .catch((error) => {
-      // Log the error and prevent poisoning the queue
-      context.addServerLog('error', 'Failed to update node', error);
-      // Reset the lock to a resolved promise to clear the rejection
-      nodeUpdateLock = Promise.resolve();
-      // Re-throw to let caller handle
-      throw error;
-    });
-
-  // Wait for the lock to complete and return the result
-  return nodeUpdateLock;
+      
+      if (!newNode) {
+        context.addServerLog('error', 'Failed to create node after all attempts');
+      }
+    } else {
+      context.addServerLog('info', 'Insufficient credentials for node creation');
+    }
+  }, context);
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
@@ -186,14 +205,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           
           if (await writeEnvFile(env)) {
             // If credentials were deleted, clean up the node
-            if (deletingCredentials && context.node) {
+            if (deletingCredentials) {
               try {
-                context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
-                // updateNode(null) will handle all cleanup atomically
-                context.updateNode(null);
-                context.addServerLog('info', 'Bifrost node cleaned up successfully');
+                // Use synchronized cleanup to prevent race conditions
+                await cleanupNodeSynchronized(context);
               } catch (error) {
-                context.addServerLog('error', 'Error cleaning up Bifrost node', error);
+                // Error already logged by executeUnderNodeLock
                 // Continue anyway - the env vars were deleted
               }
             }
