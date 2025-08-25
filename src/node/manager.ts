@@ -507,7 +507,11 @@ export function createAddServerLog(broadcastEvent: ReturnType<typeof createBroad
     };
     
     // Log to console for server logs
-    console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`, data ? data : '');
+    if (data !== undefined && data !== null && data !== '') {
+      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`, data);
+    } else {
+      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`);
+    }
     
     // Broadcast to connected clients
     broadcastEvent(logEntry);

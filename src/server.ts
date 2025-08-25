@@ -167,9 +167,9 @@ function scheduleRestartWithBackoff(reason: string) {
     RESTART_CONFIG.MAX_RETRY_DELAY
   );
   
-  currentRetryCount++;
+  addServerLog('system', `Scheduling restart in ${Math.round(backoffDelay / 1000)}s (attempt ${currentRetryCount + 1}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
   
-  addServerLog('system', `Scheduling restart in ${Math.round(backoffDelay / 1000)}s (attempt ${currentRetryCount}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
+  currentRetryCount++;
   
   restartTimeout = setTimeout(() => {
     restartNode(`retry: ${reason}`, false);

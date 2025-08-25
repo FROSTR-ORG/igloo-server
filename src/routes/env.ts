@@ -28,7 +28,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
 
       // Check if we now have both credentials
       if (env.SHARE_CRED && env.GROUP_CRED) {
-        context.addServerLog('info', 'Creating and connecting node...');
+        // Log handled in createAndConnectServerNode to avoid duplication
         const nodeRelays = getValidRelays(env.RELAYS);
         let apiConnectionAttempts = 0;
         const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
