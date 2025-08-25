@@ -72,13 +72,14 @@ curl http://localhost:8002/api/status
 
 **Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
 
-### Connectivity Monitoring
+### Connectivity Monitoring & Idle Handling
 
-- **Active keepalive**: Sends pings to peers when idle > 45 seconds to maintain relay connections
-- **Simple monitoring**: Single 60-second check interval, no complex health tracking
+- **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds to prevent false unhealthy detection
+- **Simple monitoring**: Single 60-second check interval for relay connectivity
 - **Auto-recovery**: Recreates node after 3 consecutive connectivity failures
+- **Null node handling**: Treats null nodes as failures to ensure recovery mechanisms activate
 - **Self-ping detection**: Filters any self-pings from logs by comparing normalized pubkeys
-- **Production-ready**: Minimal overhead, clear logging
+- **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
 
@@ -128,6 +129,8 @@ curl http://localhost:8002/api/status
    - All Bifrost events update `lastActivity` timestamp
    - Self-pings filtered from logs via pubkey comparison
    - Peer status tracked independently from health monitoring
+   - Null node states properly trigger failure counting and recovery
+   - Connectivity monitoring continues even with null nodes to enable recovery
 
 ## Dependencies
 

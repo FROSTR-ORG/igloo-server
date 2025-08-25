@@ -99,14 +99,14 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 
 ### 🔍 **Health Monitoring**
 - **Activity Tracking**: Every bifrost message, event, and connection update updates a `lastActivity` timestamp
-- **Keepalive System**: Simple timestamp-based keepalive that runs every 30 seconds to prevent false unhealthy detection
-- **Periodic Health Checks**: System checks node health every 30 seconds
+- **Idle Keepalive**: Updates activity timestamp locally when idle > 45 seconds to maintain healthy status
+- **Connectivity Checks**: Tests relay connections every 60 seconds to detect silent failures
 - **Real-time Status**: Health information available via `/api/status` endpoint
 
 ### ⚡ **Auto-Restart System** 
-- **Unhealthy Detection**: Node is considered unhealthy if no activity for 2 minutes
-- **Watchdog Timer**: Automatic restart triggered if no activity for 5 minutes
-- **Progressive Retry**: Uses exponential backoff for connection attempts
+- **Failure Detection**: Node recreated after 3 consecutive connectivity check failures
+- **Null Node Recovery**: Even null/failed nodes trigger proper recovery mechanisms
+- **Progressive Retry**: Uses exponential backoff for restart attempts
 - **Graceful Recovery**: Maintains peer status and connection state through restarts
 
 ### 📊 **Health Metrics**
@@ -117,11 +117,11 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 - **Time Since Activity**: Milliseconds since last activity
 
 ### 🛡️ **Connection Resilience**
-- **Extended Timeouts**: Increased connection timeout to 30 seconds
-- **More Retries**: Up to 5 connection attempts with exponential backoff
-- **Enhanced Event Listening**: Comprehensive coverage of all node state changes
-- **Silent Failure Recovery**: Detects and recovers from unresponsive nodes
-- **Simplified Keepalive**: Updates activity timestamps locally without network operations when idle for over 90 seconds
+- **Connectivity Monitoring**: Checks relay connections every 60 seconds
+- **Idle Handling**: Local timestamp updates when idle > 45 seconds prevent false failures
+- **Null Node Handling**: Properly recovers even when node is null or undefined
+- **Auto-Recovery**: Recreates node after detecting persistent connectivity issues
+- **Clean Logging**: Filters self-pings and reduces log noise for production
 
 This system addresses common issues with long-running deployments where nodes may silently stop responding after extended periods, ensuring your signing node remains operational and responsive.
 

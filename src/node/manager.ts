@@ -76,19 +76,17 @@ async function checkRelayConnectivity(
   node: ServerBifrostNode | null,
   addServerLog: ReturnType<typeof createAddServerLog>
 ): Promise<boolean> {
-  if (!node) return false;
-  
   const now = new Date();
   nodeHealth.lastConnectivityCheck = now;
   
   try {
     // Validate node before accessing its properties
     if (node === null || typeof node !== 'object') {
-      addServerLog('warning', 'Invalid node reference, will recreate on next check', { nodeType: typeof node });
+      addServerLog('warning', 'Node is null or invalid, marking as failure', { nodeType: node === null ? 'null' : typeof node });
       nodeHealth.isConnected = false;
       nodeHealth.consecutiveConnectivityFailures++;
       if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-        addServerLog('info', 'Recreating node after 3 failed checks');
+        addServerLog('info', 'Recreating node after 3 failed checks due to null/invalid node');
         await nodeRecreateCallback();
       }
       return false;
@@ -337,12 +335,17 @@ function startConnectivityMonitoring(
 ) {
   stopConnectivityMonitoring();
   
-  if (!node) return;
-
-  // Store recreation callback
+  // Store recreation callback even if node is null - we may need it for recovery
   nodeRecreateCallback = recreateNodeFn;
-
-  addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings');
+  
+  if (!node) {
+    addServerLog('warning', 'Starting connectivity monitoring with null node - will attempt recovery');
+    // Mark as unhealthy to trigger recovery
+    nodeHealth.isConnected = false;
+    nodeHealth.consecutiveConnectivityFailures = 1;
+  } else {
+    addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings');
+  }
 
   // Active connectivity monitoring - test relay connections periodically
   // This runs every 60 seconds to maintain relay connections
@@ -359,9 +362,13 @@ function startConnectivityMonitoring(
       // Reduced logging for better signal-to-noise ratio
       if (!isConnected && nodeHealth.consecutiveConnectivityFailures === 1) {
         // Only log first failure if it's not just missing ping capability
-        const client = (node as any)._client || (node as any).client;
-        if (client) {
-          addServerLog('info', 'Connectivity check failed, will retry');
+        if (node) {
+          const client = (node as any)._client || (node as any).client;
+          if (client) {
+            addServerLog('info', 'Connectivity check failed, will retry');
+          }
+        } else {
+          addServerLog('info', 'Connectivity check failed (node is null), will retry');
         }
       } else if (isConnected && nodeHealth.consecutiveConnectivityFailures === 0) {
         // Log every 10 successful checks (10 minutes)
@@ -385,13 +392,15 @@ function startConnectivityMonitoring(
     }
   }, CONNECTIVITY_CHECK_INTERVAL);
 
-  // Reset health state for new node
-  nodeHealth = {
-    lastActivity: new Date(),
-    lastConnectivityCheck: new Date(),
-    isConnected: true,
-    consecutiveConnectivityFailures: 0
-  };
+  // Reset health state for new node (only if node is valid)
+  if (node) {
+    nodeHealth = {
+      lastActivity: new Date(),
+      lastConnectivityCheck: new Date(),
+      isConnected: true,
+      consecutiveConnectivityFailures: 0
+    };
+  }
 }
 
 // Stop connectivity monitoring
@@ -409,6 +418,12 @@ function setupConnectionMonitoring(
   node: any,
   addServerLog: ReturnType<typeof createAddServerLog>
 ) {
+  // Guard against null node
+  if (!node) {
+    addServerLog('debug', 'Skipping connection monitoring setup - node is null');
+    return;
+  }
+  
   // Monitor relay connections if available
   if (node.relays && Array.isArray(node.relays)) {
     node.relays.forEach((relay: any, index: number) => {
