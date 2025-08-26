@@ -74,7 +74,7 @@ let node: ServerBifrostNode | null = null;
 // Node restart state management
 let isRestartInProgress = false;
 let currentRetryCount = 0;
-let restartTimeout: Timer | null = null;
+let restartTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Node restart logic with concurrency control and exponential backoff
 async function restartNode(reason: string = 'health check failure', forceRestart: boolean = false) {
@@ -158,6 +158,12 @@ function scheduleRestartWithBackoff(reason: string) {
     addServerLog('error', `Max restart attempts (${RESTART_CONFIG.MAX_RETRY_ATTEMPTS}) exceeded. Node restart abandoned.`);
     currentRetryCount = 0;
     return;
+  }
+  
+  // Prevent duplicate scheduled restarts
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
   }
   
   // Calculate delay with exponential backoff
