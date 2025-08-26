@@ -12,7 +12,7 @@ import {
   createAddServerLog, 
   setupNodeEventListeners, 
   createNodeWithCredentials,
-  cleanupHealthMonitoring,
+  cleanupMonitoring,
   resetHealthMonitoring
 } from './node/manager.js';
 
@@ -74,7 +74,7 @@ let node: ServerBifrostNode | null = null;
 // Node restart state management
 let isRestartInProgress = false;
 let currentRetryCount = 0;
-let restartTimeout: Timer | null = null;
+let restartTimeout: ReturnType<typeof setTimeout> | null = null;
 
 // Node restart logic with concurrency control and exponential backoff
 async function restartNode(reason: string = 'health check failure', forceRestart: boolean = false) {
@@ -104,7 +104,7 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     }
     
     // Clean up health monitoring
-    cleanupHealthMonitoring();
+    cleanupMonitoring();
     
     // Reset health monitoring state for fresh start
     resetHealthMonitoring();
@@ -160,6 +160,12 @@ function scheduleRestartWithBackoff(reason: string) {
     return;
   }
   
+  // Prevent duplicate scheduled restarts
+  if (restartTimeout) {
+    clearTimeout(restartTimeout);
+    restartTimeout = null;
+  }
+  
   // Calculate delay with exponential backoff
   const baseDelay = RESTART_CONFIG.INITIAL_RETRY_DELAY;
   const backoffDelay = Math.min(
@@ -167,9 +173,9 @@ function scheduleRestartWithBackoff(reason: string) {
     RESTART_CONFIG.MAX_RETRY_DELAY
   );
   
-  currentRetryCount++;
+  addServerLog('system', `Scheduling restart in ${Math.round(backoffDelay / 1000)}s (attempt ${currentRetryCount + 1}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
   
-  addServerLog('system', `Scheduling restart in ${Math.round(backoffDelay / 1000)}s (attempt ${currentRetryCount}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
+  currentRetryCount++;
   
   restartTimeout = setTimeout(() => {
     restartNode(`retry: ${reason}`, false);
@@ -213,7 +219,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   }
   
   // Clean up health monitoring
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   
   // Reset health monitoring state for fresh start
   resetHealthMonitoring();
@@ -417,7 +423,7 @@ process.on('SIGTERM', () => {
     restartTimeout = null;
   }
   
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   process.exit(0);
 });
 
@@ -430,6 +436,6 @@ process.on('SIGINT', () => {
     restartTimeout = null;
   }
   
-  cleanupHealthMonitoring();
+  cleanupMonitoring();
   process.exit(0);
 });

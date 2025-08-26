@@ -30,212 +30,387 @@ const EVENT_MAPPINGS = {
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
 
-// Health monitoring constants with validation
-const parseHealthConstants = () => {
-  const maxHealthRestarts = parseInt(process.env.NODE_HEALTH_MAX_RESTARTS || '3');
-  const restartBackoffBase = parseInt(process.env.NODE_HEALTH_RESTART_DELAY || '60000');
-  const restartBackoffMultiplier = parseFloat(process.env.NODE_HEALTH_BACKOFF_MULTIPLIER || '2');
+// Simplified monitoring constants
+const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
+const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
+const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
 
-  // Validation with safe defaults
-  const validatedConstants = {
-    HEALTH_CHECK_INTERVAL: 30000, // Fixed at 30 seconds
-    NODE_ACTIVITY_TIMEOUT: 120000, // Fixed at 2 minutes
-    WATCHDOG_TIMEOUT: 300000, // Fixed at 5 minutes
-    MAX_HEALTH_RESTARTS: (maxHealthRestarts > 0 && maxHealthRestarts <= 50) ? maxHealthRestarts : 3, // 1 to 50 restarts max
-    RESTART_BACKOFF_BASE: (restartBackoffBase > 0 && restartBackoffBase <= 3600000) ? restartBackoffBase : 60000, // 1ms to 1 hour max
-    RESTART_BACKOFF_MULTIPLIER: (restartBackoffMultiplier >= 1.0 && restartBackoffMultiplier <= 10) ? restartBackoffMultiplier : 2, // 1.0 to 10x multiplier
-    RESTART_COUNT_RESET_TIMEOUT: 600000, // Fixed at 10 minutes
-  };
-
-  // Log validation warnings if defaults were used
-  if (maxHealthRestarts !== validatedConstants.MAX_HEALTH_RESTARTS) {
-    console.warn(`Invalid NODE_HEALTH_MAX_RESTARTS: ${maxHealthRestarts}. Using default: ${validatedConstants.MAX_HEALTH_RESTARTS}`);
-  }
-  if (restartBackoffBase !== validatedConstants.RESTART_BACKOFF_BASE) {
-    console.warn(`Invalid NODE_HEALTH_RESTART_DELAY: ${restartBackoffBase}. Using default: ${validatedConstants.RESTART_BACKOFF_BASE}ms`);
-  }
-  if (restartBackoffMultiplier !== validatedConstants.RESTART_BACKOFF_MULTIPLIER) {
-    console.warn(`Invalid NODE_HEALTH_BACKOFF_MULTIPLIER: ${restartBackoffMultiplier}. Using default: ${validatedConstants.RESTART_BACKOFF_MULTIPLIER}`);
-  }
-
-  return validatedConstants;
-};
-
-const {
-  HEALTH_CHECK_INTERVAL,
-  NODE_ACTIVITY_TIMEOUT,
-  WATCHDOG_TIMEOUT,
-  MAX_HEALTH_RESTARTS,
-  RESTART_BACKOFF_BASE,
-  RESTART_BACKOFF_MULTIPLIER,
-  RESTART_COUNT_RESET_TIMEOUT
-} = parseHealthConstants();
-
-// Health monitoring state
+// Simplified monitoring state
 interface NodeHealth {
   lastActivity: Date;
-  lastHealthCheck: Date;
-  isHealthy: boolean;
-  consecutiveFailures: number;
-  restartCount: number;
-  lastHealthyPeriodStart: Date | null;
-  restartScheduled: boolean;
+  lastConnectivityCheck: Date;
+  isConnected: boolean;
+  consecutiveConnectivityFailures: number;
 }
 
 let nodeHealth: NodeHealth = {
   lastActivity: new Date(),
-  lastHealthCheck: new Date(),
-  isHealthy: true,
-  consecutiveFailures: 0,
-  restartCount: 0,
-  lastHealthyPeriodStart: new Date(),
-  restartScheduled: false
+  lastConnectivityCheck: new Date(),
+  isConnected: true,
+  consecutiveConnectivityFailures: 0
 };
 
-let healthCheckInterval: NodeJS.Timeout | null = null;
-let watchdogTimer: NodeJS.Timeout | null = null;
-let heartbeatInterval: NodeJS.Timeout | null = null;
+let connectivityCheckInterval: ReturnType<typeof setInterval> | null = null;
+let connectivityCheckInFlight = false;
+let nodeRecreateCallback: (() => Promise<void>) | null = null;
 
 // Helper function to update node activity
-function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isHeartbeat: boolean = false) {
+function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isKeepalive: boolean = false) {
   const now = new Date();
   nodeHealth.lastActivity = now;
   
-  // Only log health restoration for real activity, not heartbeats
-  if (!nodeHealth.isHealthy && !isHeartbeat) {
-    nodeHealth.isHealthy = true;
-    nodeHealth.consecutiveFailures = 0;
-    nodeHealth.lastHealthyPeriodStart = now;
-    addServerLog('system', 'Node health restored - activity detected');
-  } else if (!nodeHealth.isHealthy && isHeartbeat) {
-    // Silently restore health on heartbeat
-    nodeHealth.isHealthy = true;
-    nodeHealth.consecutiveFailures = 0;
-    nodeHealth.lastHealthyPeriodStart = now;
+  // Reset connectivity failures on real activity (not keepalive)
+  if (!isKeepalive && nodeHealth.consecutiveConnectivityFailures > 0) {
+    nodeHealth.consecutiveConnectivityFailures = 0;
+    nodeHealth.isConnected = true;
+    addServerLog('info', 'Node activity detected - connectivity restored');
+  } else if (!isKeepalive && !nodeHealth.isConnected) {
+    // Only log if we were previously disconnected
+    nodeHealth.isConnected = true;
+    addServerLog('info', 'Node activity detected - connection active');
   }
 }
 
-// Helper function to check node health
-function checkNodeHealth(
+// Helper function to check and maintain relay connectivity
+async function checkRelayConnectivity(
   node: ServerBifrostNode | null,
-  addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
-) {
-  if (!node) return;
-
+  addServerLog: ReturnType<typeof createAddServerLog>
+): Promise<boolean> {
   const now = new Date();
-  const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+  nodeHealth.lastConnectivityCheck = now;
   
-  nodeHealth.lastHealthCheck = now;
-
-  // Check if we should reset restart count after sustained healthy period
-  if (nodeHealth.isHealthy && nodeHealth.lastHealthyPeriodStart && nodeHealth.restartCount > 0) {
-    const healthyPeriod = now.getTime() - nodeHealth.lastHealthyPeriodStart.getTime();
-    if (healthyPeriod > RESTART_COUNT_RESET_TIMEOUT) {
-      const previousRestartCount = nodeHealth.restartCount;
-      nodeHealth.restartCount = 0;
-      addServerLog('system', `Restart count reset from ${previousRestartCount} to 0 after ${Math.round(healthyPeriod / 60000)} minutes of healthy operation`);
+  try {
+    // Validate node before accessing its properties
+    if (node === null || typeof node !== 'object') {
+      addServerLog('warning', 'Node is null or invalid, marking as failure', { nodeType: node === null ? 'null' : typeof node });
+      nodeHealth.isConnected = false;
+      nodeHealth.consecutiveConnectivityFailures++;
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Recreating node after 3 failed checks due to null/invalid node');
+        await nodeRecreateCallback();
+      }
+      return false;
     }
-  }
-
-  if (timeSinceLastActivity > NODE_ACTIVITY_TIMEOUT) {
-    nodeHealth.consecutiveFailures++;
+    // First check if the node client itself exists
+    const client = (node as any)._client || (node as any).client;
+    if (!client) {
+      addServerLog('warning', 'Node client not available, will recreate on next check');
+      nodeHealth.isConnected = false; // Explicitly mark as disconnected
+      nodeHealth.consecutiveConnectivityFailures++;
+      
+      // Trigger node recreation if client is missing for too long
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Recreating node after 3 failed checks');
+        await nodeRecreateCallback();
+      }
+      return false;
+    }
     
-    if (nodeHealth.isHealthy) {
-      nodeHealth.isHealthy = false;
-      addServerLog('warning', `Node appears unhealthy - no activity for ${timeSinceLastActivity}ms`);
-    }
-
-    // If node has been unhealthy for too long, trigger restart
-    if (timeSinceLastActivity > WATCHDOG_TIMEOUT) {
-      // Check if we've exceeded the maximum number of health-based restarts
-      if (nodeHealth.restartCount >= MAX_HEALTH_RESTARTS) {
-        addServerLog('error', `Maximum health-based restarts (${MAX_HEALTH_RESTARTS}) exceeded. Stopping health monitoring to prevent infinite loops.`);
-        stopHealthMonitoring();
-        return;
+    // CRITICAL: Check if SimplePool connections are actually alive
+    // SimplePool doesn't auto-reconnect, so we need to manually check and reconnect
+    const pool = client._pool || client.pool;
+    if (pool && typeof pool.listConnectionStatus === 'function') {
+      const connectionStatuses = pool.listConnectionStatus();
+      let disconnectedRelays = [];
+      
+      for (const [url, isConnected] of connectionStatuses) {
+        if (!isConnected) {
+          disconnectedRelays.push(url);
+        }
       }
       
-      // Check if restart is already scheduled
-      if (nodeHealth.restartScheduled) {
-        return; // Skip scheduling if restart already pending
+      // If we have disconnected relays, try to reconnect them
+      if (disconnectedRelays.length > 0) {
+        addServerLog('warning', `Found ${disconnectedRelays.length} disconnected relay(s), attempting reconnection`);
+        
+        // Check if it's been too long since real activity (not just keepalive)
+        const timeSinceRealActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+        const tooLongWithoutActivity = timeSinceRealActivity > 300000; // 5 minutes
+        
+        if (tooLongWithoutActivity) {
+          // If no real activity for 5+ minutes AND relays are disconnecting, recreate node
+          addServerLog('warning', `No real activity for ${Math.round(timeSinceRealActivity / 60000)} minutes and relays disconnected`);
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeRecreateCallback) {
+            addServerLog('info', 'Recreating node due to prolonged inactivity with relay issues');
+            await nodeRecreateCallback();
+            return false;
+          }
+        }
+        
+        for (const url of disconnectedRelays) {
+          try {
+            // Use ensureRelay to reconnect
+            if (typeof pool.ensureRelay === 'function') {
+              await pool.ensureRelay(url, { connectionTimeout: 10000 });
+              addServerLog('info', `Reconnected to relay: ${url}`);
+            }
+          } catch (reconnectError) {
+            addServerLog('error', `Failed to reconnect to ${url}`, reconnectError);
+          }
+        }
+        
+        // Check again after reconnection attempts
+        const newStatuses = pool.listConnectionStatus();
+        let stillDisconnected = 0;
+        for (const [_, connected] of newStatuses) {
+          if (!connected) stillDisconnected++;
+        }
+        
+        if (stillDisconnected > 0) {
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('error', 'Unable to reconnect to relays after 3 attempts, recreating node');
+            await nodeRecreateCallback();
+            return false;
+          }
+          
+          return false;
+        } else {
+          // Successfully reconnected but don't update activity here
+          // Only real events should update activity
+          nodeHealth.consecutiveConnectivityFailures = 0;
+        }
+      }
+    }
+    
+    // Check if we've been idle too long
+    const timeSinceLastActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+    const isIdle = timeSinceLastActivity > IDLE_THRESHOLD;
+    
+    // If no real activity for 10 minutes, recreate node regardless of connection status
+    // This handles cases where subscriptions are lost but connections appear OK
+    if (timeSinceLastActivity > 600000) { // 10 minutes
+      addServerLog('warning', `No real activity for ${Math.round(timeSinceLastActivity / 60000)} minutes, recreating node`);
+      if (nodeRecreateCallback) {
+        await nodeRecreateCallback();
+        return false;
+      }
+    }
+    
+    // If we're idle AND connected, send a keepalive ping (if available)
+    if (isIdle) {
+      // Check if ping function exists
+      if (typeof (node as any).ping !== 'function') {
+        // No ping capability - this is not a critical failure
+        // The relay reconnection logic above is sufficient for maintaining connectivity
+        // Check if we have any connected relays from the pool check above
+        if (pool && typeof pool.listConnectionStatus === 'function') {
+          const connectionStatuses = pool.listConnectionStatus();
+          const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
+          if (hasConnectedRelays) {
+            // Don't update activity here - only real events should update it
+            nodeHealth.isConnected = true;
+            nodeHealth.consecutiveConnectivityFailures = 0;
+            return true;
+          }
+        }
+        // No connected relays and no ping capability
+        nodeHealth.isConnected = false;
+        nodeHealth.consecutiveConnectivityFailures++;
+        
+        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+          addServerLog('info', 'No connected relays and no ping capability, recreating node');
+          await nodeRecreateCallback();
+        }
+        return false;
       }
       
-      // Calculate exponential backoff delay
-      const backoffDelay = RESTART_BACKOFF_BASE * Math.pow(RESTART_BACKOFF_MULTIPLIER, nodeHealth.restartCount);
-      
-      addServerLog('error', `Node watchdog timeout - scheduling restart ${nodeHealth.restartCount + 1}/${MAX_HEALTH_RESTARTS} with ${Math.round(backoffDelay / 1000)}s delay`);
-      
-      // Increment restart count
-      nodeHealth.restartCount++;
-      nodeHealth.restartScheduled = true; // Set flag to prevent overlapping restarts
-      
-      // Schedule restart with exponential backoff
-      setTimeout(() => {
-        addServerLog('system', `Executing delayed restart (attempt ${nodeHealth.restartCount})`);
-        nodeHealth.restartScheduled = false; // Reset flag
-        onNodeUnhealthy();
-      }, backoffDelay);
+      try {
+        // Get list of peer pubkeys from the node
+        const peers = (node as any)._peers || (node as any).peers || [];
+        
+        if (peers.length === 0) {
+          // No peers available - not critical if relays are connected
+          addServerLog('debug', 'No peers available for keepalive ping, relying on relay connections');
+          // Check relay connections again
+          if (pool && typeof pool.listConnectionStatus === 'function') {
+            const connectionStatuses = pool.listConnectionStatus();
+            const hasConnectedRelays = Array.from(connectionStatuses.values()).some(connected => connected);
+            if (hasConnectedRelays) {
+              // Don't update activity here - only real events should update it
+              nodeHealth.isConnected = true;
+              nodeHealth.consecutiveConnectivityFailures = 0;
+              return true;
+            }
+          }
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('info', 'No peers and no connected relays, recreating node');
+            await nodeRecreateCallback();
+          }
+          return false;
+        }
+        
+        // Send a ping to the first available peer
+        const targetPeer = peers[0];
+        const peerPubkey = targetPeer.pubkey || targetPeer;
+        
+        // Create a timeout promise using shared constant
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Ping timeout')), CONNECTIVITY_PING_TIMEOUT)
+        );
+        
+        // Race between ping and timeout
+        const pingResult = await Promise.race([
+          (node as any).ping(peerPubkey),
+          timeoutPromise
+        ]).catch(err => ({ ok: false, err: err.message || 'ping failed' }));
+        
+        if (pingResult && pingResult.ok) {
+          // Ping succeeded - connection is good!
+          updateNodeActivity(addServerLog, true);
+          nodeHealth.isConnected = true;
+          nodeHealth.consecutiveConnectivityFailures = 0;
+          return true;
+        } else {
+          // Ping failed - always mark as disconnected and increment failures
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          
+          // Safely convert error to string for checking
+          const errorStr = String(pingResult?.err || 'unknown').toLowerCase();
+          
+          // Log appropriate message based on error type
+          if (errorStr.includes('timeout')) {
+            addServerLog('warning', `Keepalive ping timed out after ${CONNECTIVITY_PING_TIMEOUT}ms`);
+          } else if (errorStr.includes('closed') || errorStr.includes('disconnect')) {
+            addServerLog('warning', `Ping failed with connection error: ${errorStr}`);
+          } else {
+            addServerLog('warning', `Ping failed: ${errorStr}`);
+          }
+          
+          // Recreate after 3 failures
+          if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+            addServerLog('info', 'Persistent ping failures, recreating node');
+            await nodeRecreateCallback();
+          }
+          return false;
+        }
+      } catch (pingError: any) {
+        // Any exception is a failure - mark as disconnected
+        nodeHealth.isConnected = false;
+        nodeHealth.consecutiveConnectivityFailures++;
+        
+        // Safely convert error to string
+        const errorStr = String(pingError?.message || pingError || 'unknown error').toLowerCase();
+        addServerLog('warning', `Keepalive ping error: ${errorStr}`);
+        
+        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+          addServerLog('info', 'Ping errors exceeded threshold, recreating node');
+          await nodeRecreateCallback();
+        }
+        return false;
+      }
     }
+    
+    // Everything looks good
+    nodeHealth.isConnected = true;
+    nodeHealth.consecutiveConnectivityFailures = 0;
+    return true;
+    
+  } catch (error) {
+    addServerLog('error', 'Connectivity check error', error);
+    nodeHealth.consecutiveConnectivityFailures++;
+    
+    // Simple recreation after repeated failures
+    if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+      addServerLog('info', 'Connectivity errors exceeded threshold, recreating node');
+      await nodeRecreateCallback();
+    }
+    return false;
   }
 }
 
-// Start health monitoring
-function startHealthMonitoring(
+
+// Start simplified connectivity monitoring
+function startConnectivityMonitoring(
   node: ServerBifrostNode | null,
   addServerLog: ReturnType<typeof createAddServerLog>,
-  onNodeUnhealthy: () => void
+  recreateNodeFn: () => Promise<void>
 ) {
-  stopHealthMonitoring();
+  stopConnectivityMonitoring();
   
-  if (!node) return;
-
-  addServerLog('system', 'Starting node health monitoring');
+  // Store recreation callback even if node is null - we may need it for recovery
+  nodeRecreateCallback = recreateNodeFn;
   
-  healthCheckInterval = setInterval(() => {
-    checkNodeHealth(node, addServerLog, onNodeUnhealthy);
-  }, HEALTH_CHECK_INTERVAL);
+  if (!node) {
+    addServerLog('warning', 'Starting connectivity monitoring with null node - will attempt recovery');
+    // Mark as unhealthy to trigger recovery
+    nodeHealth.isConnected = false;
+    nodeHealth.consecutiveConnectivityFailures = 1;
+  } else {
+    addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings');
+  }
 
-  // Simplified keepalive - just update activity timestamp when idle
-  // Since peers are pinging us regularly, we don't need to self-ping
-  heartbeatInterval = setInterval(() => {
-    const now = new Date();
-    const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
-    
-    // If we've been idle for more than 90 seconds, update activity
-    // This prevents false unhealthy detection when peers aren't pinging
-    if (timeSinceActivity > 90000) {
-      // Just update the timestamp - no network operations needed
-      // This prevents the watchdog from incorrectly restarting the node
-      updateNodeActivity(addServerLog, true);
+  // Active connectivity monitoring - test relay connections periodically
+  // This runs every 60 seconds to maintain relay connections
+  connectivityCheckInterval = setInterval(async () => {
+    // Prevent overlapping checks
+    if (connectivityCheckInFlight) {
+      return;
     }
-  }, 30000); // Check every 30 seconds
+    connectivityCheckInFlight = true;
+    
+    try {
+      const isConnected = await checkRelayConnectivity(node, addServerLog);
+      
+      // Reduced logging for better signal-to-noise ratio
+      if (!isConnected && nodeHealth.consecutiveConnectivityFailures === 1) {
+        // Only log first failure if it's not just missing ping capability
+        if (node) {
+          const client = (node as any)._client || (node as any).client;
+          if (client) {
+            addServerLog('info', 'Connectivity check failed, will retry');
+          }
+        } else {
+          addServerLog('info', 'Connectivity check failed (node is null), will retry');
+        }
+      } else if (isConnected && nodeHealth.consecutiveConnectivityFailures === 0) {
+        // Log every 10 successful checks (10 minutes)
+        const timeSinceStart = Date.now() - nodeHealth.lastConnectivityCheck.getTime();
+        const checkCount = Math.floor(timeSinceStart / CONNECTIVITY_CHECK_INTERVAL);
+        if (checkCount % 10 === 0 && checkCount > 0) {
+          addServerLog('debug', `Connectivity maintained for ${Math.round(timeSinceStart / 60000)} minutes`);
+        }
+      }
+    } catch (error) {
+      addServerLog('error', 'Connectivity check error', error);
+      nodeHealth.consecutiveConnectivityFailures++;
+      
+      // Simple recreation after 3 failures
+      if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+        addServerLog('info', 'Too many connectivity failures, recreating node');
+        await nodeRecreateCallback();
+      }
+    } finally {
+      connectivityCheckInFlight = false;
+    }
+  }, CONNECTIVITY_CHECK_INTERVAL);
 
-  // Reset health state for new node
-  nodeHealth = {
-    lastActivity: new Date(),
-    lastHealthCheck: new Date(),
-    isHealthy: true,
-    consecutiveFailures: 0,
-    restartCount: nodeHealth.restartCount, // Preserve restart count
-    lastHealthyPeriodStart: new Date(),
-    restartScheduled: false
-  };
+  // Reset health state for new node (only if node is valid)
+  if (node) {
+    nodeHealth = {
+      lastActivity: new Date(),
+      lastConnectivityCheck: new Date(),
+      isConnected: true,
+      consecutiveConnectivityFailures: 0
+    };
+  }
 }
 
-// Stop health monitoring
-function stopHealthMonitoring() {
-  if (healthCheckInterval) {
-    clearInterval(healthCheckInterval);
-    healthCheckInterval = null;
+// Stop connectivity monitoring
+function stopConnectivityMonitoring() {
+  if (connectivityCheckInterval) {
+    clearInterval(connectivityCheckInterval);
+    connectivityCheckInterval = null;
   }
-  if (watchdogTimer) {
-    clearTimeout(watchdogTimer);
-    watchdogTimer = null;
-  }
-  if (heartbeatInterval) {
-    clearInterval(heartbeatInterval);
-    heartbeatInterval = null;
-  }
+  connectivityCheckInFlight = false;
+  nodeRecreateCallback = null;
 }
 
 // Enhanced connection monitoring
@@ -243,6 +418,12 @@ function setupConnectionMonitoring(
   node: any,
   addServerLog: ReturnType<typeof createAddServerLog>
 ) {
+  // Guard against null node
+  if (!node) {
+    addServerLog('debug', 'Skipping connection monitoring setup - node is null');
+    return;
+  }
+  
   // Monitor relay connections if available
   if (node.relays && Array.isArray(node.relays)) {
     node.relays.forEach((relay: any, index: number) => {
@@ -341,11 +522,65 @@ export function createAddServerLog(broadcastEvent: ReturnType<typeof createBroad
     };
     
     // Log to console for server logs
-    console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`, data ? data : '');
+    if (data !== undefined && data !== null && data !== '') {
+      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`, data);
+    } else {
+      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`);
+    }
     
     // Broadcast to connected clients
     broadcastEvent(logEntry);
   };
+}
+
+/**
+ * Determine if a ping message is a self-ping based on credentials and message content.
+ * Safely extracts our pubkey from credentials, normalizes it, and compares it against
+ * the pubkey found in the message data (env.pubkey or data.from). Returns false on any error.
+ */
+function isSelfPing(messageData: any, groupCred?: string, shareCred?: string): boolean {
+  try {
+    if (!groupCred || !shareCred) return false;
+    const result = extractSelfPubkeyFromCredentials(groupCred, shareCred);
+    const selfPubkey = result?.pubkey;
+    if (!selfPubkey) return false;
+    const normalizedSelf = normalizePubkey(selfPubkey);
+
+    let fromPubkey: string | undefined;
+
+    if (
+      messageData &&
+      typeof messageData === 'object' &&
+      'env' in messageData &&
+      messageData.env !== null &&
+      typeof (messageData as any).env === 'object'
+    ) {
+      const env = (messageData as any).env as any;
+      if ('pubkey' in env && typeof env.pubkey === 'string') {
+        fromPubkey = env.pubkey;
+      }
+    }
+
+    if (
+      !fromPubkey &&
+      messageData &&
+      typeof messageData === 'object' &&
+      'data' in messageData &&
+      (messageData as any).data !== null &&
+      typeof (messageData as any).data === 'object'
+    ) {
+      const data = (messageData as any).data as any;
+      if ('from' in data && typeof data.from === 'string') {
+        fromPubkey = data.from;
+      }
+    }
+
+    if (!fromPubkey) return false;
+    const normalizedFrom = normalizePubkey(fromPubkey);
+    return normalizedFrom === normalizedSelf;
+  } catch {
+    return false;
+  }
 }
 
 // Setup comprehensive event listeners for the Bifrost node
@@ -354,12 +589,20 @@ export function setupNodeEventListeners(
   addServerLog: ReturnType<typeof createAddServerLog>,
   broadcastEvent: ReturnType<typeof createBroadcastEvent>,
   peerStatuses: Map<string, PeerStatus>,
-  onNodeUnhealthy?: () => void,
+  onNodeUnhealthy?: () => Promise<void> | void,
   groupCred?: string,
   shareCred?: string
 ) {
-  // Start health monitoring
-  startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}));
+  // Start simplified connectivity monitoring
+  const recreateNodeFn = async () => {
+    if (onNodeUnhealthy) {
+      const result = onNodeUnhealthy();
+      if (result instanceof Promise) {
+        await result;
+      }
+    }
+  };
+  startConnectivityMonitoring(node, addServerLog, recreateNodeFn);
 
   // Setup connection monitoring
   setupConnectionMonitoring(node, addServerLog);
@@ -367,7 +610,7 @@ export function setupNodeEventListeners(
   // Basic node events - matching Igloo Desktop
   node.on('closed', () => {
     addServerLog('bifrost', 'Bifrost node is closed');
-    stopHealthMonitoring();
+    stopConnectivityMonitoring();
   });
 
   node.on('error', (error: unknown) => {
@@ -484,51 +727,8 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
-            // Check if this is a self-ping (keepalive) by comparing pubkeys
-            let isSelfPing = false;
-            try {
-              // Extract self pubkey if we have credentials
-              let selfPubkey: string | undefined;
-              if (groupCred && shareCred) {
-                const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
-                selfPubkey = selfPubkeyResult.pubkey || undefined;
-              }
-              
-              // If we have self pubkey, check if this ping involves ourself
-              if (selfPubkey) {
-                const normalizedSelf = normalizePubkey(selfPubkey);
-                
-                // Check various message structures for the from/to pubkey
-                let fromPubkey: string | undefined;
-                
-                // Try to extract from env.pubkey (standard Nostr event structure)
-                if ('env' in messageData && typeof messageData.env === 'object' && messageData.env !== null) {
-                  const env = messageData.env as any;
-                  if ('pubkey' in env && typeof env.pubkey === 'string') {
-                    fromPubkey = env.pubkey;
-                  }
-                }
-                
-                // Fallback to data.from if available
-                if (!fromPubkey && 'data' in messageData && typeof messageData.data === 'object' && messageData.data !== null) {
-                  const data = messageData.data as any;
-                  if ('from' in data && typeof data.from === 'string') {
-                    fromPubkey = data.from;
-                  }
-                }
-                
-                // Check if this is a self-ping
-                if (fromPubkey) {
-                  const normalizedFrom = normalizePubkey(fromPubkey);
-                  isSelfPing = normalizedFrom === normalizedSelf;
-                }
-              }
-            } catch (error) {
-              // If we can't determine, log it anyway (safer to log than miss real pings)
-            }
-            
-            // Only log non-keepalive pings
-            if (!isSelfPing) {
+            const selfPing = isSelfPing(messageData, groupCred, shareCred);
+            if (!selfPing) {
               addServerLog('bifrost', `Ping event: ${tag}`, msg);
             }
           } else {
@@ -706,7 +906,42 @@ export async function createNodeWithCredentials(
               if (result.state.connectedRelays.length > 0) {
                 addServerLog('info', `Active relays: ${result.state.connectedRelays.join(', ')}`);
               }
+              
+              // Log detailed node state for diagnostics
+              addServerLog('debug', 'Node state details', {
+                isReady: result.state.isReady,
+                isConnected: result.state.isConnected,
+                isConnecting: result.state.isConnecting,
+                relayCount: result.state.connectedRelays.length
+              });
             }
+            
+            // Log internal client details for debugging keepalive
+            const client = (node as any)._client || (node as any).client;
+            if (client) {
+              addServerLog('debug', 'Node client capabilities', {
+                hasConnect: typeof client.connect === 'function',
+                hasPing: typeof client.ping === 'function',
+                hasClose: typeof client.close === 'function',
+                hasUpdate: typeof client.update === 'function',
+                isReady: client._is_ready || client.is_ready || false
+              });
+            }
+            
+            // Check if node has ping capability
+            if (typeof (node as any).ping === 'function') {
+              addServerLog('debug', 'Node has ping capability for keepalive');
+            } else {
+              addServerLog('debug', 'Node lacks ping capability - will rely on relay reconnection for connectivity');
+            }
+          }
+          
+          // Perform initial connectivity check
+          if (addServerLog) {
+            setTimeout(async () => {
+              const isConnected = await checkRelayConnectivity(node, addServerLog);
+              addServerLog('info', `Initial connectivity check: ${isConnected ? 'PASSED' : 'FAILED'}`);
+            }, 5000);
           }
           
           return node;
@@ -760,23 +995,24 @@ export async function createNodeWithCredentials(
 
 // Export health information
 export function getNodeHealth() {
-  return { ...nodeHealth };
+  return { 
+    ...nodeHealth,
+    timeSinceLastActivity: Date.now() - nodeHealth.lastActivity.getTime(),
+    timeSinceLastConnectivityCheck: Date.now() - nodeHealth.lastConnectivityCheck.getTime()
+  };
 }
 
 // Export cleanup function
-export function cleanupHealthMonitoring() {
-  stopHealthMonitoring();
+export function cleanupMonitoring() {
+  stopConnectivityMonitoring();
 }
 
-// Reset health monitoring state completely (for manual restarts)
+// Reset monitoring state completely (for manual restarts)
 export function resetHealthMonitoring() {
   nodeHealth = {
     lastActivity: new Date(),
-    lastHealthCheck: new Date(),
-    isHealthy: true,
-    consecutiveFailures: 0,
-    restartCount: 0,
-    lastHealthyPeriodStart: new Date(),
-    restartScheduled: false
+    lastConnectivityCheck: new Date(),
+    isConnected: true,
+    consecutiveConnectivityFailures: 0
   };
 } 

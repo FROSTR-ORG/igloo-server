@@ -11,25 +11,54 @@ import {
   getValidRelays,
   getSecureCorsHeaders 
 } from './utils.js';
-import { cleanupHealthMonitoring } from '../node/manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
 
+// Helper function to execute node operations under lock without poisoning the queue
+async function executeUnderNodeLock<T>(
+  operation: () => Promise<T>,
+  context: PrivilegedRouteContext
+): Promise<T> {
+  // Create a promise for this specific operation
+  const run = nodeUpdateLock.then(operation);
+  
+  // Keep the queue alive even if this run fails
+  nodeUpdateLock = run
+    .catch((error) => {
+      context.addServerLog('error', 'Node operation failed', error);
+      // Don't re-throw here - just log and continue
+    })
+    .then(() => undefined); // Ensure queue always resolves
+  
+  // Return the result of this specific operation (may throw)
+  return run;
+}
+
+// Synchronized node cleanup function
+async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise<void> {
+  return executeUnderNodeLock(async () => {
+    if (context.node) {
+      context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
+      // updateNode(null) will handle all cleanup atomically
+      context.updateNode(null);
+      context.addServerLog('info', 'Bifrost node cleaned up successfully');
+    }
+  }, context);
+}
+
 // Extracted node creation and connection logic with reduced timeout and retries
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
-  // Synchronize node updates to prevent race conditions
-  nodeUpdateLock = nodeUpdateLock.then(async () => {
-    // Clean up existing node if it exists
+  return executeUnderNodeLock(async () => {
+    // Note: updateNode will handle cleanup of the old node and its monitoring
+    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
     if (context.node) {
-      context.addServerLog('info', 'Cleaning up existing Bifrost node...');
-      cleanupHealthMonitoring();
-      // igloo-core handles cleanup internally
+      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
     }
 
     // Check if we now have both credentials
     if (env.SHARE_CRED && env.GROUP_CRED) {
-      context.addServerLog('info', 'Creating and connecting node...');
+      // Log handled in createAndConnectServerNode to avoid duplication
       const nodeRelays = getValidRelays(env.RELAYS);
       let apiConnectionAttempts = 0;
       const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
@@ -50,9 +79,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
           });
           if (result.node) {
             newNode = result.node as unknown as ServerBifrostNode;
-            if (context.updateNode) {
-              context.updateNode(newNode);
-            }
+            context.updateNode(newNode);
             // updateNode already sets up event listeners and health monitoring
             context.addServerLog('info', 'Node connected and ready');
             if (result.state) {
@@ -71,9 +98,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
           });
           if (basicNode) {
             newNode = basicNode as unknown as ServerBifrostNode;
-            if (context.updateNode) {
-              context.updateNode(newNode);
-            }
+            context.updateNode(newNode);
             // updateNode already sets up event listeners and health monitoring
             context.addServerLog('info', 'Node connected and ready (basic mode)');
           }
@@ -86,7 +111,7 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
     } else {
       context.addServerLog('info', 'Insufficient credentials for node creation');
     }
-  });
+  }, context);
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
@@ -122,6 +147,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           
           // Update only allowed keys
           const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
+          const updatingRelays = validKeys.includes('RELAYS');
           
           for (const key of validKeys) {
             if (body[key] !== undefined) {
@@ -130,8 +156,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
-            // If credentials were updated, recreate the node
-            if (updatingCredentials) {
+            // If credentials or relays were updated, recreate the node
+            if (updatingCredentials || updatingRelays) {
               try {
                 await createAndConnectServerNode(env, context);
               } catch (error) {
@@ -179,17 +205,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           
           if (await writeEnvFile(env)) {
             // If credentials were deleted, clean up the node
-            if (deletingCredentials && context.node) {
+            if (deletingCredentials) {
               try {
-                context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
-                cleanupHealthMonitoring();
-                // Note: igloo-core handles cleanup internally
-                if (context.updateNode) {
-                  context.updateNode(null);
-                }
-                context.addServerLog('info', 'Bifrost node cleaned up successfully');
+                // Use synchronized cleanup to prevent race conditions
+                await cleanupNodeSynchronized(context);
               } catch (error) {
-                context.addServerLog('error', 'Error cleaning up Bifrost node', error);
+                // Error already logged by executeUnderNodeLock
                 // Continue anyway - the env vars were deleted
               }
             }

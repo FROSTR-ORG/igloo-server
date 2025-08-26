@@ -33,12 +33,12 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         relays: currentRelays,
         timestamp: new Date().toISOString(),
         health: {
-          isHealthy: nodeHealth.isHealthy,
+          isConnected: nodeHealth.isConnected,
           lastActivity: nodeHealth.lastActivity ? nodeHealth.lastActivity.toISOString() : null,
-          lastHealthCheck: nodeHealth.lastHealthCheck ? nodeHealth.lastHealthCheck.toISOString() : null,
-          consecutiveFailures: nodeHealth.consecutiveFailures,
-          restartCount: nodeHealth.restartCount,
-          timeSinceLastActivity: nodeHealth.lastActivity ? Date.now() - nodeHealth.lastActivity.getTime() : null
+          lastConnectivityCheck: nodeHealth.lastConnectivityCheck ? nodeHealth.lastConnectivityCheck.toISOString() : null,
+          consecutiveConnectivityFailures: nodeHealth.consecutiveConnectivityFailures,
+          timeSinceLastActivity: nodeHealth.timeSinceLastActivity,
+          timeSinceLastConnectivityCheck: nodeHealth.timeSinceLastConnectivityCheck
         }
       };
       return Response.json(status, { headers });
