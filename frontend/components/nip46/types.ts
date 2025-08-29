@@ -1,6 +1,6 @@
 export interface PermissionPolicy {
-  methods?: Record<string, boolean>
-  kinds?: Record<string, boolean | number>
+  methods: Record<string, boolean>
+  kinds: Record<string, boolean>
 }
 
 export interface SessionProfile {

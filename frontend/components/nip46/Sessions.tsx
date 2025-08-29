@@ -26,20 +26,30 @@ export function Sessions({ controller }: SessionsProps) {
     if (!controller) return
 
     const updateSessions = () => {
-      setActiveSessions(controller.getActiveSessions())
-      setPendingSessions(controller.getPendingSessions())
+      console.log('[Sessions] Updating sessions list')
+      const active = controller.getActiveSessions()
+      const pending = controller.getPendingSessions()
+      console.log('[Sessions] Active sessions:', active.length, 'Pending:', pending.length)
+      setActiveSessions(active)
+      setPendingSessions(pending)
     }
 
+    // Initial update
     updateSessions()
 
-    controller.on('session:new', updateSessions)
+    // Listen for the events that the controller actually emits
+    controller.on('session:active', updateSessions)
+    controller.on('session:pending', updateSessions)
     controller.on('session:updated', updateSessions)
-    controller.on('session:revoked', updateSessions)
+
+    // Set up interval to poll for updates as backup
+    const interval = setInterval(updateSessions, 2000)
 
     return () => {
-      controller.off('session:new', updateSessions)
+      controller.off('session:active', updateSessions)
+      controller.off('session:pending', updateSessions)
       controller.off('session:updated', updateSessions)
-      controller.off('session:revoked', updateSessions)
+      clearInterval(interval)
     }
   }, [controller])
 
@@ -158,7 +168,11 @@ export function Sessions({ controller }: SessionsProps) {
                         <img
                           src={session.profile.image}
                           alt={session.profile.name || 'App'}
-                          className="w-10 h-10 rounded-lg"
+                          className="w-10 h-10 rounded-lg object-cover"
+                          onError={(e) => {
+                            // Hide image on error or use a fallback
+                            (e.target as HTMLImageElement).style.display = 'none'
+                          }}
                         />
                       )}
                       <div className="space-y-1">

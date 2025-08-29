@@ -16,9 +16,12 @@ import { QRCodeCanvas } from 'qrcode.react'
 interface NIP46Props {
   privateKey?: string // This will come from the FROSTR share
   authHeaders?: Record<string, string>
+  groupCred?: string // FROSTR group credential
+  shareCred?: string // FROSTR share credential
+  bifrostNode?: any // The Bifrost node instance
 }
 
-export function NIP46({ privateKey, authHeaders }: NIP46Props) {
+export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNode }: NIP46Props) {
   const [controller, setController] = useState<NIP46Controller | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -35,7 +38,8 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
       'wss://relay.damus.io',
       'wss://nos.lol',
       'wss://relay.nostr.band',
-      'wss://bucket.coracle.social'
+      'wss://bucket.coracle.social',
+      'wss://relay.nsec.app/'
     ],
     policy: {
       methods: {
@@ -61,11 +65,18 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
   }
 
   useEffect(() => {
-    if (privateKey) {
+    // Initialize with either FROSTR credentials or private key
+    if (groupCred && shareCred) {
+      console.log('[NIP46] FROSTR credentials available, initializing controller...');
+      // Make credentials available globally for the controller
+      (window as any).GROUP_CRED = groupCred;
+      (window as any).SHARE_CRED = shareCred;
+      initializeController(undefined, authHeaders)
+    } else if (privateKey) {
       console.log('[NIP46] Private key available, initializing controller...')
-      initializeController(privateKey)
+      initializeController(privateKey, authHeaders)
     } else {
-      console.log('[NIP46] No private key available')
+      console.log('[NIP46] No credentials available')
     }
 
     return () => {
@@ -74,13 +85,11 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
         controller.disconnect()
       }
     }
-  }, [privateKey])
+  }, [privateKey, groupCred, shareCred, authHeaders])
 
-  const initializeController = async (key: string) => {
+  const initializeController = async (key?: string, authHeaders?: Record<string, string>) => {
     try {
       setError(null)
-      // Convert FROSTR share to a hex private key
-      const hexPrivateKey = shareToPrivateKey(key)
       const nip46Controller = new NIP46Controller(defaultConfig)
       
       // Set up event listeners before initialization
@@ -101,28 +110,32 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
         setError(err.message)
       })
 
-      // Update counts
-      nip46Controller.on('request:new', () => {
-        setRequestCount(prev => prev + 1)
-      })
+      // Update counts - listen for events the controller actually emits
+      const updateCounts = () => {
+        const sessions = nip46Controller.getActiveSessions().length + 
+                        nip46Controller.getPendingSessions().length
+        setSessionCount(sessions)
+        
+        const requests = nip46Controller.getPendingRequests().length
+        setRequestCount(requests)
+      }
 
-      nip46Controller.on('request:approved', () => {
-        setRequestCount(prev => Math.max(0, prev - 1))
-      })
+      nip46Controller.on('session:active', updateCounts)
+      nip46Controller.on('session:pending', updateCounts)
+      nip46Controller.on('session:updated', updateCounts)
+      nip46Controller.on('request:new', updateCounts)
+      nip46Controller.on('request:approved', updateCounts)
+      nip46Controller.on('request:denied', updateCounts)
 
-      nip46Controller.on('request:denied', () => {
-        setRequestCount(prev => Math.max(0, prev - 1))
-      })
-
-      nip46Controller.on('session:new', () => {
-        setSessionCount(prev => prev + 1)
-      })
-
-      nip46Controller.on('session:revoked', () => {
-        setSessionCount(prev => Math.max(0, prev - 1))
-      })
-
-      await nip46Controller.initialize(hexPrivateKey)
+      // Initialize with either FROSTR or private key
+      if (key) {
+        // Convert FROSTR share to a hex private key for SimpleSigner
+        const hexPrivateKey = shareToPrivateKey(key)
+        await nip46Controller.initialize(hexPrivateKey, authHeaders)
+      } else {
+        // Initialize with FROSTR credentials (passed via global)
+        await nip46Controller.initialize(undefined, authHeaders)
+      }
       setController(nip46Controller)
     } catch (err) {
       console.error('Failed to initialize NIP46:', err)
@@ -138,7 +151,7 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
     }
   }
 
-  if (!privateKey) {
+  if (!privateKey && !(groupCred && shareCred)) {
     return (
       <div className="space-y-6">
         <Alert variant="warning">
@@ -168,12 +181,24 @@ export function NIP46({ privateKey, authHeaders }: NIP46Props) {
                 <Bell className="h-4 w-4 text-blue-400" />
                 <span className="text-gray-400">{requestCount} requests</span>
               </div>
-              {controller && controller.getPublicKey() && (
-                <div className="flex items-center gap-1">
-                  <Shield className="h-4 w-4 text-blue-400" />
-                  <span className="text-gray-400 font-mono text-xs">
-                    {controller.getPublicKey()?.slice(0, 8)}...
-                  </span>
+              {controller && (
+                <div className="flex flex-col gap-1 text-xs">
+                  {controller.getTransportPubkey() && (
+                    <div className="flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-gray-400" />
+                      <span className="text-gray-400 font-mono">
+                        T: {controller.getTransportPubkey()?.slice(0, 8)}...
+                      </span>
+                    </div>
+                  )}
+                  {controller.getIdentityPubkey() && (
+                    <div className="flex items-center gap-1">
+                      <Shield className="h-3 w-3 text-blue-400" />
+                      <span className="text-gray-400 font-mono">
+                        ID: {controller.getIdentityPubkey()?.slice(0, 8)}...
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -6,6 +6,8 @@ export { handleRecoveryRoute } from './recovery.js';
 export { handleSharesRoute } from './shares.js';
 export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
+export { handleSignRoute } from './sign.js';
+export { handleNip44Route } from './nip44.js';
 
 // Export types and utilities
 export * from './types.js';
@@ -20,6 +22,8 @@ import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { handleDocsRoute } from './docs.js';
+import { handleSignRoute } from './sign.js';
+import { handleNip44Route } from './nip44.js';
 import { 
   handleLogin, 
   handleLogout, 
@@ -162,6 +166,8 @@ export async function handleRequest(
     handlePeersRoute,
     handleRecoveryRoute,
     handleSharesRoute,
+    handleSignRoute,      // Simple signing endpoint
+    handleNip44Route,     // NIP-44 encryption/decryption endpoints
   ];
 
   for (const handler of routeHandlers) {

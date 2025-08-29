@@ -125,7 +125,7 @@ Two independent restart mechanisms:
    - Node health checked every 30 seconds
    - Unhealthy after 2 minutes of inactivity
    - Automatic restart after 5 minutes (watchdog timeout)
-   - Intelligent keepalive only when idle >45 seconds
+   - Intelligent keepalive only when idle >90 seconds
    - Activity updated only on successful operations (not failures)
 
 5. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
