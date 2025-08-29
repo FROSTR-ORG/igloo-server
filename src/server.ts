@@ -16,6 +16,27 @@ import {
   resetHealthMonitoring
 } from './node/manager.js';
 
+// Global error handlers to prevent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Promise Rejection:', reason);
+  // Log but don't crash - especially for relay timeout errors
+  if (reason && typeof reason === 'object' && 'message' in reason) {
+    const error = reason as Error;
+    if (error.message && error.message.includes('publish timed out')) {
+      console.log('[Server] Ignoring nostr-tools publish timeout - relay may be slow or unavailable');
+      return;
+    }
+  }
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Server] Uncaught Exception:', error);
+  // For critical errors, still exit after logging
+  if (error.message && !error.message.includes('publish timed out')) {
+    process.exit(1);
+  }
+});
+
 // Node restart configuration with validation
 const parseRestartConfig = () => {
   const initialRetryDelay = parseInt(process.env.NODE_RESTART_DELAY || '30000');

@@ -42,7 +42,8 @@ function transformRequest(req: PermissionRequest): NIP46Request {
     timestamp: req.stamp,
     session_origin,
     request_type,
-    status: 'pending'
+    status: 'pending',
+    deniedReason: (req as any).deniedReason  // Include denied reason if present
   }
 }
 
@@ -207,14 +208,19 @@ export function Requests({ controller }: RequestsProps) {
                           <span className="font-medium text-blue-200">
                             {request.source}
                           </span>
-                          <Badge variant="warning">
-                            Pending
+                          <Badge variant={request.deniedReason ? 'destructive' : 'warning'}>
+                            {request.deniedReason ? 'Blocked' : 'Pending'}
                           </Badge>
                         </div>
                         <div className="flex items-center gap-2 text-sm text-gray-400">
                           {getMethodIcon(request.method)}
                           <span>{getMethodDescription(request.method)}</span>
                         </div>
+                        {request.deniedReason && (
+                          <div className="text-xs text-red-400 font-medium">
+                            ⚠️ {request.deniedReason}
+                          </div>
+                        )}
                         <span className="text-xs text-gray-500">
                           {new Date(request.timestamp).toLocaleTimeString()}
                         </span>
@@ -286,7 +292,11 @@ export function Requests({ controller }: RequestsProps) {
                 <div className="bg-gray-900/30 border-t border-blue-900/20 p-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 text-xs text-gray-500">
                     <Shield className="h-3 w-3" />
-                    <span>Requires your approval</span>
+                    <span>
+                      {request.deniedReason 
+                        ? 'Blocked by policy - update permissions to allow' 
+                        : 'Requires your approval'}
+                    </span>
                   </div>
                   <div className="flex gap-2">
                     <Button

@@ -10,8 +10,7 @@ import { Alert } from './ui/alert'
 import { Badge } from './ui/badge'
 import { StatusIndicator } from './ui/status-indicator'
 import { cn } from '../lib/utils'
-import { Shield, Users, Bell, Copy, QrCode } from 'lucide-react'
-import { QRCodeCanvas } from 'qrcode.react'
+import { Shield, Users, Bell } from 'lucide-react'
 
 interface NIP46Props {
   privateKey?: string // This will come from the FROSTR share
@@ -26,9 +25,6 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
   const [isConnected, setIsConnected] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('sessions')
-  const [inviteUrl, setInviteUrl] = useState<string | null>(null)
-  const [showQR, setShowQR] = useState(false)
-  const [copied, setCopied] = useState(false)
   const [requestCount, setRequestCount] = useState(0)
   const [sessionCount, setSessionCount] = useState(0)
 
@@ -51,9 +47,7 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
         'nip04_decrypt': true
       },
       kinds: {
-        '1': true,  // Regular notes
-        '4': true,  // DMs
-        '7': true   // Reactions
+        // No kinds allowed by default - must be explicitly granted
       }
     },
     profile: {
@@ -95,14 +89,10 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
       // Set up event listeners before initialization
       nip46Controller.on('connected', () => {
         setIsConnected(true)
-        // Generate invite URL once connected
-        const invite = nip46Controller.createInvite()
-        setInviteUrl(invite)
       })
 
       nip46Controller.on('disconnected', () => {
         setIsConnected(false)
-        setInviteUrl(null)
       })
 
       nip46Controller.on('error', (err: Error) => {
@@ -143,13 +133,6 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
     }
   }
 
-  const copyInviteUrl = () => {
-    if (inviteUrl) {
-      navigator.clipboard.writeText(inviteUrl)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
 
   if (!privateKey && !(groupCred && shareCred)) {
     return (
@@ -164,92 +147,34 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
 
   return (
     <div className="space-y-6">
-      {/* Status Bar */}
+      {/* Simplified Status Bar */}
       <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <StatusIndicator
               status={isConnected ? 'success' : 'idle'}
-              label={isConnected ? 'Connected' : 'Disconnected'}
+              label={isConnected ? 'NIP-46 Ready' : 'NIP-46 Disconnected'}
             />
             <div className="flex items-center gap-3 text-sm">
               <div className="flex items-center gap-1">
                 <Users className="h-4 w-4 text-blue-400" />
-                <span className="text-gray-400">{sessionCount} sessions</span>
+                <span className="text-gray-400">{sessionCount} {sessionCount === 1 ? 'session' : 'sessions'}</span>
               </div>
               <div className="flex items-center gap-1">
                 <Bell className="h-4 w-4 text-blue-400" />
-                <span className="text-gray-400">{requestCount} requests</span>
+                <span className="text-gray-400">{requestCount} {requestCount === 1 ? 'request' : 'requests'}</span>
               </div>
-              {controller && (
-                <div className="flex flex-col gap-1 text-xs">
-                  {controller.getTransportPubkey() && (
-                    <div className="flex items-center gap-1">
-                      <Shield className="h-3 w-3 text-gray-400" />
-                      <span className="text-gray-400 font-mono">
-                        T: {controller.getTransportPubkey()?.slice(0, 8)}...
-                      </span>
-                    </div>
-                  )}
-                  {controller.getIdentityPubkey() && (
-                    <div className="flex items-center gap-1">
-                      <Shield className="h-3 w-3 text-blue-400" />
-                      <span className="text-gray-400 font-mono">
-                        ID: {controller.getIdentityPubkey()?.slice(0, 8)}...
-                      </span>
-                    </div>
-                  )}
-                </div>
-              )}
             </div>
           </div>
-          
-          {isConnected && inviteUrl && (
-            <div className="flex items-center gap-2">
-              <Button
-                onClick={() => setShowQR(!showQR)}
-                variant="ghost"
-                size="sm"
-                className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30"
-              >
-                <QrCode className="h-4 w-4 mr-1" />
-                {showQR ? 'Hide' : 'Show'} QR
-              </Button>
-              <Button
-                onClick={copyInviteUrl}
-                variant="ghost"
-                size="sm"
-                className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30"
-              >
-                <Copy className="h-4 w-4 mr-1" />
-                {copied ? 'Copied!' : 'Copy Bunker URL'}
-              </Button>
+          {controller && controller.getIdentityPubkey() && (
+            <div className="flex items-center gap-1 text-xs">
+              <Shield className="h-3 w-3 text-blue-400" />
+              <span className="text-gray-400 font-mono">
+                {controller.getIdentityPubkey()?.slice(0, 8)}...{controller.getIdentityPubkey()?.slice(-4)}
+              </span>
             </div>
           )}
         </div>
-
-        {/* Bunker URL Display */}
-        {isConnected && inviteUrl && showQR && (
-          <div className="mt-4 pt-4 border-t border-blue-900/20">
-            <div className="space-y-3">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-400">Bunker Connection URL:</span>
-                <Badge variant="info">NIP-46</Badge>
-              </div>
-              <div className="bg-gray-900/50 rounded-lg p-3">
-                <code className="text-xs text-blue-300 break-all font-mono">
-                  {inviteUrl}
-                </code>
-              </div>
-              <div className="flex justify-center p-4 bg-white rounded-lg">
-                <QRCodeCanvas value={inviteUrl} size={200} />
-              </div>
-              <p className="text-xs text-gray-500 text-center">
-                Scan this QR code or copy the URL to connect a Nostr client
-              </p>
-            </div>
-          </div>
-        )}
       </div>
 
       {error && (
@@ -291,11 +216,11 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred, bifrostNo
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="sessions" className="border border-blue-900/30 rounded-lg p-4">
+        <TabsContent value="sessions">
           <Sessions controller={controller} />
         </TabsContent>
 
-        <TabsContent value="requests" className="border border-blue-900/30 rounded-lg p-4">
+        <TabsContent value="requests">
           <Requests controller={controller} />
         </TabsContent>
       </Tabs>

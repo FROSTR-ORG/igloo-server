@@ -120,6 +120,7 @@ Two independent restart mechanisms:
    - `GROUP_CRED`: FROSTR group credential (bfgroup1...)
    - `SHARE_CRED`: Your secret share (bfshare1...)
    - `SESSION_SECRET`: Required in production (32+ chars)
+   - `FROSTR_SIGN_TIMEOUT`: Optional, timeout for FROSTR signing/ECDH operations in ms (default: 30000)
 
 4. **Health Monitoring**: 
    - Node health checked every 30 seconds

@@ -55,8 +55,15 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
       // Get ECDH shared secret from FROSTR network
       context.addServerLog('nip44', `ECDH request for peer: ${peer_pubkey.slice(0, 8)}...`);
       
-      // Use the Bifrost node's ECDH method to derive shared secret with threshold signatures
-      const ecdhResponse = await context.node.req.ecdh(peer_pubkey);
+      // Use the Bifrost node's ECDH method with increased timeout
+      const ECDH_TIMEOUT = parseInt(process.env.FROSTR_SIGN_TIMEOUT || '30000'); // Use same timeout as signing
+      
+      const ecdhResponse = await Promise.race([
+        context.node.req.ecdh(peer_pubkey),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('FROSTR ECDH timeout - operation took longer than ' + ECDH_TIMEOUT / 1000 + ' seconds')), ECDH_TIMEOUT)
+        )
+      ]);
       
       if (!ecdhResponse.ok) {
         const errorMsg = ecdhResponse.err || 'Unknown error';

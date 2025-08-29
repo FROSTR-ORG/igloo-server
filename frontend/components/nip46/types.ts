@@ -39,6 +39,7 @@ export interface NIP46Request {
   }
   request_type: 'note_signature' | 'base'
   status: 'pending' | 'approved' | 'denied'
+  deniedReason?: string  // Reason why request was blocked by policy
 }
 
 export interface NIP46Config {

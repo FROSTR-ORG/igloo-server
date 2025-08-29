@@ -1,0 +1,187 @@
+/* settings.css - Styles for settings components */
+/* Generated: March 06, 2025 */
+
+@import 'global.css';
+
+/* ========================================================================= */
+/* Settings Layout */
+.settings-section {
+  margin-bottom: 40px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.settings-section h2 {
+  font-size: 22px;
+  color: #fff;
+  margin-bottom: 20px;
+}
+
+.settings-group {
+  margin-bottom: 30px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.setting-item {
+  display: flex;
+  align-items: flex-start;
+  margin-bottom: 15px;
+}
+
+.setting-item input[type="checkbox"] {
+  margin: 3px 10px 0 0;
+}
+
+/* Form Elements */
+.form-row {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 20px;
+}
+
+.form-label {
+  font-weight: 500;
+  color: #e6e6e6;
+  margin-bottom: 8px;
+}
+
+.field-description {
+  color: #aaa;
+  font-size: 0.9em;
+  margin: 5px 0 8px;
+}
+
+.form-input,
+.form-select {
+  width: 100%;
+  background: rgba(30, 45, 75, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #e6e6e6;
+  font-size: 14px;
+}
+
+.form-input:focus,
+.form-select:focus {
+  border-color: rgba(74, 144, 226, 0.5);
+  outline: none;
+}
+
+.form-select {
+  background: rgba(30, 45, 75, 0.6) url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23e6e6e6%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E") no-repeat right 12px center/10px;
+  padding-right: 30px;
+  appearance: none;
+}
+
+/* Checkbox Containers */
+.checkbox-container {
+  flex-direction: row;
+  align-items: flex-start;
+}
+
+.checkbox-container input[type="checkbox"] {
+  margin-right: 10px;
+  margin-top: 3px;
+}
+
+.checkbox-container label {
+  margin-bottom: 0;
+}
+
+/* Settings Actions */
+.settings-actions {
+  display: flex;
+  justify-content: flex-start;
+  gap: 10px;
+  margin-top: 20px;
+  padding-top: 15px;
+}
+
+.input-actions {
+  display: flex;
+  gap: 8px;
+}
+
+/* Notification Container */
+.notification-container {
+  margin-right: auto;
+  text-align: left;
+  flex-shrink: 0;
+  flex-basis: auto;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  min-height: 36px;
+}
+
+.notification-container p {
+  margin: 0;
+  padding: 0;
+}
+
+/* Filter Controls */
+.filter-controls {
+  display: flex;
+  flex-direction: row;
+  gap: 10px;
+  width: 100%;
+  margin-bottom: 15px;
+}
+
+.filter-input {
+  flex: 1;
+  background: rgba(30, 45, 75, 0.6);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: #e6e6e6;
+  font-size: 14px;
+}
+
+.filter-input:focus {
+  border-color: rgba(74, 144, 226, 0.5);
+  outline: none;
+}
+
+.filter-input::placeholder {
+  color: rgba(255, 255, 255, 0.5);
+}
+
+/* Table Styles */
+.table-wrapper {
+  width: 100%;
+  overflow-x: auto;
+  margin-bottom: 20px;
+}
+
+/* Pubkey cell styles moved to global.css */
+
+.checkbox-cell {
+  width: 80px;
+  text-align: center;
+}
+
+/* Alpha pill styles inherited from global.css */
+
+.nsec-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.password-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.flex-input {
+  flex: 1;
+}
+
+.flex-btn {
+  min-width: 90px;
+} 

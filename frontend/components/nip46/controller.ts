@@ -83,9 +83,17 @@ export class NIP46Controller extends EventEmitter {
       console.log('[NIP46Controller] Transport pubkey for NIP-46:', this.client.pubkey)
       console.log('[NIP46Controller] Identity pubkey (FROSTR):', this.identitySigner.get_pubkey())
 
-      // Connect to relays
-      await this.client.connect(this.config.relays)
-      console.log('[NIP46Controller] Connected to relays')
+      // Connect to relays with timeout and error handling
+      try {
+        await Promise.race([
+          this.client.connect(this.config.relays),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timeout')), 10000))
+        ])
+        console.log('[NIP46Controller] Connected to relays')
+      } catch (connectErr) {
+        console.error('[NIP46Controller] Failed to connect to some relays:', connectErr)
+        // Continue anyway - might still work with partial connectivity
+      }
       
       // Set up event listeners 
       this.setupEventListeners()
@@ -170,9 +178,13 @@ export class NIP46Controller extends EventEmitter {
               error: null
             }
             
-            // Send the response back to the client
-            await this.client!.socket.send(response, event.pubkey, pendingSession.relays || this.config.relays)
-            console.log('[NIP46] Sent connect acknowledgment')
+            // Send the response back to the client with error handling
+            try {
+              await this.client!.socket.send(response, event.pubkey, pendingSession.relays || this.config.relays)
+              console.log('[NIP46] Sent connect acknowledgment')
+            } catch (sendErr) {
+              console.error('[NIP46] Failed to send connect acknowledgment:', sendErr)
+            }
             
             // Emit the active event
             sessionManager.emit('active', pendingSession)
@@ -190,7 +202,11 @@ export class NIP46Controller extends EventEmitter {
                 result: 'ack',
                 error: null
               }
-              await this.client!.socket.send(response, event.pubkey, activeSession.relays || this.config.relays)
+              try {
+                await this.client!.socket.send(response, event.pubkey, activeSession.relays || this.config.relays)
+              } catch (sendErr) {
+                console.error('[NIP46] Failed to send ack for already active session:', sendErr)
+              }
             }
           }
           
@@ -221,20 +237,18 @@ export class NIP46Controller extends EventEmitter {
             params: message.params || [],
             pubkey: event.pubkey,
             session: session || { pubkey: event.pubkey, profile: { name: 'Unknown' } },
-            stamp: Date.now()
+            stamp: Date.now(),
+            autoProcess: true  // Flag to indicate this should be auto-processed
           }
           
           // Track the request for UI
           this.pendingRequests.set(request.id, request)
           this.emit('request:new', request)
           
-          // Process request with permission checking
+          // Auto-process request with permission checking
+          // If denied by policy, it stays in the queue for user review
           console.log('[NIP46] Processing request with permission checks:', message.method)
           await this.handleRequestApproval(request)
-          
-          // Remove from pending after handling
-          this.pendingRequests.delete(request.id)
-          this.emit('request:approved', request)
           
         } else if (message.result !== undefined || message.error !== undefined) {
           console.log('[NIP46] Received response from client:', message)
@@ -369,10 +383,15 @@ export class NIP46Controller extends EventEmitter {
         error: null
       }
       
-      // Send the connect response immediately
+      // Send the connect response immediately with error handling
       console.log('[NIP46] Sending immediate connect response with secret...')
-      await this.client.socket.send(connectResponse, token.pubkey, token.relays || this.config.relays)
-      console.log('[NIP46] Connect response sent, waiting for client to acknowledge')
+      try {
+        await this.client.socket.send(connectResponse, token.pubkey, token.relays || this.config.relays)
+        console.log('[NIP46] Connect response sent, waiting for client to acknowledge')
+      } catch (sendErr) {
+        console.error('[NIP46] Failed to send connect response:', sendErr)
+        // Continue anyway - client might still connect
+      }
       
       // Emit pending event
       this.client.session.emit('pending', session)
@@ -415,9 +434,14 @@ export class NIP46Controller extends EventEmitter {
       
       const relays = sessionData?.relays || this.config.relays
       
-      // Send the response directly via socket
-      await this.client!.socket.send(response, pubkey, relays)
-      console.log('[NIP46] Sent response for', method, ':', error || 'success')
+      // Send the response directly via socket with error handling
+      try {
+        await this.client!.socket.send(response, pubkey, relays)
+        console.log('[NIP46] Sent response for', method, ':', error || 'success')
+      } catch (sendErr) {
+        console.error('[NIP46] Failed to send response:', sendErr)
+        // Don't throw - just log the error to prevent crashes
+      }
     }
     
     // Check if method is supported by the signer
@@ -426,25 +450,46 @@ export class NIP46Controller extends EventEmitter {
       return
     }
     
-    // Check permissions from session policy
-    if (session && session.policy) {
+    // Check permissions from session policy (unless user explicitly approved)
+    const skipPermissionCheck = request.userApproved === true
+    
+    if (!skipPermissionCheck && session && session.policy) {
       // Check if method is allowed by the session policy
       if (session.policy.methods && session.policy.methods[method] === false) {
         console.log('[NIP46] Method denied by session policy:', method)
+        
+        // If auto-processing, keep in queue for user review
+        if (request.autoProcess) {
+          console.log('[NIP46] Keeping denied request in queue for user review')
+          request.deniedReason = `Method '${method}' not allowed by current policy`
+          this.emit('request:denied-pending', request)
+          return  // Don't send response yet - let user decide
+        }
+        
         await sendResponse(null, `method not allowed by policy: ${method}`)
         return
       }
       
-      // For sign_event, also check if the event kind is allowed
-      if (method === 'sign_event' && session.policy.kinds) {
+      // For sign_event, check if the event kind is explicitly allowed
+      if (method === 'sign_event') {
         const eventJson = params?.[0]
         if (eventJson) {
           try {
             const event = JSON.parse(eventJson)
             const kindStr = String(event.kind)
-            if (session.policy.kinds[kindStr] === false) {
-              console.log('[NIP46] Event kind denied by session policy:', event.kind)
-              await sendResponse(null, `event kind ${event.kind} not allowed by policy`)
+            // Deny by default - only allow if explicitly set to true
+            if (!session.policy.kinds || session.policy.kinds[kindStr] !== true) {
+              console.log('[NIP46] Event kind not explicitly allowed:', event.kind)
+              
+              // If auto-processing, keep in queue for user review
+              if (request.autoProcess) {
+                console.log('[NIP46] Keeping denied request in queue for user review')
+                request.deniedReason = `Event kind ${event.kind} not allowed by current policy`
+                this.emit('request:denied-pending', request)
+                return  // Don't send response yet - let user decide
+              }
+              
+              await sendResponse(null, `event kind ${event.kind} not allowed by policy (must be explicitly permitted)`)
               return
             }
           } catch (err) {
@@ -510,6 +555,13 @@ export class NIP46Controller extends EventEmitter {
       } else {
         await sendResponse(null, 'unknown method: ' + method)
       }
+      
+      // If we got here and it's an auto-process request, it was approved
+      // Remove from pending
+      if (request.autoProcess && !request.deniedReason) {
+        this.pendingRequests.delete(request.id)
+        this.emit('request:approved', request)
+      }
     } catch (error) {
       console.error('[NIP46] Error handling request:', error)
       await sendResponse(null, 'error handling request')
@@ -540,25 +592,99 @@ export class NIP46Controller extends EventEmitter {
 
 
   // Approve a permission request
-  approveRequest(requestId: string): void {
-    const request = this.client?.request.queue.find((r: any) => r.id === requestId)
-    if (request) {
-      this.client?.request.approve(request)
+  async approveRequest(requestId: string): Promise<void> {
+    const request = this.pendingRequests.get(requestId)
+    if (!request) {
+      console.error('[NIP46] Request not found:', requestId)
+      return
     }
+    
+    // Mark as user-approved to bypass permission checks
+    request.userApproved = true
+    request.autoProcess = false
+    
+    // Process the request (will now approve it)
+    await this.handleRequestApproval(request)
+    
+    // Remove from pending
+    this.pendingRequests.delete(requestId)
+    this.emit('request:approved', request)
   }
 
   // Deny a permission request
-  denyRequest(requestId: string, reason?: string): void {
-    const request = this.client?.request.queue.find((r: any) => r.id === requestId)
-    if (request) {
-      this.client?.request.deny(request, reason || 'denied by user')
+  async denyRequest(requestId: string, reason?: string): Promise<void> {
+    const request = this.pendingRequests.get(requestId)
+    if (!request || !this.client) {
+      console.error('[NIP46] Request not found or no client:', requestId)
+      return
     }
+    
+    // Send denial response
+    const response = {
+      id: request.id,
+      result: null,
+      error: reason || request.deniedReason || 'Denied by user'
+    }
+    
+    const session = request.session
+    const relays = session?.relays || this.config.relays
+    
+    try {
+      await this.client.socket.send(response, request.pubkey, relays)
+      console.log('[NIP46] Sent denial for request:', requestId)
+    } catch (err) {
+      console.error('[NIP46] Failed to send denial:', err)
+    }
+    
+    // Remove from pending
+    this.pendingRequests.delete(requestId)
+    this.emit('request:denied', request)
   }
 
   // Update session permissions
   updateSession(pubkey: string, policy: PermissionPolicy): void {
-    console.log('[NIP46] Session policy update requested for:', pubkey, policy)
-    // Let the SignerAgent handle session management
+    console.log('[NIP46] Updating session policy for:', pubkey, policy)
+    
+    if (!this.client) {
+      console.error('[NIP46] No client available for session update')
+      return
+    }
+    
+    // Access the internal session manager
+    const sessionManager = this.client.session as any
+    
+    // Check both active and pending sessions
+    let session = sessionManager._active.get(pubkey)
+    let isActive = true
+    
+    if (!session) {
+      session = sessionManager._pending.get(pubkey)
+      isActive = false
+    }
+    
+    if (!session) {
+      console.error('[NIP46] Session not found for pubkey:', pubkey)
+      return
+    }
+    
+    // Update the session's policy
+    const updatedSession = {
+      ...session,
+      policy: policy
+    }
+    
+    // Update in the appropriate map
+    if (isActive) {
+      sessionManager._active.set(pubkey, updatedSession)
+    } else {
+      sessionManager._pending.set(pubkey, updatedSession)
+    }
+    
+    // Emit update event
+    sessionManager.emit('updated', updatedSession)
+    this.emit('session:updated')
+    
+    console.log('[NIP46] Session policy updated successfully')
   }
 
   // Revoke a session

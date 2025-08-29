@@ -1,0 +1,689 @@
+/* sessions.css - Custom styles for Session Management component
+   Import this file in your component or main CSS entry. */
+
+.sessions-container {
+  background: rgba(15, 25, 45, 0.9);
+  border-radius: 18px;
+  box-shadow: 0 4px 32px 0 rgba(0,0,0,0.18);
+  padding: 2.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 2rem 0;
+  border: 1px solid #232c3b;
+}
+
+.sessions-container .section-header,
+.invites-container .section-header {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 2rem;
+  color: #fff;
+}
+
+.sessions-section {
+  margin-bottom: 2.5rem;
+}
+
+.sessions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.session-card {
+  display: flex;
+  flex-direction: column;
+  background: #232c3b;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 2px 12px 0 rgba(0,0,0,0.10);
+  border: 1px solid #28344a;
+  transition: box-shadow 0.2s;
+  gap: 1rem;
+  position: relative;
+}
+.session-card:hover {
+  box-shadow: 0 6px 24px 0 rgba(0,0,0,0.18);
+}
+
+.session-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  width: 100%;
+}
+
+.session-card-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.session-pubkey-container {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.session-pubkey {
+  font-family: monospace;
+  font-size: 0.95rem;
+  color: #b0b8c9;
+}
+
+.copy-pubkey-btn {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 1em;
+  transition: transform 0.2s;
+}
+
+.copy-pubkey-btn:hover {
+  transform: scale(1.1);
+}
+
+.session-cancel-btn {
+  background-color: #f0f0f0;
+  color: #666;
+  border: 1px solid #ddd;
+  padding: 4px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.9em;
+  transition: all 0.2s;
+}
+
+.session-cancel-btn:hover {
+  background-color: #e0e0e0;
+  color: #333;
+}
+
+.session-badge {
+  display: inline-block;
+  padding: 0.25em 1.1em;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  box-shadow: 0 1px 4px 0 rgba(0,0,0,0.08);
+  background: #e0e7ef;
+  color: #2d3a4a;
+  text-transform: capitalize;
+  letter-spacing: 0.01em;
+  margin-right: 0.5em;
+  position: absolute;
+  top: 1.2rem;
+  right: 1.5rem;
+  z-index: 2;
+  margin: 0;
+}
+.session-badge.active {
+  background: #b6f3c1;
+  color: #1a6c2e;
+}
+.session-badge.pending {
+  background: #ffe9b3;
+  color: #a67c00;
+}
+
+.session-name-container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.session-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  object-fit: cover;
+}
+
+.session-url {
+  color: #666;
+  font-size: 0.9em;
+  text-decoration: none;
+  margin-bottom: 4px;
+  display: block;
+}
+
+.session-url:hover {
+  text-decoration: underline;
+  color: #333;
+}
+
+.session-name {
+  font-family: sans-serif;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #a3d8ff;
+  margin-bottom: 0.3rem;
+}
+
+.session-created {
+  font-size: 0.85rem;
+  color: #b0b8c9;
+}
+
+.session-revoke-btn {
+  margin-top: 1.2em;
+  align-self: flex-end;
+  padding: 0.7em 2.2em;
+  border-radius: 10px;
+  background: #e74c3c;
+  color: #fff;
+  font-weight: 600;
+  font-size: 1rem;
+  border: none;
+  box-shadow: 0 2px 8px 0 rgba(231,76,60,0.10);
+  cursor: pointer;
+  transition: background 0.18s, box-shadow 0.18s;
+}
+.session-revoke-btn:hover {
+  background: #c0392b;
+  box-shadow: 0 4px 16px 0 rgba(231,76,60,0.18);
+}
+
+.session-permissions-toggle {
+  width: 100%;
+}
+
+.session-permissions-btn {
+  padding: 0.6em 1.8em;
+  border-radius: 8px;
+  background: #7ecbff;
+  color: #1a2233;
+  font-weight: 600;
+  font-size: 0.9rem;
+  border: none;
+  box-shadow: 0 2px 8px 0 rgba(126,203,255,0.10);
+  cursor: pointer;
+  transition: background 0.18s, box-shadow 0.18s;
+}
+.session-permissions-btn:hover {
+  background: #5ab9ff;
+  box-shadow: 0 4px 16px 0 rgba(126,203,255,0.18);
+}
+
+/* Permissions Dropdown */
+.session-permissions-dropdown {
+  width: 100%;
+  padding: 1.5rem;
+  background: #1a2233;
+  border-radius: 10px;
+  border: 1px solid #28344a;
+  margin-top: 0.5rem;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.permissions-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7ecbff;
+  margin: 0 0 1rem 0;
+}
+
+.permissions-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+  margin-bottom: 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.permission-item {
+  display: flex;
+  align-items: center;
+}
+
+.permission-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  color: #b0b8c9;
+  font-size: 0.95rem;
+  transition: color 0.15s;
+}
+.permission-label:hover {
+  color: #fff;
+}
+
+.permission-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: #7ecbff;
+  cursor: pointer;
+}
+
+.permission-name {
+  font-family: monospace;
+  font-size: 0.9rem;
+  user-select: none;
+}
+
+.permissions-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.permissions-update-btn {
+  width: auto !important;
+  padding: 0.8em 2em !important;
+  font-size: 0.95rem !important;
+}
+
+/* Sign Event Permission Styles */
+.sign-event-permission {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  align-items: flex-start;
+}
+
+.permission-header {
+  width: 100%;
+  text-align: left;
+}
+
+.permission-header .permission-name {
+  font-family: monospace;
+  font-size: 1rem;
+  color: #7ecbff;
+  font-weight: 600;
+}
+
+.event-kinds-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  min-height: 2rem;
+  padding: 0.8rem;
+  background: #232c3b;
+  border-radius: 8px;
+  border: 1px solid #28344a;
+  width: 100%;
+  box-sizing: border-box;
+  justify-content: flex-start;
+}
+
+.event-kind-item {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: #7ecbff;
+  color: #1a2233;
+  padding: 0.3rem 0.6rem;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.event-kind-number {
+  font-family: monospace;
+}
+
+.remove-event-kind-btn {
+  background: none;
+  border: none;
+  color: #1a2233;
+  font-size: 1.1rem;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0;
+  width: 16px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  transition: background 0.15s;
+}
+.remove-event-kind-btn:hover {
+  background: rgba(26, 34, 51, 0.2);
+}
+
+.add-event-kind {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  width: 100%;
+  justify-content: flex-start;
+}
+
+.event-kind-input {
+  padding: 0.6rem 0.8rem;
+  border-radius: 6px;
+  border: 1px solid #28344a;
+  background: #232c3b;
+  color: #fff;
+  font-size: 0.9rem;
+  width: 150px;
+  max-width: 100%;
+  transition: border 0.15s, box-shadow 0.15s;
+  box-sizing: border-box;
+}
+.event-kind-input:focus {
+  border-color: #7ecbff;
+  outline: none;
+  box-shadow: 0 0 0 2px #7ecbff33;
+}
+
+.add-event-kind-btn {
+  padding: 0.6rem 1.2rem;
+  border-radius: 6px;
+  background: #3498db;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.85rem;
+  border: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.add-event-kind-btn:hover {
+  background: #217dbb;
+}
+
+/* Session Invites */
+.session-invite-card {
+  background: #232c3b;
+  border-radius: 10px;
+  padding: 1em 1.2em;
+  border: 1px solid #28344a;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  margin-bottom: 0.5em;
+}
+.session-invite-name {
+  font-family: monospace;
+  color: #a3d8ff;
+  font-size: 1rem;
+}
+.session-invite-expiry {
+  font-size: 0.85rem;
+  color: #b0b8c9;
+}
+
+/* Section Titles */
+.sessions-section-title {
+  font-size: 1.2rem;
+  font-weight: 600;
+  margin-bottom: 1.2em;
+  color: #7ecbff;
+}
+
+/* Inputs and Buttons */
+.session-input {
+  width: 100%;
+  padding: 0.9em 1em;
+  border-radius: 8px;
+  border: 1px solid #28344a;
+  background: #1a2233;
+  color: #fff;
+  font-size: 1rem;
+  margin-bottom: 0.7em;
+  transition: border 0.18s, box-shadow 0.18s;
+}
+.session-input:focus {
+  border-color: #7ecbff;
+  outline: none;
+  box-shadow: 0 0 0 2px #7ecbff33;
+}
+
+.session-btn-primary {
+  width: 100%;
+  padding: 1em 0;
+  border-radius: 8px;
+  background: #3498db;
+  color: #fff;
+  font-weight: 600;
+  font-size: 1.05rem;
+  border: none;
+  box-shadow: 0 2px 8px 0 rgba(52,152,219,0.10);
+  cursor: pointer;
+  transition: background 0.18s, box-shadow 0.18s;
+}
+.session-btn-primary:hover {
+  background: #217dbb;
+  box-shadow: 0 4px 16px 0 rgba(52,152,219,0.18);
+}
+
+.session-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1;
+  gap: 0.4rem;
+}
+
+.session-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 0.7rem;
+  min-width: 140px;
+}
+
+.session-card-actions-bottom {
+  margin-top: 0.6rem;
+  justify-content: flex-end;
+  display: flex;
+  flex-direction: row;
+  gap: 0.7rem;
+}
+
+@media (min-width: 700px) {
+  .session-header {
+    align-items: flex-start;
+  }
+  .session-info {
+    flex: 1;
+  }
+  .session-card-actions {
+    min-width: 140px;
+  }
+  .sessions-container {
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 700px) {
+  .sessions-container {
+    padding: 1.5rem;
+    margin: 1rem 0;
+  }
+  .session-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1rem;
+  }
+  .session-card-actions {
+    flex-direction: row;
+    align-items: stretch;
+    justify-content: flex-start;
+    width: 100%;
+    min-width: 0;
+    gap: 0.7rem;
+    margin-top: 0.7rem;
+  }
+  .session-badge {
+    top: 0.7rem;
+    right: 1rem;
+  }
+  .session-card-actions-bottom {
+    margin-top: 0.5rem;
+  }
+}
+
+/* Error and Empty States */
+.session-loading,
+.session-error,
+.session-empty {
+  text-align: center;
+  padding: 2rem;
+  color: #b0b8c9;
+  font-size: 1.1rem;
+}
+
+/* Loading and error states */
+.session-loading {
+  background: #1a2233;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  border: 1px solid #28344a;
+}
+
+.session-error {
+  background: rgba(126, 203, 255, 0.1);
+  border: 1px solid #7ecbff;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  color: #7ecbff;
+}
+
+.session-empty {
+  background: #1a2233;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  border: 1px solid #28344a;
+  font-style: italic;
+}
+
+/* Input Row with QR Button */
+.session-input-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.session-input-row .session-input {
+  flex: 1;
+  margin-bottom: 0;
+  height: 48px;
+}
+
+.qr-scan-btn {
+  width: 48px;
+  height: 48px;
+  padding: 6px;
+  border-radius: 8px;
+  background: #7ecbff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.18s;
+  flex-shrink: 0;
+}
+
+.qr-scan-btn:hover:not(:disabled) {
+  background: #5ab9ff;
+  transform: translateY(-1px);
+}
+
+.qr-scan-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.qr-icon {
+  width: 100%;
+  height: 100%;
+  border-radius: 3px;
+  object-fit: cover;
+}
+
+/* QR Scanner Modal */
+.scanner-modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  box-sizing: border-box;
+}
+
+.scanner-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.9);
+  cursor: pointer;
+}
+
+.scanner-container-modal {
+  position: relative;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6);
+  max-width: 90vw;
+  max-height: 90vh;
+}
+
+/* QR Reticule Overlay */
+.qr-reticule {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 200px;
+  height: 200px;
+  pointer-events: none;
+}
+
+.qr-corner {
+  position: absolute;
+  width: 30px;
+  height: 30px;
+  border: 3px solid #7ecbff;
+}
+
+.qr-corner-tl {
+  top: 0;
+  left: 0;
+  border-right: none;
+  border-bottom: none;
+}
+
+.qr-corner-tr {
+  top: 0;
+  right: 0;
+  border-left: none;
+  border-bottom: none;
+}
+
+.qr-corner-bl {
+  bottom: 0;
+  left: 0;
+  border-right: none;
+  border-top: none;
+}
+
+.qr-corner-br {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+} 

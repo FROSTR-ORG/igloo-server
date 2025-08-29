@@ -1,0 +1,377 @@
+/* requests.css - Custom styles for Permission Requests component
+   Import this file in your component or main CSS entry. */
+
+.requests-container {
+  background: rgba(15, 25, 45, 0.9);
+  border-radius: 18px;
+  box-shadow: 0 4px 32px 0 rgba(0,0,0,0.18);
+  padding: 2.5rem;
+  width: 100%;
+  box-sizing: border-box;
+  margin: 2rem 0;
+  border: 1px solid #232c3b;
+}
+
+.requests-container .section-header {
+  font-size: 2rem;
+  font-weight: 700;
+  margin-bottom: 2rem;
+  color: #fff;
+}
+
+.requests-section {
+  margin-bottom: 2.5rem;
+}
+
+.requests-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.requests-loading,
+.requests-error,
+.requests-empty {
+  text-align: center;
+  padding: 2rem;
+  color: #b0b8c9;
+  font-size: 1.1rem;
+}
+
+/* Request Cards */
+.request-card {
+  display: flex;
+  flex-direction: column;
+  background: #232c3b;
+  border-radius: 12px;
+  padding: 1.25rem 1.5rem;
+  box-shadow: 0 2px 12px 0 rgba(0,0,0,0.10);
+  border: 1px solid #28344a;
+  transition: box-shadow 0.2s;
+  gap: 1rem;
+  position: relative;
+}
+
+.request-card:hover {
+  box-shadow: 0 6px 24px 0 rgba(0,0,0,0.18);
+}
+
+.request-card-signature {
+  border-left: 4px solid #7ecbff;
+}
+
+/* Request Header */
+.request-header {
+  display: flex;
+  width: 100%;
+  margin-bottom: 0.5rem;
+}
+
+.request-header-content {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  width: 100%;
+}
+
+.request-origin-icon {
+  width: 32px;
+  height: 32px;
+  border-radius: 6px;
+  object-fit: cover;
+  flex-shrink: 0;
+}
+
+.request-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.request-header-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.request-method {
+  font-family: monospace;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #a3d8ff;
+  white-space: nowrap;
+}
+
+.request-timestamp {
+  font-size: 0.75rem;
+  color: #888;
+  white-space: nowrap;
+}
+
+.request-origin-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.request-origin-name {
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: #b0b8c9;
+}
+
+.request-origin-url {
+  color: #7ecbff;
+  font-size: 0.8rem;
+  text-decoration: none;
+}
+
+.request-origin-url:hover {
+  text-decoration: underline;
+}
+
+/* Request Body */
+.request-body {
+  width: 100%;
+  margin-bottom: 0.75rem;
+}
+
+.request-content-container {
+  position: relative;
+  background: #1a2233;
+  border-radius: 8px;
+  border: 1px solid #28344a;
+}
+
+.request-content-toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  background: #7ecbff;
+  color: #1a2233;
+  border: none;
+  cursor: pointer;
+  font-size: 1rem;
+  font-weight: bold;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.18s;
+  z-index: 2;
+}
+
+.request-content-toggle:hover {
+  background: #5ab9ff;
+}
+
+.request-content-preview,
+.request-content-full {
+  padding: 1rem;
+  padding-right: 3rem;
+}
+
+.request-content-text {
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #b0b8c9;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  line-height: 1.4;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.request-content-preview .request-content-text {
+  max-height: 60px;
+  overflow: hidden;
+}
+
+/* Request Actions */
+.request-actions {
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #28344a;
+}
+
+.request-actions-primary {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.request-actions-bulk {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.request-actions-kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+.request-btn {
+  padding: 0.8em 1em;
+  border-radius: 6px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.15s;
+  box-shadow: 0 2px 8px 0 rgba(0,0,0,0.10);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.request-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px 0 rgba(0,0,0,0.18);
+}
+
+.request-btn:active {
+  transform: translateY(0);
+}
+
+.request-btn-approve {
+  background: #27ae60;
+  color: #fff;
+}
+
+.request-btn-approve:hover {
+  background: #219a52;
+}
+
+.request-btn-deny {
+  background: #e74c3c;
+  color: #fff;
+}
+
+.request-btn-deny:hover {
+  background: #c0392b;
+}
+
+.request-btn-approve-all {
+  background: #2ecc71;
+  color: #fff;
+}
+
+.request-btn-approve-all:hover {
+  background: #27ae60;
+}
+
+.request-btn-deny-all {
+  background: #e67e22;
+  color: #fff;
+}
+
+.request-btn-deny-all:hover {
+  background: #d35400;
+}
+
+.request-btn-approve-kinds,
+.request-btn-deny-kinds {
+  font-size: 0.8rem;
+}
+
+.request-btn-approve-kinds {
+  background: #3498db;
+  color: #fff;
+}
+
+.request-btn-approve-kinds:hover {
+  background: #2980b9;
+}
+
+.request-btn-deny-kinds {
+  background: #9b59b6;
+  color: #fff;
+}
+
+.request-btn-deny-kinds:hover {
+  background: #8e44ad;
+}
+
+/* Responsive Design */
+@media (max-width: 700px) {
+  .requests-container {
+    padding: 1.5rem;
+    margin: 1rem 0;
+  }
+  
+  .request-card {
+    padding: 1rem;
+  }
+  
+  .request-header-content {
+    gap: 0.5rem;
+  }
+  
+  .request-origin-icon {
+    width: 28px;
+    height: 28px;
+  }
+  
+  .request-method {
+    font-size: 1rem;
+  }
+  
+  .request-timestamp {
+    font-size: 0.7rem;
+  }
+  
+  .request-origin-name {
+    font-size: 0.85rem;
+  }
+  
+  .request-origin-url {
+    font-size: 0.75rem;
+  }
+  
+  .request-btn {
+    padding: 0.7em 0.8em;
+    font-size: 0.8rem;
+  }
+  
+  .request-btn-approve-kinds,
+  .request-btn-deny-kinds {
+    font-size: 0.75rem;
+  }
+}
+
+/* Loading and error states */
+.requests-loading {
+  background: #1a2233;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  border: 1px solid #28344a;
+}
+
+.requests-error {
+  background: rgba(126, 203, 255, 0.1);
+  border: 1px solid #7ecbff;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  color: #7ecbff;
+}
+
+.requests-empty {
+  background: #1a2233;
+  border-radius: 8px;
+  padding: 2rem;
+  text-align: center;
+  border: 1px solid #28344a;
+  font-style: italic;
+} 

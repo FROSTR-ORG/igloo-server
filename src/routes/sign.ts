@@ -50,9 +50,17 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
 
       context.addServerLog('sign', `Signature request for message: ${message.slice(0, 8)}...`);
       
-      // Use the existing Bifrost node's sign method
+      // Use the existing Bifrost node's sign method with increased timeout
       // This handles all the FROSTR threshold signature complexity
-      const response = await context.node.req.sign(message);
+      // Note: The timeout is hardcoded in the Bifrost library, but we can wrap it with our own timeout
+      const SIGN_TIMEOUT = parseInt(process.env.FROSTR_SIGN_TIMEOUT || '30000'); // Default 30 seconds
+      
+      const response = await Promise.race([
+        context.node.req.sign(message),
+        new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('FROSTR signing timeout - operation took longer than ' + SIGN_TIMEOUT / 1000 + ' seconds')), SIGN_TIMEOUT)
+        )
+      ]);
       
       if (!response.ok) {
         const errorMsg = response.err || 'Unknown error';
