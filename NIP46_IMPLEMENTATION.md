@@ -294,6 +294,45 @@ async approveRequest(requestId: string) {
 }
 ```
 
+### Automatic Permission Granting
+
+When approving requests, the system automatically updates session permissions to allow future requests of the same type:
+
+1. **Individual Approval**: Updates session to allow that specific event kind
+2. **Approve All**: Updates sessions to allow all requested event kinds
+3. **Approve All Kind X**: Updates all affected sessions to allow that kind
+
+```typescript
+// When approving a kind 1 request
+const handleApprove = (requestId: string) => {
+  // Find the request and session
+  const request = pendingRequests.find(req => req.id === requestId)
+  const session = sessions.find(s => s.pubkey === request.session_origin.pubkey)
+  
+  // Update session policy to allow this kind
+  const updatedPolicy = {
+    ...session.policy,
+    kinds: {
+      ...session.policy.kinds,
+      '1': true  // Now allowed for future requests
+    }
+  }
+  
+  controller.updateSession(session.pubkey, updatedPolicy)
+  controller.approveRequest(requestId)
+}
+```
+
+This behavior matches popular NIP-46 implementations where approving a request grants permission for similar future requests, reducing approval fatigue.
+
+**User Experience Flow**:
+1. Client requests to sign a Kind 1 (Text Note)
+2. Request appears in the queue with "Blocked" badge if not allowed
+3. User clicks "Approve" or "Approve All Text Note"
+4. Session permissions automatically updated to allow Kind 1
+5. Future Kind 1 requests from that client are auto-approved
+6. User can still revoke permissions later via Sessions tab
+
 ## Security Model
 
 ### Authentication Layers
@@ -420,14 +459,32 @@ try {
 ### Sessions Component (`Sessions.tsx`)
 - Lists active and pending sessions
 - Allows connection via QR scanner or paste
-- Manages permissions per session
+- Manages permissions per session with live updates
 - Revoke session functionality
+- **Event-driven updates**: No polling, updates triggered by actual changes
+- **Smart logging**: Only logs when session counts actually change
 
 ### Requests Component (`Requests.tsx`)
-- Shows pending signature requests
-- Displays denied requests with reasons
-- Approve/deny functionality
-- Request details and filtering
+- Shows pending signature requests with denied reason badges
+- Displays denied requests that were blocked by policy
+- Individual and bulk approve/deny functionality
+- **Kind-specific bulk actions**: "Approve All Kind X" and "Deny All Kind X" buttons
+- Friendly event kind names (e.g., "Text Note" instead of "Kind 1")
+- Expandable request details with event content preview
+- **Auto-permission granting**: Approving requests automatically updates session permissions
+
+#### Supported Event Kind Names
+The component maps common Nostr event kinds to friendly names:
+- Kind 0: Metadata
+- Kind 1: Text Note
+- Kind 3: Contacts
+- Kind 4: Encrypted DM
+- Kind 6: Repost
+- Kind 7: Reaction
+- Kind 1984: Reporting
+- Kind 9734/9735: Zap Request/Zap
+- Kind 30023: Long-form Content
+- And many more...
 
 ### Permissions Component (`Permissions.tsx`)
 - Dropdown for editing session permissions
@@ -490,14 +547,32 @@ const response = await Promise.race([
 
 This prevents hanging when FROSTR peers need time to come online.
 
+## Recent Improvements
+
+### Enhanced Request Management (Latest)
+- **Kind-Specific Bulk Actions**: Added "Approve All Kind X" and "Deny All Kind X" buttons for efficient request management
+- **Friendly Event Names**: Common event kinds display human-readable names (e.g., "Text Note" for kind 1, "Reaction" for kind 7)
+- **Request Counts**: Bulk action buttons show the number of pending requests they'll affect
+
+### Automatic Permission Updates
+- **Smart Permission Granting**: Approving any request automatically updates the session's permissions to allow that type in the future
+- **Reduces Approval Fatigue**: Once you approve a kind 1 request, all future kind 1 requests from that session are automatically allowed
+- **Works at All Levels**: Individual approval, bulk approval, and kind-specific approval all update permissions
+
+### Performance Optimizations
+- **Removed Polling**: Eliminated the 2-second polling interval that was causing log spam
+- **Event-Driven Updates**: UI updates only when actual changes occur via the event system
+- **Smart Logging**: Sessions component only logs when counts actually change, not on every check
+
 ## Summary
 
 Igloo Server's NIP-46 implementation successfully bridges the gap between traditional Nostr remote signing and FROSTR threshold signatures. Key achievements:
 
 1. **Seamless Integration**: Nostr apps work without modification
 2. **Enhanced Security**: No single point of failure for private keys
-3. **Flexible Permissions**: Granular control over signing operations
+3. **Flexible Permissions**: Granular control over signing operations with auto-updating
 4. **Robust Error Handling**: Graceful degradation and recovery
-5. **User-Friendly UI**: Clear session and request management
+5. **User-Friendly UI**: Clear session and request management with bulk actions
+6. **Performance Optimized**: Event-driven architecture without unnecessary polling
 
 The implementation cleverly works around library limitations while maintaining full NIP-46 compatibility, making FROSTR threshold signatures accessible to the entire Nostr ecosystem through a familiar protocol.

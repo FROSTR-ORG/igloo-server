@@ -29,11 +29,20 @@ export function Sessions({ controller }: SessionsProps) {
   useEffect(() => {
     if (!controller) return
 
+    let lastActiveCount = 0
+    let lastPendingCount = 0
+
     const updateSessions = () => {
-      console.log('[Sessions] Updating sessions list')
       const active = controller.getActiveSessions()
       const pending = controller.getPendingSessions()
-      console.log('[Sessions] Active sessions:', active.length, 'Pending:', pending.length)
+      
+      // Only log when there's an actual change
+      if (active.length !== lastActiveCount || pending.length !== lastPendingCount) {
+        console.log('[Sessions] Sessions changed - Active:', active.length, 'Pending:', pending.length)
+        lastActiveCount = active.length
+        lastPendingCount = pending.length
+      }
+      
       setActiveSessions(active)
       setPendingSessions(pending)
     }
@@ -46,14 +55,12 @@ export function Sessions({ controller }: SessionsProps) {
     controller.on('session:pending', updateSessions)
     controller.on('session:updated', updateSessions)
 
-    // Set up interval to poll for updates as backup
-    const interval = setInterval(updateSessions, 2000)
+    // No polling needed - events should be sufficient
 
     return () => {
       controller.off('session:active', updateSessions)
       controller.off('session:pending', updateSessions)
       controller.off('session:updated', updateSessions)
-      clearInterval(interval)
     }
   }, [controller])
 

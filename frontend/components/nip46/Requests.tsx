@@ -74,6 +74,33 @@ export function Requests({ controller }: RequestsProps) {
 
   const handleApprove = (requestId: string) => {
     if (!controller) return
+    
+    // Find the request being approved
+    const request = pendingRequests.find(req => req.id === requestId)
+    
+    // If it's a sign_event request, update the session to allow this kind
+    if (request && request.method === 'sign_event' && request.content?.kind !== undefined) {
+      const sessionPubkey = request.session_origin.pubkey
+      const allSessions = [...controller.getActiveSessions(), ...controller.getPendingSessions()]
+      const session = allSessions.find(s => s.pubkey === sessionPubkey)
+      
+      if (session) {
+        // Create updated policy with this kind allowed
+        const updatedPolicy = {
+          ...session.policy,
+          kinds: {
+            ...(session.policy?.kinds || {}),
+            [request.content.kind.toString()]: true
+          }
+        }
+        
+        // Update the session with the new policy
+        controller.updateSession(sessionPubkey, updatedPolicy)
+        console.log(`[Requests] Updated session ${sessionPubkey} to allow kind ${request.content.kind}`)
+      }
+    }
+    
+    // Approve the request
     controller.approveRequest(requestId)
   }
 
@@ -84,6 +111,44 @@ export function Requests({ controller }: RequestsProps) {
 
   const handleApproveAll = () => {
     if (!controller) return
+    
+    // Collect all unique sessions and the kinds they're requesting
+    const sessionKinds = new Map<string, Set<number>>()
+    
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && req.content?.kind !== undefined) {
+        const sessionPubkey = req.session_origin.pubkey
+        if (!sessionKinds.has(sessionPubkey)) {
+          sessionKinds.set(sessionPubkey, new Set())
+        }
+        sessionKinds.get(sessionPubkey)!.add(req.content.kind)
+      }
+    })
+    
+    // Update permissions for each session to allow all requested kinds
+    sessionKinds.forEach((kinds, sessionPubkey) => {
+      const allSessions = [...controller.getActiveSessions(), ...controller.getPendingSessions()]
+      const session = allSessions.find(s => s.pubkey === sessionPubkey)
+      
+      if (session) {
+        // Create updated policy with all requested kinds allowed
+        const updatedKinds = { ...(session.policy?.kinds || {}) }
+        kinds.forEach(kind => {
+          updatedKinds[kind.toString()] = true
+        })
+        
+        const updatedPolicy = {
+          ...session.policy,
+          kinds: updatedKinds
+        }
+        
+        // Update the session with the new policy
+        controller.updateSession(sessionPubkey, updatedPolicy)
+        console.log(`[Requests] Updated session ${sessionPubkey} to allow kinds:`, Array.from(kinds))
+      }
+    })
+    
+    // Now approve all pending requests
     pendingRequests.forEach(req => {
       controller.approveRequest(req.id)
     })
@@ -94,6 +159,70 @@ export function Requests({ controller }: RequestsProps) {
     pendingRequests.forEach(req => {
       controller.denyRequest(req.id, 'Denied by user')
     })
+  }
+
+  const handleApproveAllKind = (kind: number) => {
+    if (!controller) return
+    
+    // Get all unique sessions that have pending requests for this kind
+    const affectedSessions = new Map<string, NIP46Request>()
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && req.content?.kind === kind) {
+        const sessionPubkey = req.session_origin.pubkey
+        if (!affectedSessions.has(sessionPubkey)) {
+          affectedSessions.set(sessionPubkey, req)
+        }
+      }
+    })
+    
+    // Update permissions for each affected session to allow this kind
+    affectedSessions.forEach((req, sessionPubkey) => {
+      // Get all sessions to find the one we need to update
+      const allSessions = [...controller.getActiveSessions(), ...controller.getPendingSessions()]
+      const session = allSessions.find(s => s.pubkey === sessionPubkey)
+      
+      if (session) {
+        // Create updated policy with this kind allowed
+        const updatedPolicy = {
+          ...session.policy,
+          kinds: {
+            ...(session.policy?.kinds || {}),
+            [kind.toString()]: true
+          }
+        }
+        
+        // Update the session with the new policy
+        controller.updateSession(sessionPubkey, updatedPolicy)
+        console.log(`[Requests] Updated session ${sessionPubkey} to allow kind ${kind}`)
+      }
+    })
+    
+    // Now approve all the pending requests for this kind
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && req.content?.kind === kind) {
+        controller.approveRequest(req.id)
+      }
+    })
+  }
+
+  const handleDenyAllKind = (kind: number) => {
+    if (!controller) return
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && req.content?.kind === kind) {
+        controller.denyRequest(req.id, 'Denied by user')
+      }
+    })
+  }
+
+  // Get unique event kinds from pending sign_event requests
+  const getUniqueEventKinds = (): number[] => {
+    const kinds = new Set<number>()
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && req.content?.kind !== undefined) {
+        kinds.add(req.content.kind)
+      }
+    })
+    return Array.from(kinds).sort((a, b) => a - b)
   }
 
   const toggleExpanded = (requestId: string) => {
@@ -144,11 +273,44 @@ export function Requests({ controller }: RequestsProps) {
     }
   }
 
+  const getEventKindName = (kind: number): string => {
+    const kindNames: Record<number, string> = {
+      0: 'Metadata',
+      1: 'Text Note',
+      2: 'Recommend Relay',
+      3: 'Contacts',
+      4: 'Encrypted DM',
+      5: 'Event Deletion',
+      6: 'Repost',
+      7: 'Reaction',
+      8: 'Badge Award',
+      40: 'Channel Creation',
+      41: 'Channel Metadata',
+      42: 'Channel Message',
+      43: 'Channel Hide Message',
+      44: 'Channel Mute User',
+      1984: 'Reporting',
+      9734: 'Zap Request',
+      9735: 'Zap',
+      10000: 'Mute List',
+      10001: 'Pin List',
+      10002: 'Relay List',
+      30000: 'Categorized People List',
+      30001: 'Categorized Bookmark List',
+      30023: 'Long-form Content',
+      30024: 'Draft Long-form Content',
+      30078: 'Application Data'
+    }
+    return kindNames[kind] || `Kind ${kind}`
+  }
+
+  const uniqueKinds = getUniqueEventKinds()
+
   return (
     <div className="space-y-6">
       {/* Bulk Actions */}
       {pendingRequests.length > 0 && (
-        <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4">
+        <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4 space-y-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-blue-400" />
@@ -173,6 +335,40 @@ export function Requests({ controller }: RequestsProps) {
               </Button>
             </div>
           </div>
+          
+          {/* Kind-specific bulk actions */}
+          {uniqueKinds.length > 0 && (
+            <div className="flex flex-wrap gap-2 pt-2 border-t border-blue-900/20">
+              {uniqueKinds.map(kind => {
+                const kindCount = pendingRequests.filter(
+                  req => req.method === 'sign_event' && req.content?.kind === kind
+                ).length
+                
+                const kindName = getEventKindName(kind)
+                
+                return (
+                  <div key={kind} className="flex gap-1">
+                    <Button
+                      onClick={() => handleApproveAllKind(kind)}
+                      size="sm"
+                      className="bg-blue-600 hover:bg-blue-700 text-blue-100 text-xs"
+                      title={`Approve all ${kindName} events`}
+                    >
+                      Approve All {kindName} ({kindCount})
+                    </Button>
+                    <Button
+                      onClick={() => handleDenyAllKind(kind)}
+                      size="sm"
+                      className="bg-purple-600 hover:bg-purple-700 text-purple-100 text-xs"
+                      title={`Deny all ${kindName} events`}
+                    >
+                      Deny All {kindName}
+                    </Button>
+                  </div>
+                )
+              })}
+            </div>
+          )}
         </div>
       )}
 
