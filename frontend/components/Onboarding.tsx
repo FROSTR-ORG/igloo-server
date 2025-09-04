@@ -2,10 +2,10 @@ import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Alert } from './ui/alert';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { PageLayout } from './ui/page-layout';
 import { AppHeader } from './ui/app-header';
 import { ContentCard } from './ui/content-card';
+import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Lock, User, Key, ArrowRight } from 'lucide-react';
 
 interface OnboardingProps {
@@ -139,6 +139,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
   };
 
+  const getCurrentStepNumber = () => {
+    return step === 'admin' ? 1 : step === 'setup' ? 2 : 3;
+  };
+
   if (!hasAdminSecret) {
     return (
       <PageLayout>
@@ -168,25 +172,64 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     <PageLayout>
       <AppHeader subtitle="Initial Setup" />
       
-      <div className="flex items-center justify-center min-h-[calc(100vh-12rem)] px-4">
+      <ContentCard>
+        <div className="space-y-6">
         {step === 'admin' && (
-          <Card className="bg-gray-900/40 border-blue-900/20 backdrop-blur-md shadow-2xl w-full max-w-lg">
-            <CardHeader className="pb-8 pt-10">
-              <div className="flex flex-col items-center space-y-4">
-                <div className="p-4 bg-blue-600/10 rounded-full">
-                  <Key size={32} className="text-blue-400" />
-                </div>
-                <CardTitle className="text-2xl font-semibold text-blue-100 text-center">
-                  Admin Authentication
-                </CardTitle>
-                <p className="text-gray-400 text-center max-w-sm">
-                  Enter the admin secret to begin setting up your Igloo Server.
-                </p>
+          <>
+            {/* Step indicator */}
+            <div className="flex items-center justify-center space-x-2">
+              {['Admin', 'Setup', 'Complete'].map((label, i) => {
+                const stepNum = i + 1;
+                const currentStep = getCurrentStepNumber();
+                const isActive = stepNum === currentStep;
+                const isPast = stepNum < currentStep;
+                return (
+                  <div key={i} className="flex items-center">
+                    <div
+                      className={`
+                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
+                        ${
+                          isPast
+                            ? 'bg-green-600/80 text-white'
+                            : isActive
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-800/50 text-gray-500'
+                        }
+                      `}
+                    >
+                      {isPast ? '✓' : stepNum}
+                    </div>
+                    {i < 2 && (
+                      <div
+                        className={`w-8 h-0.5 ${
+                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Icon and Title */}
+            <div className="flex items-center justify-center">
+              <div className="p-4 bg-blue-600/10 rounded-2xl border border-blue-600/20">
+                <Key className="w-8 h-8 text-blue-400" />
               </div>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-10 px-8">
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-blue-300">Admin Secret</label>
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-semibold text-blue-200">
+                Admin Authentication
+              </h3>
+              <p className="text-sm text-blue-300/70">
+                Enter the admin secret to begin setting up your Igloo Server
+              </p>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-blue-200">Admin Secret</label>
                 <Input
                   type="password"
                   placeholder="Enter admin secret"
@@ -194,13 +237,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   onChange={(e) => setAdminSecret(e.target.value)}
                   onKeyPress={handleAdminKeyPress}
                   disabled={isLoading}
-                  className="bg-gray-800/60 border-gray-700/60 text-gray-100 placeholder:text-gray-500 h-12 text-base"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                   autoFocus
                 />
               </div>
 
               {error && (
-                <Alert variant="error" className="bg-red-900/20 border-red-800/30">
+                <Alert variant="error">
                   {error}
                 </Alert>
               )}
@@ -208,7 +251,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               <Button
                 onClick={validateAdminSecret}
                 disabled={isLoading || !adminSecret.trim()}
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium text-base transition-colors"
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
               >
                 {isLoading ? (
                   <span className="flex items-center justify-center">
@@ -225,53 +268,91 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   </span>
                 )}
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </>
         )}
 
         {step === 'setup' && (
-          <Card className="bg-gray-900/40 border-blue-900/20 backdrop-blur-md shadow-2xl w-full max-w-lg">
-            <CardHeader className="pb-8 pt-10">
-              <div className="flex flex-col items-center space-y-4">
-                <div className="p-4 bg-blue-600/10 rounded-full">
-                  <User size={32} className="text-blue-400" />
-                </div>
-                <CardTitle className="text-2xl font-semibold text-blue-100 text-center">
-                  Create Admin Account
-                </CardTitle>
-                <p className="text-gray-400 text-center max-w-sm">
-                  Create your admin account to secure your Igloo Server.
-                </p>
+          <>
+            {/* Step indicator */}
+            <div className="flex items-center justify-center space-x-2">
+              {['Admin', 'Setup', 'Complete'].map((label, i) => {
+                const stepNum = i + 1;
+                const currentStep = getCurrentStepNumber();
+                const isActive = stepNum === currentStep;
+                const isPast = stepNum < currentStep;
+                return (
+                  <div key={i} className="flex items-center">
+                    <div
+                      className={`
+                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
+                        ${
+                          isPast
+                            ? 'bg-green-600/80 text-white'
+                            : isActive
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-800/50 text-gray-500'
+                        }
+                      `}
+                    >
+                      {isPast ? '✓' : stepNum}
+                    </div>
+                    {i < 2 && (
+                      <div
+                        className={`w-8 h-0.5 ${
+                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Icon and Title */}
+            <div className="flex items-center justify-center">
+              <div className="p-4 bg-green-600/10 rounded-2xl border border-green-600/20">
+                <User className="w-8 h-8 text-green-400" />
               </div>
-            </CardHeader>
-            <CardContent className="space-y-5 pb-10 px-8">
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-blue-300">Username</label>
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-semibold text-blue-200">
+                Create Admin Account
+              </h3>
+              <p className="text-sm text-blue-300/70">
+                Create your admin account to secure your Igloo Server
+              </p>
+            </div>
+
+            {/* Form */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-blue-200">Username</label>
                 <Input
                   type="text"
                   placeholder="Enter username (3-50 characters)"
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
                   disabled={isLoading}
-                  className="bg-gray-800/60 border-gray-700/60 text-gray-100 placeholder:text-gray-500 h-12 text-base"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                   autoFocus
                 />
               </div>
 
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-blue-300">Password</label>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-blue-200">Password</label>
                 <Input
                   type="password"
                   placeholder="Enter password (min 8 characters)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
-                  className="bg-gray-800/60 border-gray-700/60 text-gray-100 placeholder:text-gray-500 h-12 text-base"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                 />
               </div>
 
-              <div className="space-y-3">
-                <label className="text-sm font-medium text-blue-300">Confirm Password</label>
+              <div className="space-y-2">
+                <label className="text-sm font-medium text-blue-200">Confirm Password</label>
                 <Input
                   type="password"
                   placeholder="Confirm password"
@@ -279,12 +360,12 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   onKeyPress={handleSetupKeyPress}
                   disabled={isLoading}
-                  className="bg-gray-800/60 border-gray-700/60 text-gray-100 placeholder:text-gray-500 h-12 text-base"
+                  className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                 />
               </div>
 
               {error && (
-                <Alert variant="error" className="bg-red-900/20 border-red-800/30">
+                <Alert variant="error">
                   {error}
                 </Alert>
               )}
@@ -292,7 +373,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               <Button
                 onClick={createUser}
                 disabled={isLoading || !username.trim() || !password.trim() || !confirmPassword.trim()}
-                className="w-full h-12 bg-blue-600 hover:bg-blue-700 text-white font-medium text-base transition-colors"
+                className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
               >
                 {isLoading ? (
                   <span className="flex items-center justify-center">
@@ -309,45 +390,100 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   </span>
                 )}
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </>
         )}
 
         {step === 'complete' && (
-          <Card className="bg-gray-900/40 border-green-900/20 backdrop-blur-md shadow-2xl w-full max-w-lg">
-            <CardHeader className="pb-8 pt-10">
-              <div className="flex flex-col items-center space-y-4">
-                <div className="p-4 bg-green-600/10 rounded-full">
-                  <svg className="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <>
+            {/* Step indicator */}
+            <div className="flex items-center justify-center space-x-2">
+              {['Admin', 'Setup', 'Complete'].map((label, i) => {
+                const stepNum = i + 1;
+                const currentStep = getCurrentStepNumber();
+                const isActive = stepNum === currentStep;
+                const isPast = stepNum < currentStep;
+                return (
+                  <div key={i} className="flex items-center">
+                    <div
+                      className={`
+                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
+                        ${
+                          isPast
+                            ? 'bg-green-600/80 text-white'
+                            : isActive
+                            ? 'bg-blue-600 text-white'
+                            : 'bg-gray-800/50 text-gray-500'
+                        }
+                      `}
+                    >
+                      {isPast ? '✓' : stepNum}
+                    </div>
+                    {i < 2 && (
+                      <div
+                        className={`w-8 h-0.5 ${
+                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
+                        }`}
+                      />
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Icon and Title */}
+            <div className="flex items-center justify-center">
+              <div className="p-4 bg-blue-600/10 rounded-2xl border border-blue-600/20">
+                <svg className="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+            </div>
+            <div className="text-center space-y-2">
+              <h3 className="text-xl font-semibold text-blue-200">
+                Setup Complete!
+              </h3>
+            </div>
+
+            {/* Content */}
+            <div className="space-y-4">
+              <div className="bg-green-900/20 border border-green-600/30 rounded-lg p-4 space-y-2">
+                <p className="text-green-400 text-sm flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                </div>
-                <CardTitle className="text-2xl font-semibold text-green-100 text-center">
-                  Setup Complete!
-                </CardTitle>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-6 pb-10 px-8">
-              <Alert variant="success" className="bg-green-900/20 border-green-800/30">
-                <p className="mb-2">Your Igloo Server has been successfully configured.</p>
-                <p className="text-sm">Redirecting to login page...</p>
-              </Alert>
-              
-              <div className="text-center text-gray-400">
-                <p className="text-sm">You will be redirected in a moment.</p>
-                <p className="text-sm mt-3">
-                  If not, <button 
-                    onClick={onComplete}
-                    className="text-blue-400 hover:text-blue-300 underline transition-colors"
-                  >
-                    click here
-                  </button> to continue.
+                  Admin secret validated
+                </p>
+                <p className="text-green-400 text-sm flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  User account created
+                </p>
+                <p className="text-green-400 text-sm flex items-center gap-2">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Ready to sign in
                 </p>
               </div>
-            </CardContent>
-          </Card>
+              
+              <div className="text-center space-y-2">
+                <p className="text-sm text-blue-300/70">
+                  Redirecting to login page in a moment...
+                </p>
+                <button 
+                  onClick={onComplete}
+                  className="text-sm text-blue-400 hover:text-blue-300 hover:underline transition-colors"
+                >
+                  Click here to continue immediately
+                </button>
+              </div>
+            </div>
+          </>
         )}
-      </div>
+        </div>
+      </ContentCard>
     </PageLayout>
   );
 };
