@@ -493,7 +493,8 @@ AUTH_ENABLED=true
 API_KEY=your-secure-api-key-here
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASS=your-strong-password
-SESSION_SECRET=your-random-64-char-session-secret-here
+# SESSION_SECRET is auto-generated if not provided
+# SESSION_SECRET=your-custom-secret-here  # Optional override
 RATE_LIMIT_ENABLED=true
 ALLOWED_ORIGINS=https://yourdomain.com
 EOF
@@ -670,7 +671,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `BASIC_AUTH_USER` | Basic auth username | - | ❌ |
 | `BASIC_AUTH_PASS` | Basic auth password | - | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
-| `SESSION_SECRET` | Secret for session cookies (32+ chars) | - | ✅ (Production) |
+| `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` | ❌ |
@@ -806,14 +807,15 @@ AUTH_ENABLED=true
 API_KEY=your-secure-api-key-here
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASS=your-strong-password
-SESSION_SECRET=your-random-64-char-session-secret-here
+# SESSION_SECRET is auto-generated if not provided
+# SESSION_SECRET=your-custom-secret-here  # Optional override
 RATE_LIMIT_ENABLED=true
 ```
 
 **Development (Local only)**:
 ```bash
 AUTH_ENABLED=false  # Only for local development
-# SESSION_SECRET=optional-for-development  # Will show warning if not set
+# SESSION_SECRET is auto-generated if not set
 ```
 
 ### 🛡️ **Security Features**
@@ -822,7 +824,7 @@ AUTH_ENABLED=false  # Only for local development
 - **Automatic session cleanup** and timeout management
 - **Comprehensive rate limiting** with configurable windows and limits
 - **Secure headers** and CORS configuration
-- **Required SESSION_SECRET** in production to prevent session invalidation on restarts
+- **Automatic SESSION_SECRET** generation with secure persistence in `data/.session-secret`
 
 See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 
@@ -832,7 +834,7 @@ See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 - **Network security**: Use WSS (secure WebSocket) relays in production  
 - **Authentication required**: Configure authentication for any non-local deployment
 - **CORS security**: Set `ALLOWED_ORIGINS` to specific domains in production (avoid wildcard `*`)
-- **SESSION_SECRET required**: Set a strong 32+ character `SESSION_SECRET` in production to prevent session invalidation on server restarts
+- **SESSION_SECRET auto-generated**: Automatically generates and persists a secure `SESSION_SECRET` if not provided
 - **Memory management**: The relay auto-purges events to prevent memory leaks
 - **HTTPS recommended**: Use a reverse proxy with TLS for production deployments
 

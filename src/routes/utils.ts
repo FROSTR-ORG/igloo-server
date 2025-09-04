@@ -61,7 +61,8 @@ const ALLOWED_ENV_KEYS = new Set([
   'GROUP_CRED',         // Group credential for signing
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
-  'CREDENTIALS_SAVED_AT' // Timestamp when credentials were last saved
+  'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'SESSION_SECRET'      // Session secret for cookie signing (optional, auto-generated if not provided)
 ]);
 
 // Validate environment variable keys against whitelist

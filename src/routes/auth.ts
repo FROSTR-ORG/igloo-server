@@ -1,24 +1,84 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync } from 'fs';
+import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 
+// Session secret persistence configuration
+const SESSION_SECRET_DIR = process.env.DB_PATH || path.join(process.cwd(), 'data');
+const SESSION_SECRET_FILE = path.join(SESSION_SECRET_DIR, '.session-secret');
+
+// Load or generate a persistent SESSION_SECRET
+function loadOrGenerateSessionSecret(): string | null {
+  try {
+    // Ensure data directory exists
+    if (!existsSync(SESSION_SECRET_DIR)) {
+      mkdirSync(SESSION_SECRET_DIR, { recursive: true });
+    }
+    
+    // Check if secret already exists
+    if (existsSync(SESSION_SECRET_FILE)) {
+      const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
+      if (secret && secret.length >= 32) {
+        console.log('🔑 SESSION_SECRET loaded from secure storage');
+        return secret;
+      }
+    }
+    
+    // Generate new secret (32 bytes = 64 hex characters)
+    const newSecret = randomBytes(32).toString('hex');
+    
+    // Write atomically with secure permissions
+    const tempFile = `${SESSION_SECRET_FILE}.tmp`;
+    writeFileSync(tempFile, newSecret, { mode: 0o600 });
+    
+    // Atomic rename to prevent corruption
+    renameSync(tempFile, SESSION_SECRET_FILE);
+    
+    // Ensure secure permissions (may not work on Windows, but that's ok)
+    try {
+      chmodSync(SESSION_SECRET_FILE, 0o600);
+    } catch (e) {
+      // Windows doesn't support chmod, ignore
+    }
+    
+    console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
+    console.log('   Sessions will now persist across server restarts');
+    
+    return newSecret;
+  } catch (error) {
+    console.error('Failed to load/generate SESSION_SECRET:', error);
+    return null;
+  }
+}
+
 // Validate SESSION_SECRET configuration
 function validateSessionSecret(): string | null {
-  const sessionSecret = process.env.SESSION_SECRET;
+  let sessionSecret = process.env.SESSION_SECRET;
   const isProduction = process.env.NODE_ENV === 'production';
   
+  // If no SESSION_SECRET provided, attempt to auto-generate or load
   if (!sessionSecret) {
-    const message = 'SESSION_SECRET environment variable is not set';
-    if (isProduction) {
-      console.error(`❌ SECURITY ERROR: ${message}. This is required in production to prevent session invalidation on server restarts.`);
-      process.exit(1);
-    } else {
-      console.warn(`⚠️  WARNING: ${message}. Sessions will be invalidated on server restart. Set SESSION_SECRET for persistent sessions.`);
-      return null;
+    sessionSecret = loadOrGenerateSessionSecret();
+    
+    if (!sessionSecret) {
+      // Generation failed
+      const message = 'Failed to auto-generate SESSION_SECRET';
+      if (isProduction) {
+        console.error(`❌ SECURITY ERROR: ${message}. Sessions cannot be enabled.`);
+        process.exit(1);
+      } else {
+        console.warn(`⚠️  WARNING: ${message}. Sessions will be disabled. Check file permissions on data directory.`);
+        return null;
+      }
     }
+  } else {
+    // Using provided SESSION_SECRET from environment
+    console.log('🔐 SESSION_SECRET configured via environment variable');
   }
   
-  if (sessionSecret.length < 32) {
+  // Validate length
+  if (sessionSecret && sessionSecret.length < 32) {
     const message = 'SESSION_SECRET should be at least 32 characters long for security';
     if (isProduction) {
       console.error(`❌ SECURITY ERROR: ${message}`);

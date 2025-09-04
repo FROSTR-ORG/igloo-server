@@ -89,6 +89,7 @@ curl http://localhost:8002/api/status
 - Timing-safe authentication to prevent timing attacks
 - CORS configuration with allowed origins
 - Rate limiting (configurable)
+- **Auto-generated SESSION_SECRET**: Automatically creates and persists in `data/.session-secret` if not provided
 
 ### Dual-Mode Operation
 
@@ -151,7 +152,7 @@ Environment variables:
 3. **Mode-Specific Requirements**:
    - **Database Mode**: `ADMIN_SECRET` for initial setup, then username/password login
    - **Headless Mode**: `GROUP_CRED` and `SHARE_CRED` environment variables
-   - **Both Modes**: `SESSION_SECRET` required in production (32+ chars)
+   - **Both Modes**: `SESSION_SECRET` auto-generated if not provided (stored in `data/.session-secret`)
 
 4. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 

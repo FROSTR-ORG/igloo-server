@@ -31,6 +31,37 @@ Igloo Server supports two operation modes with different security models:
 | Backup Complexity | 📦 Database file + env | 📄 Environment only |
 | Migration Path | ✅ Import from env | ✅ Export to env |
 
+## 🔑 SESSION_SECRET Auto-Generation
+
+Starting with this version, Igloo Server **automatically generates and persists** SESSION_SECRET if not provided:
+
+### How It Works
+1. **First Run**: If no SESSION_SECRET is set in environment, the server:
+   - Generates a cryptographically secure 64-character hex string
+   - Saves it to `data/.session-secret` with 600 permissions (owner read/write only)
+   - Uses atomic file operations to prevent corruption
+
+2. **Subsequent Runs**: The server:
+   - Checks for existing `.session-secret` file
+   - Loads the previously generated secret
+   - Sessions persist across restarts
+
+3. **Manual Override**: You can still set your own:
+   ```bash
+   SESSION_SECRET=your-custom-64-char-secret
+   ```
+
+### Security Benefits
+- **Zero-configuration security**: Sessions work securely out of the box
+- **Persistent across restarts**: No session invalidation on server restart
+- **Secure file storage**: 600 permissions on Unix systems
+- **Atomic operations**: Prevents corruption during concurrent access
+
+### File Locations
+- **Default**: `./data/.session-secret`
+- **Custom DB_PATH**: `$DB_PATH/.session-secret`
+- **Docker**: Volume-mounted for persistence
+
 ## 🔒 Authentication Configuration
 
 ### Database Mode Setup (HEADLESS=false)
@@ -91,10 +122,13 @@ Igloo Server supports two operation modes with different security models:
 
 3. **Session Security**:
    ```bash
-   SESSION_SECRET=your-random-session-secret
+   # SESSION_SECRET is now auto-generated if not provided!
+   # The server creates and saves it securely in data/.session-secret
+   # You can still override with your own value:
+   # SESSION_SECRET=your-custom-session-secret
    SESSION_TIMEOUT=3600  # 1 hour
    ```
-   Generate secret: `openssl rand -hex 32`
+   Auto-generation uses cryptographically secure random bytes
 
 ### Development vs Production
 
@@ -267,7 +301,7 @@ DB_PATH=/encrypted/volume/igloo/data
 AUTH_ENABLED=true
 API_KEY=enterprise-api-key-with-special-chars
 ALLOWED_ORIGINS=https://secure.enterprise.com
-SESSION_SECRET=256-bit-random-secret
+# SESSION_SECRET auto-generated and persisted in data/.session-secret
 SESSION_TIMEOUT=1800   # 30 minutes
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_WINDOW=300  # 5 minutes
