@@ -2,6 +2,7 @@ import { serve, type ServerWebSocket } from 'bun';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
+import { closeDatabase } from './db/database.js';
 import { 
   handleRequest, 
   PeerStatus, 
@@ -64,6 +65,16 @@ let peerStatuses = new Map<string, PeerStatus>();
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
+
+// Initialize database if not in headless mode
+if (!CONST.HEADLESS) {
+  console.log('🗄️  Database mode enabled - using SQLite for user management');
+  if (!CONST.ADMIN_SECRET) {
+    console.warn('⚠️  ADMIN_SECRET not set - onboarding will require configuration');
+  }
+} else {
+  console.log('📁 Headless mode enabled - using environment variables');
+}
 
 // Create the Nostr relay
 const relay = new NostrRelay();
@@ -424,6 +435,12 @@ process.on('SIGTERM', () => {
   }
   
   cleanupMonitoring();
+  
+  // Close database connection if not in headless mode
+  if (!CONST.HEADLESS) {
+    closeDatabase();
+  }
+  
   process.exit(0);
 });
 
@@ -437,5 +454,11 @@ process.on('SIGINT', () => {
   }
   
   cleanupMonitoring();
+  
+  // Close database connection if not in headless mode
+  if (!CONST.HEADLESS) {
+    closeDatabase();
+  }
+  
   process.exit(0);
 });

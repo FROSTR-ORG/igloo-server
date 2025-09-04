@@ -41,5 +41,18 @@ static/app.js
 static/app.css
 static/styles.css
 
-#VSCode
+# VSCode
 .vscode
+
+# Database
+data/
+*.db
+igloo.db
+
+# macOS
+.DS_Store
+
+# Test files
+test-*.sh
+debug-*.js
+verify-*.md

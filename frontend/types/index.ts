@@ -113,6 +113,7 @@ export type RenderableData = DecodedGroup | DecodedShare | Record<string, unknow
 // Signer types
 export interface SignerHandle {
   stopSigner: () => Promise<void>;
+  checkStatus: () => void;
 }
 
 export interface SignerProps {

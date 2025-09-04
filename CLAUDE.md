@@ -56,9 +56,10 @@ curl http://localhost:8002/api/status
 
 1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests
 2. **Bifrost Node (`src/node/manager.ts`)**: FROSTR signing node with health monitoring and auto-restart
-3. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status
-4. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS
-5. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing
+3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
+4. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status, user, onboarding
+5. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS
+6. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing
 
 ### Key Design Patterns
 
@@ -89,6 +90,37 @@ curl http://localhost:8002/api/status
 - CORS configuration with allowed origins
 - Rate limiting (configurable)
 
+### Dual-Mode Operation
+
+The server supports two operation modes controlled by the `HEADLESS` environment variable:
+
+#### Database Mode (Default - HEADLESS=false)
+- **Multi-user support** with individual accounts
+- **Encrypted credential storage** using bcrypt + AES-256
+- **Onboarding flow** with `ADMIN_SECRET` for initial setup
+- **Session management** for web UI authentication
+- **Auto-start node** on login or credential save
+- **Database location** configurable via `DB_PATH` (default: ./data)
+
+Key files:
+- `src/db/database.ts` - User management and encryption
+- `src/routes/onboarding.ts` - Initial setup flow
+- `src/routes/user.ts` - User credential management
+- `frontend/components/Onboarding.tsx` - Onboarding UI
+
+#### Headless Mode (HEADLESS=true)
+- **Single-user operation** via environment variables
+- **Direct credential storage** in `GROUP_CRED` and `SHARE_CRED`
+- **Backward compatible** with existing deployments
+- **Node starts at server startup** if credentials present
+
+Environment variables:
+- `ADMIN_SECRET` - Required for initial database mode setup
+- `HEADLESS` - Controls operation mode (default: false)
+- `DB_PATH` - Database storage location (default: ./data)
+- `GROUP_CRED` - FROSTR group credential (headless mode only)
+- `SHARE_CRED` - Your secret share (headless mode only)
+
 ## Critical Files & Patterns
 
 ### TypeScript Configuration
@@ -116,10 +148,10 @@ curl http://localhost:8002/api/status
    - Dev: Use `NODE_ENV=development` and `bun run build:dev` for no caching
    - Prod: Use `NODE_ENV=production` with proper auth configuration
 
-3. **Required Environment Variables**:
-   - `GROUP_CRED`: FROSTR group credential (bfgroup1...)
-   - `SHARE_CRED`: Your secret share (bfshare1...)
-   - `SESSION_SECRET`: Required in production (32+ chars)
+3. **Mode-Specific Requirements**:
+   - **Database Mode**: `ADMIN_SECRET` for initial setup, then username/password login
+   - **Headless Mode**: `GROUP_CRED` and `SHARE_CRED` environment variables
+   - **Both Modes**: `SESSION_SECRET` required in production (32+ chars)
 
 4. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 

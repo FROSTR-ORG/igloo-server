@@ -54,8 +54,9 @@ export interface ServerBifrostNode {
 }
 
 export interface AuthContext {
-  userId?: string;
+  userId?: string | number; // Support both string (env auth) and number (database user id)
   authenticated: boolean;
+  password?: string; // For database users who need decryption
 }
 
 import type { ServerWebSocket } from 'bun';

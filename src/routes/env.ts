@@ -1,7 +1,3 @@
-import { 
-  createConnectedNode, 
-  createAndConnectNode
-} from '@frostr/igloo-core';
 import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { 
   readEnvFile, 
@@ -11,6 +7,9 @@ import {
   getValidRelays,
   getSecureCorsHeaders 
 } from './utils.js';
+import { HEADLESS } from '../const.js';
+import { getUserCredentials } from '../db/database.js';
+import { createAndStartNode } from './node-manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -47,75 +46,38 @@ async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise
   }, context);
 }
 
-// Extracted node creation and connection logic with reduced timeout and retries
+// Wrapper function to use shared node creation with env variables
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
-  return executeUnderNodeLock(async () => {
-    // Note: updateNode will handle cleanup of the old node and its monitoring
-    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
-    if (context.node) {
-      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
+  // Parse relays if they're a string
+  let relays = env.RELAYS;
+  if (typeof relays === 'string') {
+    try {
+      relays = JSON.parse(relays);
+    } catch {
+      // If not valid JSON, try splitting by comma
+      relays = relays.split(',').map((r: string) => r.trim());
     }
-
-    // Check if we now have both credentials
-    if (env.SHARE_CRED && env.GROUP_CRED) {
-      // Log handled in createAndConnectServerNode to avoid duplication
-      const nodeRelays = getValidRelays(env.RELAYS);
-      let apiConnectionAttempts = 0;
-      const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
-      let newNode: ServerBifrostNode | null = null;
-      
-      while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
-        apiConnectionAttempts++;
-        try {
-          const result = await createConnectedNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays,
-            connectionTimeout: 5000, // 5 seconds for fast API response
-            autoReconnect: true
-          }, {
-            enableLogging: false,
-            logLevel: 'error'
-          });
-          if (result.node) {
-            newNode = result.node as unknown as ServerBifrostNode;
-            context.updateNode(newNode);
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready');
-            if (result.state) {
-              context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
-            }
-            break;
-          } else {
-            throw new Error('Enhanced node creation returned no node');
-          }
-        } catch (enhancedError) {
-          context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
-          const basicNode = await createAndConnectNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays
-          });
-          if (basicNode) {
-            newNode = basicNode as unknown as ServerBifrostNode;
-            context.updateNode(newNode);
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready (basic mode)');
-          }
-        }
-      }
-      
-      if (!newNode) {
-        context.addServerLog('error', 'Failed to create node after all attempts');
-      }
-    } else {
-      context.addServerLog('info', 'Insufficient credentials for node creation');
-    }
+  }
+  
+  return createAndStartNode({
+    group_cred: env.GROUP_CRED,
+    share_cred: env.SHARE_CRED,
+    relays: relays,
+    group_name: env.GROUP_NAME
   }, context);
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/env')) return null;
+  
+  // In non-headless mode, env routes are restricted
+  if (!HEADLESS && req.method === 'POST') {
+    const corsHeaders = getSecureCorsHeaders(req);
+    return Response.json(
+      { error: 'Environment modification not allowed in database mode. Use /api/user/credentials instead.' },
+      { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
 
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
@@ -133,9 +95,29 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     switch (url.pathname) {
       case '/api/env':
         if (req.method === 'GET') {
-          const env = await readEnvFile();
-          const { filteredEnv } = filterEnvObject(env);
-          return Response.json(filteredEnv, { headers });
+          // In headless mode, return env vars
+          // In database mode, try to return user credentials in env format for compatibility
+          if (HEADLESS) {
+            const env = await readEnvFile();
+            const { filteredEnv } = filterEnvObject(env);
+            return Response.json(filteredEnv, { headers });
+          } else {
+            // Database mode - return empty or user's credentials if available
+            const auth = (context as any).auth;
+            if (auth?.authenticated && typeof auth.userId === 'number' && auth.password) {
+              const credentials = getUserCredentials(auth.userId, auth.password);
+              if (credentials) {
+                // Map to env format for compatibility
+                return Response.json({
+                  GROUP_CRED: credentials.group_cred || undefined,
+                  SHARE_CRED: credentials.share_cred || undefined,
+                  GROUP_NAME: credentials.group_name || undefined,
+                  RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : undefined
+                }, { headers });
+              }
+            }
+            return Response.json({}, { headers });
+          }
         }
         
         if (req.method === 'POST') {

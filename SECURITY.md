@@ -2,9 +2,71 @@
 
 This guide covers security best practices for deploying and configuring your igloo-server, which handles sensitive FROSTR credentials and signing operations.
 
+## 🎯 Operation Modes
+
+Igloo Server supports two operation modes with different security models:
+
+### Database Mode (Default - HEADLESS=false)
+- **Multi-user support** with individual encrypted credential storage
+- **Admin-controlled setup** using ADMIN_SECRET for initial configuration
+- **Password-based encryption** for FROSTR credentials
+- **SQLite database** with user management
+
+### Headless Mode (HEADLESS=true)
+- **Single-user mode** with environment variables
+- **Direct credential storage** in environment
+- **Traditional deployment** for backward compatibility
+- **No database required**
+
+### Security Comparison Table
+
+| Feature | Database Mode | Headless Mode |
+|---------|--------------|---------------|
+| Multi-user Support | ✅ Yes | ❌ No (single user) |
+| Credential Storage | 🔐 Encrypted in database | 📝 Plain in environment |
+| Initial Setup | 🔑 ADMIN_SECRET required | ⚙️ Direct env configuration |
+| Password Protection | ✅ Bcrypt hashed | 🔑 API key/basic auth only |
+| Credential Rotation | ✅ Per-user basis | 🔄 Server restart required |
+| User Management | ✅ Add/remove users | ❌ Not applicable |
+| Backup Complexity | 📦 Database file + env | 📄 Environment only |
+| Migration Path | ✅ Import from env | ✅ Export to env |
+
 ## 🔒 Authentication Configuration
 
-### Basic Setup
+### Database Mode Setup (HEADLESS=false)
+
+#### Initial Admin Secret Configuration
+1. **Generate a secure ADMIN_SECRET** (required for first-time setup):
+   ```bash
+   # Generate a strong admin secret
+   openssl rand -hex 32
+   ```
+
+2. **Set the admin secret**:
+   ```bash
+   ADMIN_SECRET=your-64-character-hex-string-here
+   ```
+
+3. **Important ADMIN_SECRET Guidelines**:
+   - **One-time use**: Only needed for creating the first user
+   - **Keep it secret**: Never share or commit to version control
+   - **Rotate after setup**: Change it after initial configuration
+   - **Store securely**: Use a password manager or secure vault
+
+#### Database Security Features
+- **Password Hashing**: Bcrypt with salt (cost factor 12)
+- **Credential Encryption**: AES-256 with PBKDF2 key derivation
+- **Database Location**: Configurable via DB_PATH (default: ./data)
+- **Per-user isolation**: Each user has encrypted credentials
+
+#### User Management Flow
+1. Admin validates with ADMIN_SECRET
+2. Creates username and password
+3. User logs in with credentials
+4. Credentials stored encrypted with user's password as key
+
+### Headless Mode Setup (HEADLESS=true)
+
 1. **Enable Authentication** (recommended for all deployments):
    ```bash
    AUTH_ENABLED=true
@@ -169,34 +231,40 @@ echo "*.pem" >> .gitignore
 
 ## 🏗️ Deployment Patterns
 
-### 1. Single-User Setup (Personal)
+### Database Mode Deployments
+
+#### 1. Personal Multi-Device Setup
 ```bash
-# Minimal security for personal use
+# Database mode for personal use across devices
+HEADLESS=false
+ADMIN_SECRET=your-admin-secret-for-setup
+DB_PATH=/secure/location/data
 AUTH_ENABLED=true
-API_KEY=your-personal-api-key
 ALLOWED_ORIGINS=https://yourdomain.com
 RATE_LIMIT_MAX=50
 SESSION_TIMEOUT=7200  # 2 hours
 ```
 
-### 2. Multi-User Team Setup
+#### 2. Team Collaboration Setup
 ```bash
-# Enhanced security for team access
+# Database mode for team with multiple users
+HEADLESS=false
+ADMIN_SECRET=team-admin-secret-for-onboarding
+DB_PATH=/var/lib/igloo/data
 AUTH_ENABLED=true
-BASIC_AUTH_USER=team-admin
-BASIC_AUTH_PASS=strong-team-password
-API_KEY=team-api-key
+API_KEY=team-api-key  # For CI/CD integration
 ALLOWED_ORIGINS=https://team.company.com,https://admin.company.com
 RATE_LIMIT_MAX=200
 SESSION_TIMEOUT=3600  # 1 hour
 ```
 
-### 3. High-Security Enterprise Setup
+#### 3. High-Security Enterprise Database Setup
 ```bash
-# Maximum security configuration
+# Maximum security with database mode
+HEADLESS=false
+ADMIN_SECRET=enterprise-grade-secret-512-bits
+DB_PATH=/encrypted/volume/igloo/data
 AUTH_ENABLED=true
-BASIC_AUTH_USER=enterprise-admin
-BASIC_AUTH_PASS=very-strong-enterprise-password
 API_KEY=enterprise-api-key-with-special-chars
 ALLOWED_ORIGINS=https://secure.enterprise.com
 SESSION_SECRET=256-bit-random-secret
@@ -204,6 +272,37 @@ SESSION_TIMEOUT=1800   # 30 minutes
 RATE_LIMIT_ENABLED=true
 RATE_LIMIT_WINDOW=300  # 5 minutes
 RATE_LIMIT_MAX=50      # Strict limiting
+NODE_ENV=production
+```
+
+### Headless Mode Deployments (Legacy)
+
+#### 1. Single-User Setup (Personal)
+```bash
+# Headless mode for backward compatibility
+HEADLESS=true
+GROUP_CRED=bfgroup1...
+SHARE_CRED=bfshare1...
+AUTH_ENABLED=true
+API_KEY=your-personal-api-key
+ALLOWED_ORIGINS=https://yourdomain.com
+RATE_LIMIT_MAX=50
+SESSION_TIMEOUT=7200  # 2 hours
+```
+
+#### 2. Simple Server Setup
+```bash
+# Headless mode for single signing node
+HEADLESS=true
+GROUP_CRED=bfgroup1...
+SHARE_CRED=bfshare1...
+AUTH_ENABLED=true
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=strong-password
+API_KEY=automation-key
+ALLOWED_ORIGINS=https://server.domain.com
+RATE_LIMIT_MAX=100
+SESSION_TIMEOUT=3600  # 1 hour
 ```
 
 ## 🐳 Docker Security
@@ -264,6 +363,50 @@ grep "Rate limit exceeded" server.log
 grep "login" server.log
 ```
 
+## 📦 Database Backup and Migration
+
+### Database Mode Backup
+```bash
+# Backup database file
+cp data/igloo.db data/igloo-backup-$(date +%Y%m%d).db
+
+# Backup with encryption
+tar -czf - data/igloo.db | openssl enc -aes-256-cbc -salt -out backup.tar.gz.enc
+
+# Restore from backup
+cp data/igloo-backup-20240101.db data/igloo.db
+```
+
+### Migration Between Modes
+
+#### Headless → Database Mode
+1. Start in headless mode with credentials
+2. Access the web UI
+3. Use Configure page to save credentials
+4. Switch to database mode:
+   ```bash
+   HEADLESS=false
+   ADMIN_SECRET=your-admin-secret
+   ```
+5. Complete onboarding flow
+
+#### Database → Headless Mode
+1. Export credentials from database (manual process)
+2. Set environment variables:
+   ```bash
+   HEADLESS=true
+   GROUP_CRED=exported-group-cred
+   SHARE_CRED=exported-share-cred
+   ```
+3. Remove database file (optional)
+
+### Database Security Best Practices
+- **File permissions**: `chmod 600 data/igloo.db`
+- **Directory permissions**: `chmod 700 data/`
+- **Regular backups**: Daily automated backups recommended
+- **Encrypted storage**: Use encrypted filesystems for DB_PATH
+- **Access logging**: Monitor database file access
+
 ## 🚨 Incident Response
 
 ### If Credentials Are Compromised
@@ -291,6 +434,7 @@ grep "login" server.log
 
 ### Security Checklist
 
+#### General Security
 - [ ] Authentication enabled in production
 - [ ] Strong API keys and passwords
 - [ ] CORS origins configured (avoid wildcard `*`)
@@ -302,6 +446,22 @@ grep "login" server.log
 - [ ] Regular credential rotation scheduled
 - [ ] Monitoring and logging in place
 - [ ] Backup and recovery plan tested
+
+#### Database Mode Specific
+- [ ] ADMIN_SECRET generated securely (64+ characters)
+- [ ] ADMIN_SECRET rotated after initial setup
+- [ ] Database file permissions set (600)
+- [ ] Database directory secured (700)
+- [ ] DB_PATH on encrypted filesystem (production)
+- [ ] Regular database backups configured
+- [ ] User passwords meet complexity requirements
+- [ ] Session timeout configured appropriately
+
+#### Headless Mode Specific
+- [ ] GROUP_CRED and SHARE_CRED secured
+- [ ] Environment variables properly isolated
+- [ ] Process memory protected from dumps
+- [ ] Server restart procedures documented
 
 ## 📚 API Usage Examples
 

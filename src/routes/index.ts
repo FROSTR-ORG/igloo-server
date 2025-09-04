@@ -20,6 +20,8 @@ import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { handleDocsRoute } from './docs.js';
+import { handleOnboardingRoute } from './onboarding.js';
+import { handleUserRoute } from './user.js';
 import { 
   handleLogin, 
   handleLogout, 
@@ -28,6 +30,7 @@ import {
   authenticate 
 } from './auth.js';
 import { getSecureCorsHeaders } from './utils.js';
+import { HEADLESS } from '../const.js';
 
 // Unified router function
 export async function handleRequest(
@@ -52,7 +55,13 @@ export async function handleRequest(
     return new Response(null, { status: 200, headers });
   }
 
-  // Handle authentication endpoints first (these bypass main auth)
+  // Handle onboarding endpoints first (bypass auth in non-headless mode)
+  if (!HEADLESS && url.pathname.startsWith('/api/onboarding')) {
+    const onboardingResult = await handleOnboardingRoute(req, url, baseContext);
+    if (onboardingResult) return onboardingResult;
+  }
+
+  // Handle authentication endpoints (these bypass main auth)
   if (url.pathname === '/api/auth/login') {
     return handleLogin(req);
   }
@@ -96,7 +105,7 @@ export async function handleRequest(
   }
 
   // Determine which context to use based on route
-  const privilegedRoutes = ['/api/env']; // Only /api/env needs updateNode access
+  const privilegedRoutes = ['/api/env', '/api/user']; // Routes that need updateNode access
   const needsPrivilegedAccess = privilegedRoutes.some(route => url.pathname.startsWith(route));
   const context = needsPrivilegedAccess ? privilegedContext : baseContext;
 
@@ -105,7 +114,10 @@ export async function handleRequest(
     '/api/auth/login',
     '/api/auth/logout', 
     '/api/auth/status',
-    '/api/status'  // Health check endpoint should be public
+    '/api/status',  // Health check endpoint should be public
+    '/api/onboarding/status',
+    '/api/onboarding/validate-admin',
+    '/api/onboarding/setup'
   ];
 
   const isPublicEndpoint = publicEndpoints.some(endpoint => url.pathname === endpoint);
@@ -141,12 +153,19 @@ export async function handleRequest(
     // Add auth info to context
     context.auth = {
       userId: authResult.userId,
-      authenticated: true
+      authenticated: true,
+      password: authResult.password // For database users who need decryption
     };
   }
 
   // Note: Authentication is now handled above for all non-public API endpoints
 
+  // Handle user routes (database mode only)
+  if (!HEADLESS && url.pathname.startsWith('/api/user')) {
+    const userResult = await handleUserRoute(req, url, privilegedContext);
+    if (userResult) return userResult;
+  }
+  
   // Handle privileged routes separately
   if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
     const result = await handleEnvRoute(req, url, privilegedContext);
@@ -165,7 +184,7 @@ export async function handleRequest(
   ];
 
   for (const handler of routeHandlers) {
-    const result = await handler(req, url, baseContext);
+    const result = await handler(req, url, context);
     if (result) {
       return result;
     }

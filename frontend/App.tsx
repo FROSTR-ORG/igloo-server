@@ -3,6 +3,7 @@ import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
 import Login from "./components/Login"
+import Onboarding from "./components/Onboarding"
 import type { SignerHandle } from "./types"
 import { Button } from "./components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
@@ -21,10 +22,12 @@ interface SignerData {
 interface AuthState {
   isAuthenticated: boolean;
   sessionId?: string;
-  userId?: string;
+  userId?: string | number;
   authEnabled: boolean;
   apiKey?: string;
   basicAuth?: { username: string; password: string };
+  needsOnboarding?: boolean;
+  headlessMode?: boolean;
 }
 
 const App: React.FC = () => {
@@ -44,24 +47,52 @@ const App: React.FC = () => {
 
   const initializeApp = async () => {
     try {
-      // First check authentication status
+      // Check onboarding status first
+      const onboardingResponse = await fetch('/api/onboarding/status');
+      const onboardingData = await onboardingResponse.json();
+      
+      // Check if we're in headless mode or need onboarding
+      if (onboardingData.headlessMode === undefined) {
+        // Endpoint doesn't exist or old version - assume headless mode
+        onboardingData.headlessMode = true;
+      }
+      
+      if (!onboardingData.headlessMode && !onboardingData.initialized) {
+        // Need to complete onboarding first
+        setAuthState({ 
+          isAuthenticated: false, 
+          authEnabled: true, 
+          needsOnboarding: true,
+          headlessMode: false 
+        });
+        setInitializing(false);
+        return;
+      }
+      
+      // Check authentication status
       const authResponse = await fetch('/api/auth/status');
       const authStatus = await authResponse.json();
       
-      // If auth is disabled, we can proceed normally
-      if (!authStatus.enabled) {
-        setAuthState({ isAuthenticated: true, authEnabled: false });
+      // If auth is disabled or we're in headless mode, proceed normally
+      if (!authStatus.enabled || onboardingData.headlessMode) {
+        setAuthState({ 
+          isAuthenticated: true, 
+          authEnabled: false,
+          headlessMode: onboardingData.headlessMode 
+        });
         await loadAppData();
       } else {
-        // Auth is enabled, we need to show login screen
-        // Don't try to load app data without authentication
-        setAuthState({ isAuthenticated: false, authEnabled: true });
+        // Auth is enabled, need to show login screen
+        setAuthState({ 
+          isAuthenticated: false, 
+          authEnabled: true,
+          headlessMode: false 
+        });
       }
     } catch (error) {
-      console.error('Error checking authentication:', error);
-      // On error, assume we need to authenticate if auth is enabled
-      const defaultAuthEnabled = true; // Default to secure
-      setAuthState({ isAuthenticated: !defaultAuthEnabled, authEnabled: defaultAuthEnabled });
+      console.error('Error initializing app:', error);
+      // On error, assume we need to authenticate
+      setAuthState({ isAuthenticated: false, authEnabled: true });
     } finally {
       setInitializing(false);
     }
@@ -74,18 +105,45 @@ const App: React.FC = () => {
       
       console.log('Loading app data with headers:', Object.keys(headers));
       
-      // Fetch environment variables from server
-      const response = await fetch('/api/env', {
-        headers
-      });
+      // Check if we're in headless mode or database mode
+      let credentials = null;
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Failed to fetch environment variables:', response.status, errorText);
-        throw new Error(`Failed to fetch environment variables: ${response.status}`);
+      if (authState.headlessMode) {
+        // Headless mode - fetch from environment
+        const response = await fetch('/api/env', {
+          headers
+        });
+        
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('Failed to fetch environment variables:', response.status, errorText);
+          throw new Error(`Failed to fetch environment variables: ${response.status}`);
+        }
+        
+        const envVars = await response.json();
+        credentials = envVars;
+      } else {
+        // Database mode - fetch from user credentials
+        const response = await fetch('/api/user/credentials', {
+          headers
+        });
+        
+        if (response.ok) {
+          credentials = await response.json();
+          // Map database fields to expected format
+          credentials = {
+            SHARE_CRED: credentials.share_cred,
+            GROUP_CRED: credentials.group_cred,
+            GROUP_NAME: credentials.group_name,
+            RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : null
+          };
+        } else {
+          console.log('No credentials stored for user');
+          credentials = {};
+        }
       }
       
-      const envVars = await response.json();
+      const envVars = credentials;
       console.log('Loaded environment variables:', {
         hasShareCred: !!envVars.SHARE_CRED,
         hasGroupCred: !!envVars.GROUP_CRED,
@@ -136,7 +194,17 @@ const App: React.FC = () => {
     return headers;
   };
 
-  const handleLogin = async (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => {
+  const handleOnboardingComplete = () => {
+    // After onboarding, reset state to show login
+    setAuthState({
+      isAuthenticated: false,
+      authEnabled: true,
+      needsOnboarding: false,
+      headlessMode: false
+    });
+  };
+  
+  const handleLogin = async (sessionId: string | undefined, userId: string | number, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => {
     setAuthState({
       isAuthenticated: true,
       sessionId: sessionId || undefined,
@@ -192,6 +260,16 @@ const App: React.FC = () => {
     });
   };
 
+  const handleCredentialsSaved = async () => {
+    // Reload app data to get the saved credentials
+    await loadAppData();
+    // The loadAppData will set signerData if credentials exist
+    // Force immediate status check in Signer component
+    setTimeout(() => {
+      signerRef.current?.checkStatus();
+    }, 100);
+  };
+
   const handleBackToConfigure = async () => {
     // Stop signer before navigating away
     await signerRef.current?.stopSigner().catch(console.error);
@@ -220,6 +298,11 @@ const App: React.FC = () => {
         </ContentCard>
       </PageLayout>
     );
+  }
+
+  // Show onboarding if needed
+  if (authState.needsOnboarding) {
+    return <Onboarding onComplete={handleOnboardingComplete} />;
   }
 
   // Show login screen if authentication is required and user is not authenticated
@@ -299,7 +382,8 @@ const App: React.FC = () => {
 
       <ContentCard>
         <Configure 
-          onKeysetCreated={handleKeysetCreated} 
+          onKeysetCreated={handleKeysetCreated}
+          onCredentialsSaved={handleCredentialsSaved}
           onBack={() => {}} 
           authHeaders={getAuthHeaders()}
         />

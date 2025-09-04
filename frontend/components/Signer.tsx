@@ -107,12 +107,16 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
 
-  // Expose the stopSigner method to parent components through ref
+  // Expose methods to parent components through ref
   useImperativeHandle(ref, () => ({
     stopSigner: async () => {
       if (isSignerRunning) {
         await handleStopSigner();
       }
+    },
+    checkStatus: () => {
+      // Force immediate status check
+      checkServerStatus();
     }
   }));
 

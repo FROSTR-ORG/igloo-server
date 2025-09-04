@@ -29,5 +29,11 @@ export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
 export const GROUP_CRED = process.env['GROUP_CRED']
 export const SHARE_CRED = process.env['SHARE_CRED']
 
+// Admin secret for initial onboarding
+export const ADMIN_SECRET = process.env['ADMIN_SECRET']
+
+// Headless mode - when true, uses env-based configuration instead of database
+export const HEADLESS = process.env['HEADLESS'] === 'true'
+
 // Helper function to check if credentials are available
 export const hasCredentials = () => GROUP_CRED !== undefined && SHARE_CRED !== undefined

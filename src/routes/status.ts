@@ -2,6 +2,7 @@ import { RouteContext } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, getValidRelays } from './utils.js';
 import { getNodeHealth } from '../node/manager.js';
+import { HEADLESS } from '../const.js';
 
 export async function handleStatusRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
@@ -25,10 +26,16 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
       // Get node health information
       const nodeHealth = getNodeHealth();
       
+      // In database mode, if the node is running, credentials must exist
+      // In headless mode, check environment variables
+      const hasCredentials = HEADLESS 
+        ? !!(env.SHARE_CRED && env.GROUP_CRED)
+        : context.node !== null;
+
       const status = {
         serverRunning: true,
         nodeActive: context.node !== null,
-        hasCredentials: !!(env.SHARE_CRED && env.GROUP_CRED),
+        hasCredentials: hasCredentials,
         relayCount: currentRelays.length,
         relays: currentRelays,
         timestamp: new Date().toISOString(),

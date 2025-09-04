@@ -1,4 +1,6 @@
 import { randomBytes, timingSafeEqual } from 'crypto';
+import { HEADLESS } from '../const.js';
+import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 
 // Validate SESSION_SECRET configuration
 function validateSessionSecret(): string | null {
@@ -52,17 +54,19 @@ export const AUTH_CONFIG = {
 // In-memory stores (consider Redis for production clustering)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 const sessionStore = new Map<string, { 
-  userId: string; 
+  userId: string | number; // Support both string (env auth) and number (database user id)
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
+  password?: string; // Store password temporarily for decryption (database users only)
 }>();
 
 export interface AuthResult {
   authenticated: boolean;
-  userId?: string;
+  userId?: string | number; // Support both string and number IDs
   error?: string;
   rateLimited?: boolean;
+  password?: string; // For database users, needed for decryption
 }
 
 // Get client IP address from various headers
@@ -190,7 +194,7 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   session.lastAccess = now;
-  return { authenticated: true, userId: session.userId };
+  return { authenticated: true, userId: session.userId, password: session.password };
 }
 
 // Extract session ID from cookie header
@@ -208,7 +212,7 @@ function extractSessionFromCookie(req: Request): string | null {
 }
 
 // Create new session
-export function createSession(userId: string, ipAddress: string): string | null {
+export function createSession(userId: string | number, ipAddress: string, password?: string): string | null {
   // If no SESSION_SECRET is configured, sessions are not available
   if (!AUTH_CONFIG.SESSION_SECRET) {
     return null;
@@ -221,7 +225,8 @@ export function createSession(userId: string, ipAddress: string): string | null 
     userId,
     createdAt: now,
     lastAccess: now,
-    ipAddress
+    ipAddress,
+    password // Store for database users (needed for decryption)
   });
   
   cleanupExpiredSessions();
@@ -258,8 +263,19 @@ setInterval(() => {
 
 // Main authentication function
 export function authenticate(req: Request): AuthResult {
-  if (!AUTH_CONFIG.ENABLED) {
-    return { authenticated: true, userId: 'anonymous' };
+  // In headless mode or when auth is disabled, use traditional auth
+  if (!AUTH_CONFIG.ENABLED || HEADLESS) {
+    if (!AUTH_CONFIG.ENABLED) {
+      return { authenticated: true, userId: 'anonymous' };
+    }
+    // Continue with env-based auth in headless mode
+  } else {
+    // In non-headless mode, check if database is initialized
+    // If not initialized, allow access to onboarding routes only
+    const isOnboardingRoute = req.url.includes('/api/onboarding');
+    if (!isDatabaseInitialized() && !isOnboardingRoute) {
+      return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+    }
   }
 
   const rateLimit = checkRateLimit(req);
@@ -303,7 +319,8 @@ export async function handleLogin(req: Request): Promise<Response> {
     const { username, password, apiKey } = body;
 
     let authenticated = false;
-    let userId = '';
+    let userId: string | number = '';
+    let userPassword: string | undefined; // Store for database users
 
     if (apiKey && AUTH_CONFIG.API_KEY) {
       if (timingSafeEqual(Buffer.from(apiKey), Buffer.from(AUTH_CONFIG.API_KEY))) {
@@ -312,6 +329,17 @@ export async function handleLogin(req: Request): Promise<Response> {
       }
     }
     
+    // Try database authentication first (unless in headless mode)
+    if (!authenticated && !HEADLESS && username && password && isDatabaseInitialized()) {
+      const dbResult = await authenticateUser(username, password);
+      if (dbResult.success && dbResult.user) {
+        authenticated = true;
+        userId = dbResult.user.id;
+        userPassword = password; // Store for later decryption needs
+      }
+    }
+    
+    // Try env-based basic auth (headless mode or fallback)
     if (!authenticated && username && password && AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
       const userValid = timingSafeEqual(
         Buffer.from(username),
@@ -336,7 +364,7 @@ export async function handleLogin(req: Request): Promise<Response> {
     }
 
     const clientIP = getClientIP(req);
-    const sessionId = createSession(userId, clientIP);
+    const sessionId = createSession(userId, clientIP, userPassword);
 
     if (!sessionId) {
       // Session creation failed (no SESSION_SECRET configured)

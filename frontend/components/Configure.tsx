@@ -10,11 +10,12 @@ import { InputWithValidation } from "./ui/input-with-validation"
 
 interface ConfigureProps {
   onKeysetCreated: (data: { groupCredential: string; shareCredentials: string[]; name: string }) => void;
+  onCredentialsSaved?: () => void;
   onBack?: () => void;
   authHeaders?: Record<string, string>;
 }
 
-const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHeaders = {} }) => {
+const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSaved, onBack, authHeaders = {} }) => {
   const [keysetGenerated, setKeysetGenerated] = useState<{ success: boolean; location: string | React.ReactNode }>({ success: false, location: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [keysetName, setKeysetName] = useState("");
@@ -32,19 +33,41 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
   const [originalKeysetName, setOriginalKeysetName] = useState("");
   const [originalShare, setOriginalShare] = useState("");
   const [originalGroupCredential, setOriginalGroupCredential] = useState("");
+  const [isHeadlessMode, setIsHeadlessMode] = useState(false);
 
   useEffect(() => {
     const loadExistingData = async () => {
       try {
-        // Check for existing credentials in environment variables
-        const response = await fetch('/api/env', {
-          headers: authHeaders
-        });
-        const envVars = await response.json();
+        // Check if we're in headless mode
+        const statusResponse = await fetch('/api/onboarding/status');
+        const statusData = await statusResponse.json();
+        const headlessMode = statusData.headlessMode !== false; // Default to true if not set
+        setIsHeadlessMode(headlessMode);
         
-        const savedShare = envVars.SHARE_CRED;
-        const savedGroup = envVars.GROUP_CRED;
-        const savedName = envVars.GROUP_NAME;
+        // Load credentials based on mode
+        let savedShare, savedGroup, savedName;
+        
+        if (headlessMode) {
+          // Headless mode - fetch from environment
+          const response = await fetch('/api/env', {
+            headers: authHeaders
+          });
+          const envVars = await response.json();
+          savedShare = envVars.SHARE_CRED;
+          savedGroup = envVars.GROUP_CRED;
+          savedName = envVars.GROUP_NAME;
+        } else {
+          // Database mode - fetch from user credentials
+          const response = await fetch('/api/user/credentials', {
+            headers: authHeaders
+          });
+          if (response.ok) {
+            const credentials = await response.json();
+            savedShare = credentials.share_cred;
+            savedGroup = credentials.group_cred;
+            savedName = credentials.group_name;
+          }
+        }
         
         if (savedShare && savedGroup) {
           setHasExistingCredentials(true);
@@ -128,16 +151,25 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
 
   const handleClearCredentials = async () => {
     try {
-      await fetch('/api/env/delete', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          ...authHeaders
-        },
-        body: JSON.stringify({
-          keys: ['SHARE_CRED', 'GROUP_CRED', 'GROUP_NAME']
-        })
-      });
+      if (isHeadlessMode) {
+        // Headless mode - delete from env
+        await fetch('/api/env/delete', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          },
+          body: JSON.stringify({
+            keys: ['SHARE_CRED', 'GROUP_CRED', 'GROUP_NAME']
+          })
+        });
+      } else {
+        // Database mode - delete from user credentials
+        await fetch('/api/user/credentials', {
+          method: 'DELETE',
+          headers: authHeaders
+        });
+      }
       
       // Clear the form
       setShare("");
@@ -167,8 +199,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
 
     setIsGenerating(true);
     try {
-      // Save the share, group credential, and name to .env file
-      try {
+      // Save credentials based on mode
+      if (isHeadlessMode) {
+        // Headless mode - save to env
         await fetch('/api/env', {
           method: 'POST',
           headers: {
@@ -183,29 +216,46 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onBack, authHead
             RELAYS: JSON.stringify(["wss://relay.primal.net"])
           })
         });
-        
-        setHasExistingCredentials(true);
-        setKeysetGenerated({
-          success: true,
-          location: hasExistingCredentials ? "Signer credentials updated successfully!" : "Signer configured successfully! Your credentials have been saved."
-        });
-        
-        // Create a mock keyset object for the callback
-        const configuredKeyset = {
-          groupCredential: groupCredential,
-          shareCredentials: [share],
-          name: keysetName
-        };
-        
-        onKeysetCreated(configuredKeyset);
-      } catch (envError) {
-        console.error('Error saving credentials to environment variables:', envError);
-        setKeysetGenerated({
-          success: false,
-          location: 'Error saving credentials to environment variables'
+      } else {
+        // Database mode - save to user credentials
+        await fetch('/api/user/credentials', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          },
+          body: JSON.stringify({
+            share_cred: share,
+            group_cred: groupCredential,
+            group_name: keysetName,
+            relays: ["wss://relay.primal.net"]
+          })
         });
       }
+      
+      setHasExistingCredentials(true);
+      setKeysetGenerated({
+        success: true,
+        location: hasExistingCredentials ? "Signer credentials updated successfully!" : "Signer configured successfully! Your credentials have been saved."
+      });
+      
+      // Create a mock keyset object for the callback
+      const configuredKeyset = {
+        groupCredential: groupCredential,
+        shareCredentials: [share],
+        name: keysetName
+      };
+      
+      // Call the appropriate callback
+      if (onCredentialsSaved) {
+        // In database mode, notify that credentials were saved
+        onCredentialsSaved();
+      } else {
+        // Legacy callback for compatibility
+        onKeysetCreated(configuredKeyset);
+      }
     } catch (error) {
+      console.error('Error saving credentials:', error);
       setKeysetGenerated({
         success: false,
         location: `Error configuring signer: ${error instanceof Error ? error.message : 'Unknown error'}`
