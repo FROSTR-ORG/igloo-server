@@ -1,12 +1,15 @@
 import { Database } from 'bun:sqlite';
-import bcrypt from 'bcrypt';
-import CryptoJS from 'crypto-js';
+import { password as BunPassword } from 'bun';
+import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
 
 // Database configuration
-const DB_DIR = process.env.DB_PATH || path.join(process.cwd(), 'data');
-const DB_FILE = path.join(DB_DIR, 'igloo.db');
+const defaultDbDir = path.join(process.cwd(), 'data');
+const envPath = process.env.DB_PATH;
+const isEnvPathFile = !!envPath && (envPath.endsWith('.db') || path.extname(envPath) !== '');
+const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
+const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
 
 // Ensure data directory exists
 if (!existsSync(DB_DIR)) {
@@ -43,25 +46,107 @@ const createUserTable = () => {
 // Initialize database tables
 createUserTable();
 
-// Encryption utilities
-const deriveKey = (password: string, salt: string): string => {
-  // Use PBKDF2-like key derivation with CryptoJS
-  return CryptoJS.PBKDF2(password, salt, { keySize: 256/32, iterations: 10000 }).toString();
+// Close database connection (for graceful shutdown)
+export const closeDatabase = () => {
+  db.close();
 };
 
+// Register graceful shutdown handlers
+process.on('SIGINT', async () => {
+  console.log('[db] Received SIGINT. Closing database...');
+  try {
+    closeDatabase();
+    console.log('[db] Database closed successfully');
+  } catch (error) {
+    console.error('[db] Error closing database:', error);
+  }
+  // Let the process terminate naturally after cleanup
+});
+
+process.on('SIGTERM', async () => {
+  console.log('[db] Received SIGTERM. Closing database...');
+  try {
+    closeDatabase();
+    console.log('[db] Database closed successfully');
+  } catch (error) {
+    console.error('[db] Error closing database:', error);
+  }
+  // Let the process terminate naturally after cleanup
+});
+
+// Encryption utilities
+const ALGORITHM = 'aes-256-gcm';
+const IV_LENGTH = 12; // 96 bits for GCM
+const TAG_LENGTH = 16; // 128 bits
+const KEY_LENGTH = 32; // 256 bits
+const PBKDF2_ITERATIONS = 200000; // Optimized for security and performance
+
+// Derive a key from password and salt using PBKDF2
+const deriveKey = (password: string, salt: string): Buffer => {
+  return pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256');
+};
+
+// Encrypt text using AES-256-GCM (AEAD)
 const encrypt = (text: string, key: string): string => {
   if (!text) return '';
-  return CryptoJS.AES.encrypt(text, key).toString();
+  
+  try {
+    // Generate random IV
+    const iv = randomBytes(IV_LENGTH);
+    
+    // Derive encryption key from the provided key string and user's salt
+    const keyBuffer = Buffer.from(key, 'hex');
+    
+    // Create cipher
+    const cipher = createCipheriv(ALGORITHM, keyBuffer, iv);
+    
+    // Encrypt the text
+    const encrypted = Buffer.concat([
+      cipher.update(text, 'utf8'),
+      cipher.final()
+    ]);
+    
+    // Get the authentication tag
+    const authTag = cipher.getAuthTag();
+    
+    // Combine IV, auth tag, and ciphertext
+    // Format: base64(iv:authTag:ciphertext)
+    const combined = Buffer.concat([iv, authTag, encrypted]);
+    return combined.toString('base64');
+  } catch (error) {
+    throw new Error('Encryption failed');
+  }
 };
 
+// Decrypt text using AES-256-GCM (AEAD)
 const decrypt = (ciphertext: string, key: string): string => {
   if (!ciphertext) return '';
+  
   try {
-    const bytes = CryptoJS.AES.decrypt(ciphertext, key);
-    return bytes.toString(CryptoJS.enc.Utf8);
+    // Try new format first (AES-GCM)
+    const combined = Buffer.from(ciphertext, 'base64');
+    
+    // Extract components
+    const iv = combined.subarray(0, IV_LENGTH);
+    const authTag = combined.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
+    const encrypted = combined.subarray(IV_LENGTH + TAG_LENGTH);
+    
+    // Derive decryption key
+    const keyBuffer = Buffer.from(key, 'hex');
+    
+    // Create decipher
+    const decipher = createDecipheriv(ALGORITHM, keyBuffer, iv);
+    decipher.setAuthTag(authTag);
+    
+    // Decrypt
+    const decrypted = Buffer.concat([
+      decipher.update(encrypted),
+      decipher.final()
+    ]);
+    
+    return decrypted.toString('utf8');
   } catch (error) {
-    console.error('Decryption error:', error);
-    return '';
+    throw new Error('Decryption failed');
   }
 };
 
@@ -98,16 +183,17 @@ export const createUser = async (
   password: string
 ): Promise<{ success: boolean; error?: string; userId?: number }> => {
   try {
-    // Generate salt and hash password
-    const salt = await bcrypt.genSalt(12);
-    const passwordHash = await bcrypt.hash(password, salt);
+    // Hash password using Bun's built-in password API (defaults to Argon2id)
+    const passwordHash = await BunPassword.hash(password, { algorithm: 'argon2id' });
     
-    // Insert user
+    // Insert user (salt is embedded in the hash for Argon2id/bcrypt)
     const stmt = db.query(`
       INSERT INTO users (username, password_hash, salt)
       VALUES (?, ?, ?)
     `);
     
+    // Generate a random salt for PBKDF2 key derivation (separate from Argon2id's internal salt)
+    const salt = randomBytes(32).toString('hex');
     stmt.run(username, passwordHash, salt);
     
     // Get the last inserted ID
@@ -138,7 +224,8 @@ export const authenticateUser = async (
       return { success: false, error: 'Invalid credentials' };
     }
     
-    const isValid = await bcrypt.compare(password, user.password_hash);
+    // Use Bun's password verification (supports both new Argon2id and legacy bcrypt hashes)
+    const isValid = await BunPassword.verify(password, user.password_hash);
     
     if (!isValid) {
       return { success: false, error: 'Invalid credentials' };
@@ -177,14 +264,20 @@ export const getUserByUsername = (username: string): User | null => {
 export const updateUserCredentials = (
   userId: number,
   credentials: Partial<UserCredentials>,
-  password: string // User's password for encryption key derivation
+  passwordOrKey: string, // User's password or derived key for encryption
+  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
 ): boolean => {
   try {
     const user = getUserById(userId);
     if (!user) return false;
     
-    // Derive encryption key from password
-    const key = deriveKey(password, user.salt);
+    // Get encryption key - either derive from password or use provided derived key
+    if (isDerivedKey && !passwordOrKey.match(/^[0-9a-f]{64}$/i)) {
+      throw new Error('Invalid derived key format');
+    }
+    const key = isDerivedKey 
+      ? passwordOrKey // Already a derived key from session (hex string)
+      : deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     
     // Prepare update fields
     const updates: string[] = [];
@@ -235,14 +328,20 @@ export const updateUserCredentials = (
 // Get decrypted user credentials
 export const getUserCredentials = (
   userId: number,
-  password: string // User's password for decryption
+  passwordOrKey: string, // User's password or derived key for decryption
+  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
 ): UserCredentials | null => {
   try {
     const user = getUserById(userId);
     if (!user) return null;
     
-    // Derive decryption key from password
-    const key = deriveKey(password, user.salt);
+    // Get decryption key - either derive from password or use provided derived key
+    if (isDerivedKey && !passwordOrKey.match(/^[0-9a-f]{64}$/i)) {
+      throw new Error('Invalid derived key format');
+    }
+    const key = isDerivedKey 
+      ? passwordOrKey // Already a derived key from session (hex string)
+      : deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     
     // Decrypt credentials
     const groupCred = user.group_cred_encrypted ? decrypt(user.group_cred_encrypted, key) : null;
@@ -270,6 +369,35 @@ export const getUserCredentials = (
   }
 };
 
+// Check if a user has stored credentials (without needing password)
+export const userHasStoredCredentials = (userId: number): boolean => {
+  try {
+    const user = getUserById(userId);
+    if (!user) return false;
+    
+    // Check if BOTH encrypted credentials exist (not just one)
+    return !!(user.group_cred_encrypted && user.share_cred_encrypted);
+  } catch (error) {
+    console.error('Error checking stored credentials:', error);
+    return false;
+  }
+};
+
+// Check if ANY user has stored credentials (for status endpoint in DB mode)
+export const anyUserHasStoredCredentials = (): boolean => {
+  try {
+    const result = db.query(`
+      SELECT COUNT(*) as count FROM users 
+      WHERE group_cred_encrypted IS NOT NULL 
+      AND share_cred_encrypted IS NOT NULL
+    `).get() as { count: number } | null;
+    return result ? result.count > 0 : false;
+  } catch (error) {
+    console.error('Error checking any stored credentials:', error);
+    return false;
+  }
+};
+
 // Delete user credentials
 export const deleteUserCredentials = (userId: number): boolean => {
   try {
@@ -289,11 +417,6 @@ export const deleteUserCredentials = (userId: number): boolean => {
     console.error('Error deleting user credentials:', error);
     return false;
   }
-};
-
-// Close database connection (for graceful shutdown)
-export const closeDatabase = () => {
-  db.close();
 };
 
 // Export database instance for advanced operations

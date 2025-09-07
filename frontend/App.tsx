@@ -47,14 +47,39 @@ const App: React.FC = () => {
 
   const initializeApp = async () => {
     try {
-      // Check onboarding status first
-      const onboardingResponse = await fetch('/api/onboarding/status');
-      const onboardingData = await onboardingResponse.json();
+      // Check onboarding status first with retry logic
+      let onboardingData: any = {};
+      const maxRetries = 3;
+      let retryCount = 0;
+      
+      while (retryCount < maxRetries) {
+        try {
+          const onboardingResponse = await fetch('/api/onboarding/status');
+          if (!onboardingResponse.ok) {
+            // Non-OK means endpoint exists but failed; treat as non-headless by default
+            console.warn('Onboarding status non-OK:', onboardingResponse.status);
+            onboardingData = { headlessMode: false };
+          } else {
+            onboardingData = await onboardingResponse.json();
+          }
+          break; // Success, exit retry loop
+        } catch (err) {
+          retryCount++;
+          if (retryCount >= maxRetries) {
+            console.error('Onboarding status fetch failed after retries:', err);
+            // Network or unexpected failure: do not assume headless, let UI prompt
+            onboardingData = { headlessMode: false };
+          } else {
+            // Wait before retry with exponential backoff
+            await new Promise(resolve => setTimeout(resolve, 1000 * retryCount));
+          }
+        }
+      }
       
       // Check if we're in headless mode or need onboarding
       if (onboardingData.headlessMode === undefined) {
-        // Endpoint doesn't exist or old version - assume headless mode
-        onboardingData.headlessMode = true;
+        // Endpoint missing/old: do not assume headless; let UI prompt
+        onboardingData.headlessMode = false;
       }
       
       if (!onboardingData.headlessMode && !onboardingData.initialized) {
@@ -70,17 +95,28 @@ const App: React.FC = () => {
       }
       
       // Check authentication status
-      const authResponse = await fetch('/api/auth/status');
-      const authStatus = await authResponse.json();
+      let authStatus: { enabled: boolean } = { enabled: true }; // Default to auth enabled as a safe fallback
+      try {
+        const authResponse = await fetch('/api/auth/status');
+        if (authResponse.ok) {
+          authStatus = await authResponse.json();
+        } else {
+          console.warn('Auth status check failed:', authResponse.status, 'Falling back to requiring authentication.');
+          // Keep default of auth enabled
+        }
+      } catch (error) {
+        console.error('Error fetching auth status:', error, 'Falling back to requiring authentication.');
+        // Keep default of auth enabled
+      }
       
       // If auth is disabled or we're in headless mode, proceed normally
       if (!authStatus.enabled || onboardingData.headlessMode) {
-        setAuthState({ 
-          isAuthenticated: true, 
+        setAuthState({
+          isAuthenticated: true,
           authEnabled: false,
-          headlessMode: onboardingData.headlessMode 
+          headlessMode: onboardingData.headlessMode
         });
-        await loadAppData();
+        await loadAppData(undefined, { headlessMode: onboardingData.headlessMode });
       } else {
         // Auth is enabled, need to show login screen
         setAuthState({ 
@@ -98,23 +134,33 @@ const App: React.FC = () => {
     }
   };
 
-  const loadAppData = async (authHeaders?: Record<string, string>) => {
+  const loadAppData = async (
+    authHeaders?: Record<string, string>,
+    opts?: { headlessMode?: boolean }
+  ) => {
     try {
       // Use provided headers or get current auth headers
       const headers = authHeaders || getAuthHeaders();
       
       console.log('Loading app data with headers:', Object.keys(headers));
       
-      // Check if we're in headless mode or database mode
-      let credentials = null;
+      // Determine mode without relying solely on async state
+      const isHeadless = opts?.headlessMode ?? authState.headlessMode;
+      let credentials: any = null;
       
-      if (authState.headlessMode) {
+      if (isHeadless) {
         // Headless mode - fetch from environment
         const response = await fetch('/api/env', {
           headers
         });
         
         if (!response.ok) {
+          // Check for 401 Unauthorized
+          if (response.status === 401) {
+            console.log('Authentication failed, logging out...');
+            await handleLogout();
+            return;
+          }
           const errorText = await response.text();
           console.error('Failed to fetch environment variables:', response.status, errorText);
           throw new Error(`Failed to fetch environment variables: ${response.status}`);
@@ -138,6 +184,12 @@ const App: React.FC = () => {
             RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : null
           };
         } else {
+          // Check for 401 Unauthorized
+          if (response.status === 401) {
+            console.log('Authentication failed, logging out...');
+            await handleLogout();
+            return;
+          }
           console.log('No credentials stored for user');
           credentials = {};
         }
@@ -165,7 +217,20 @@ const App: React.FC = () => {
           name: savedName || 'Saved Share'
         });
       } else {
-        console.log('No saved credentials found, showing Configure page');
+        console.log('No saved credentials found');
+        // In headless mode, prefer server status to decide the view
+        if (isHeadless) {
+          try {
+            const statusRes = await fetch('/api/status', { headers });
+            if (statusRes.ok) {
+              const status = await statusRes.json();
+              if (status?.hasCredentials || status?.nodeActive) {
+                // Show Signer even without client-side secrets
+                setSignerData(prev => prev ?? { share: '', groupCredential: '', name: 'Server credentials' });
+              }
+            }
+          } catch {}
+        }
       }
       // If no saved credentials, we'll show Configure page (default state)
     } catch (error) {
@@ -264,10 +329,7 @@ const App: React.FC = () => {
     // Reload app data to get the saved credentials
     await loadAppData();
     // The loadAppData will set signerData if credentials exist
-    // Force immediate status check in Signer component
-    setTimeout(() => {
-      signerRef.current?.checkStatus();
-    }, 100);
+    // Status will be checked via Signer onReady callback once mounted
   };
 
   const handleBackToConfigure = async () => {
@@ -352,6 +414,7 @@ const App: React.FC = () => {
                 initialData={signerData} 
                 ref={signerRef}
                 authHeaders={getAuthHeaders()}
+                onReady={() => signerRef.current?.checkStatus()}
               />
             </TabsContent>
             

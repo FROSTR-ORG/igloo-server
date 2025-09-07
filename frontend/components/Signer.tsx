@@ -73,7 +73,7 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
   }
 };
 
-const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {} }, ref) => {
+const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {}, onReady }, ref) => {
   const [isSignerRunning, setIsSignerRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [signerSecret, setSignerSecret] = useState("");
@@ -116,7 +116,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     },
     checkStatus: () => {
       // Force immediate status check
-      checkServerStatus();
+      return checkServerStatus();
     }
   }));
 
@@ -221,6 +221,17 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       }
     }
   }, [isSignerRunning]);
+
+  // Track whether onReady has been called to ensure it's only called once
+  const onReadyCalledRef = useRef(false);
+  
+  // Fire onReady once after initial load and ref methods are established
+  useEffect(() => {
+    if (!isLoading && typeof onReady === 'function' && !onReadyCalledRef.current) {
+      onReadyCalledRef.current = true;
+      onReady();
+    }
+  }, [isLoading, onReady]);
 
   // Poll server status every 5 seconds
   useEffect(() => {
@@ -408,9 +419,16 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
   }, [cleanupNode]); // Include dependencies
 
-  // Fetch initial data from server .env file
+  // Fetch initial data from server .env file (only in headless mode)
   useEffect(() => {
     const fetchEnvData = async () => {
+      // Skip fetching from /api/env if we have initialData (database mode)
+      // This prevents overwriting valid credentials with undefined values
+      if (initialData) {
+        setIsLoading(false);
+        return;
+      }
+      
       try {
         const response = await fetch('/api/env', {
         headers: authHeaders
@@ -478,26 +496,66 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
 
     fetchEnvData();
-  }, []);
+  }, [initialData, authHeaders]);
 
-  // Validate initial data (fallback for when props are provided)
+  // Validate initial data (when props are provided in database mode)
   useEffect(() => {
-    if (initialData?.share && !signerSecret) {
+    if (initialData?.share) {
       setSignerSecret(initialData.share);
       const validation = validateShare(initialData.share);
-      setIsShareValid(validation.isValid);
+      
+      // Perform deep validation with actual decoding (same as handleShareChange)
+      if (validation.isValid && initialData.share.trim()) {
+        try {
+          const decodedShare = decodeShare(initialData.share);
+          
+          // Check decoded structure has required fields
+          if (typeof decodedShare.idx !== 'number' ||
+              typeof decodedShare.seckey !== 'string' ||
+              typeof decodedShare.binder_sn !== 'string' ||
+              typeof decodedShare.hidden_sn !== 'string') {
+            setIsShareValid(false);
+          } else {
+            setIsShareValid(true);
+          }
+        } catch (error) {
+          setIsShareValid(false);
+        }
+      } else {
+        setIsShareValid(validation.isValid);
+      }
     }
 
-    if (initialData?.groupCredential && !groupCredential) {
+    if (initialData?.groupCredential) {
       setGroupCredential(initialData.groupCredential);
       const validation = validateGroup(initialData.groupCredential);
-      setIsGroupValid(validation.isValid);
+      
+      // Perform deep validation with actual decoding (same as handleGroupChange)
+      if (validation.isValid && initialData.groupCredential.trim()) {
+        try {
+          const decodedGroup = decodeGroup(initialData.groupCredential);
+          
+          // Check decoded structure has required fields
+          if (typeof decodedGroup.threshold !== 'number' ||
+              typeof decodedGroup.group_pk !== 'string' ||
+              !Array.isArray(decodedGroup.commits) ||
+              decodedGroup.commits.length === 0) {
+            setIsGroupValid(false);
+          } else {
+            setIsGroupValid(true);
+          }
+        } catch (error) {
+          setIsGroupValid(false);
+        }
+      } else {
+        setIsGroupValid(validation.isValid);
+      }
     }
     
-    if (initialData?.name && !signerName) {
+    if (initialData?.name) {
       setSignerName(initialData.name);
     }
-  }, [initialData, signerSecret, groupCredential, signerName]);
+  }, [initialData]);
 
   const handleCopy = async (text: string, field: 'group' | 'share') => {
     try {

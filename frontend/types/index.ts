@@ -113,7 +113,7 @@ export type RenderableData = DecodedGroup | DecodedShare | Record<string, unknow
 // Signer types
 export interface SignerHandle {
   stopSigner: () => Promise<void>;
-  checkStatus: () => void;
+  checkStatus: () => Promise<void>;
 }
 
 export interface SignerProps {
@@ -125,6 +125,11 @@ export interface SignerProps {
     totalShares?: number;
   };
   authHeaders?: Record<string, string>;
+  /**
+   * Callback invoked when the `Signer` component is mounted and ready for interaction.
+   * Consumers can safely call methods on the forwarded ref (e.g., `checkStatus`).
+   */
+  onReady?: () => void;
 }
 
 // Keyset types

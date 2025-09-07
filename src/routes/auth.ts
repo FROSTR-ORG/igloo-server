@@ -1,11 +1,40 @@
-import { randomBytes, timingSafeEqual } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSync } from 'fs';
+import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, chmodSync, statSync, writeFileSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 
 // Session secret persistence configuration
-const SESSION_SECRET_DIR = process.env.DB_PATH || path.join(process.cwd(), 'data');
+// Properly handle DB_PATH whether it's a file or directory
+function getSessionSecretDir(): string {
+  const dbPath = process.env.DB_PATH;
+  if (!dbPath) {
+    return path.join(process.cwd(), 'data');
+  }
+
+  try {
+    const stats = statSync(dbPath);
+    return stats.isFile() ? path.dirname(dbPath) : dbPath;
+  } catch {
+    // If path doesn't exist, infer more robustly
+    const normalized = path.normalize(dbPath);
+    const endsWithSep = normalized.endsWith(path.sep) || normalized.endsWith(path.win32.sep);
+    if (endsWithSep) return normalized;
+
+    const base = path.basename(normalized);
+    // Treat as file only if basename contains a non-leading dot (e.g., "file.ext")
+    const firstDot = base.indexOf('.');
+    const isHidden = firstDot === 0; // leading dot like .config
+    const hasNonLeadingDot = firstDot > 0; // any dot not at position 0
+    if (hasNonLeadingDot && !isHidden) {
+      return path.dirname(normalized);
+    }
+    // Default to directory in ambiguous cases
+    return normalized;
+  }
+}
+
+const SESSION_SECRET_DIR = getSessionSecretDir();
 const SESSION_SECRET_FILE = path.join(SESSION_SECRET_DIR, '.session-secret');
 
 // Load or generate a persistent SESSION_SECRET
@@ -28,18 +57,20 @@ function loadOrGenerateSessionSecret(): string | null {
     // Generate new secret (32 bytes = 64 hex characters)
     const newSecret = randomBytes(32).toString('hex');
     
-    // Write atomically with secure permissions
-    const tempFile = `${SESSION_SECRET_FILE}.tmp`;
-    writeFileSync(tempFile, newSecret, { mode: 0o600 });
-    
-    // Atomic rename to prevent corruption
-    renameSync(tempFile, SESSION_SECRET_FILE);
-    
-    // Ensure secure permissions (may not work on Windows, but that's ok)
+    // Securely write the new secret using Node's fs API
     try {
-      chmodSync(SESSION_SECRET_FILE, 0o600);
-    } catch (e) {
-      // Windows doesn't support chmod, ignore
+      writeFileSync(SESSION_SECRET_FILE, newSecret, { encoding: 'utf8', mode: 0o600 });
+      // Ensure file permissions on Unix-like systems
+      if (process.platform !== 'win32') {
+        try {
+          chmodSync(SESSION_SECRET_FILE, 0o600);
+        } catch (e) {
+          console.warn('Could not set file permissions for session secret:', e);
+        }
+      }
+    } catch (error) {
+      console.error('Failed to write session secret:', error);
+      throw error;
     }
     
     console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
@@ -59,9 +90,9 @@ function validateSessionSecret(): string | null {
   
   // If no SESSION_SECRET provided, attempt to auto-generate or load
   if (!sessionSecret) {
-    sessionSecret = loadOrGenerateSessionSecret();
+    const generatedSecret = loadOrGenerateSessionSecret();
     
-    if (!sessionSecret) {
+    if (!generatedSecret) {
       // Generation failed
       const message = 'Failed to auto-generate SESSION_SECRET';
       if (isProduction) {
@@ -72,6 +103,9 @@ function validateSessionSecret(): string | null {
         return null;
       }
     }
+    // Use the generated secret
+    sessionSecret = generatedSecret;
+    process.env.SESSION_SECRET = generatedSecret;
   } else {
     // Using provided SESSION_SECRET from environment
     console.log('🔐 SESSION_SECRET configured via environment variable');
@@ -111,6 +145,25 @@ export const AUTH_CONFIG = {
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100'), // 100 requests per window
 };
 
+// Key derivation for secure password handling
+const DERIVED_KEY_ITERATIONS = 100000;
+const DERIVED_KEY_LENGTH = 32;
+const DERIVED_KEY_ALGORITHM = 'sha256';
+
+// Derive an ephemeral key from password and salt
+function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
+  // Convert salt to Buffer if it's a hex string (for backward compatibility)
+  const saltBuffer = typeof salt === 'string' ? Buffer.from(salt, 'hex') : salt;
+  const key = pbkdf2Sync(
+    password,
+    saltBuffer,
+    DERIVED_KEY_ITERATIONS,
+    DERIVED_KEY_LENGTH,
+    DERIVED_KEY_ALGORITHM
+  );
+  return new Uint8Array(key);
+}
+
 // In-memory stores (consider Redis for production clustering)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 const sessionStore = new Map<string, { 
@@ -118,7 +171,8 @@ const sessionStore = new Map<string, {
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
-  password?: string; // Store password temporarily for decryption (database users only)
+  derivedKey?: Uint8Array; // Store derived key as binary (database users only)
+  salt?: Uint8Array; // Random salt for key derivation (more secure than using sessionId)
 }>();
 
 export interface AuthResult {
@@ -126,7 +180,8 @@ export interface AuthResult {
   userId?: string | number; // Support both string and number IDs
   error?: string;
   rateLimited?: boolean;
-  password?: string; // For database users, needed for decryption
+  password?: string; // Still returned for immediate use, but not stored
+  derivedKey?: Uint8Array; // Derived key for decryption operations (binary)
 }
 
 // Get client IP address from various headers
@@ -254,7 +309,7 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   session.lastAccess = now;
-  return { authenticated: true, userId: session.userId, password: session.password };
+  return { authenticated: true, userId: session.userId, derivedKey: session.derivedKey };
 }
 
 // Extract session ID from cookie header
@@ -272,7 +327,12 @@ function extractSessionFromCookie(req: Request): string | null {
 }
 
 // Create new session
-export function createSession(userId: string | number, ipAddress: string, password?: string): string | null {
+export function createSession(
+  userId: string | number, 
+  ipAddress: string, 
+  password?: string,
+  dbSalt?: string  // Optional database salt for database users
+): string | null {
   // If no SESSION_SECRET is configured, sessions are not available
   if (!AUTH_CONFIG.SESSION_SECRET) {
     return null;
@@ -281,12 +341,29 @@ export function createSession(userId: string | number, ipAddress: string, passwo
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
   
+  // Generate separate random salt for key derivation
+  let derivedKey: Uint8Array | undefined;
+  let salt: Uint8Array | undefined;
+  if (password) {
+    if (dbSalt) {
+      // Use the provided database salt for database users
+      // Convert hex string to Uint8Array
+      salt = new Uint8Array(Buffer.from(dbSalt, 'hex'));
+      derivedKey = deriveKeyFromPassword(password, salt);
+    } else {
+      // Generate a cryptographically secure random salt for non-database auth
+      salt = new Uint8Array(randomBytes(32));
+      derivedKey = deriveKeyFromPassword(password, salt);
+    }
+  }
+  
   sessionStore.set(sessionId, {
     userId,
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    password // Store for database users (needed for decryption)
+    derivedKey, // Store derived key instead of password
+    salt // Store salt for future verification
   });
   
   cleanupExpiredSessions();
@@ -390,12 +467,27 @@ export async function handleLogin(req: Request): Promise<Response> {
     }
     
     // Try database authentication first (unless in headless mode)
+    let userSalt: string | undefined; // Store user's database salt
     if (!authenticated && !HEADLESS && username && password && isDatabaseInitialized()) {
-      const dbResult = await authenticateUser(username, password);
-      if (dbResult.success && dbResult.user) {
-        authenticated = true;
-        userId = dbResult.user.id;
-        userPassword = password; // Store for later decryption needs
+      try {
+        const dbResult = await authenticateUser(username, password);
+        if (dbResult && typeof dbResult === 'object' && dbResult.success === true && dbResult.user && dbResult.user.id != null) {
+          authenticated = true;
+          userId = dbResult.user.id;
+          userPassword = password; // Store for later decryption needs
+          userSalt = dbResult.user.salt; // Store user's salt for key derivation
+        }
+      } catch (err) {
+        // Log specific error types for better debugging
+        if (err instanceof Error) {
+          console.error('Database authentication error:', err.message);
+          // Re-throw if it's a critical database error
+          if (err.message.includes('SQLITE_BUSY') || err.message.includes('SQLITE_LOCKED')) {
+            throw err;
+          }
+        } else {
+          console.error('Database authentication threw unexpected error:', err);
+        }
       }
     }
     
@@ -424,7 +516,7 @@ export async function handleLogin(req: Request): Promise<Response> {
     }
 
     const clientIP = getClientIP(req);
-    const sessionId = createSession(userId, clientIP, userPassword);
+    const sessionId = createSession(userId, clientIP, userPassword, userSalt);
 
     if (!sessionId) {
       // Session creation failed (no SESSION_SECRET configured)
@@ -471,7 +563,8 @@ export function handleLogout(req: Request): Response {
   });
 }
 
-// Authentication middleware wrapper
+// Authentication middleware wrapper (deprecated - use explicit auth parameters instead)
+// This function is not currently used but kept for reference
 export function requireAuth(handler: Function) {
   return async (req: Request, url: URL, context: any): Promise<Response> => {
     const authResult = authenticate(req);
@@ -501,12 +594,33 @@ export function requireAuth(handler: Function) {
       });
     }
     
-    context.auth = {
+    // Note: Auth should be passed as explicit parameter, not mutating context
+    // Create auth info to pass to handler
+    // Store sensitive values that will be cleared after first access
+    let password = authResult.password;
+    let derivedKey = authResult.derivedKey;
+    
+    const authInfo = {
       userId: authResult.userId,
-      authenticated: true
+      authenticated: true,
+      // Removed direct storage of sensitive data to prevent exposure
+      // Use secure getter functions instead
+      
+      // Secure getter functions that clear sensitive data after first access
+      getPassword(): string | undefined {
+        const value = password;
+        password = undefined; // Clear after access
+        return value;
+      },
+      
+      getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
+        const value = derivedKey;
+        derivedKey = undefined; // Clear after access
+        return value;
+      }
     };
     
-    return handler(req, url, context);
+    return handler(req, url, context, authInfo);
   };
 }
 

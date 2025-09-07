@@ -55,7 +55,7 @@ curl http://localhost:8002/api/status
 ### Core Components
 
 1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests
-2. **Bifrost Node (`src/node/manager.ts`)**: FROSTR signing node with health monitoring and auto-restart
+2. **Bifrost Node**: Core logic in `src/node/manager.ts` handles the FROSTR signing node with health monitoring and auto-restart. The routes in `src/routes/node-manager.ts` expose this functionality via API endpoints.
 3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
 4. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status, user, onboarding
 5. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS
@@ -97,7 +97,7 @@ The server supports two operation modes controlled by the `HEADLESS` environment
 
 #### Database Mode (Default - HEADLESS=false)
 - **Multi-user support** with individual accounts
-- **Encrypted credential storage** using bcrypt + AES-256
+- **Credential security**: Password hashing via Bun.password (Argon2id by default, bcrypt compatible); encryption via AEAD (AES-GCM using WebCrypto).
 - **Onboarding flow** with `ADMIN_SECRET` for initial setup
 - **Session management** for web UI authentication
 - **Auto-start node** on login or credential save
@@ -156,7 +156,7 @@ Environment variables:
 
 4. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 
-5. **Release Process**: Must be on `dev` branch, merges to `master` after tests pass
+5. **Release Process**: Must be on `dev` branch, merges to `main` after tests pass
 
 6. **Node Event Flow**: 
    - All Bifrost events update `lastActivity` timestamp

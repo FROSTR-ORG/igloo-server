@@ -1,7 +1,9 @@
-import { createConnectedNode, createAndConnectNode } from '@frostr/igloo-core';
-import { ServerBifrostNode } from '../types/bifrost-node.js';
-import { PrivilegedRouteContext } from './types.js';
+import { createConnectedNode, createAndConnectNode, cleanupBifrostNode } from '@frostr/igloo-core';
+import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { getValidRelays } from './utils.js';
+
+// Track cleanup timers for proper shutdown cleanup
+const cleanupTimers: Set<NodeJS.Timeout> = new Set();
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -46,12 +48,45 @@ export async function createAndStartNode(
     // Check if we have the minimum required credentials
     if (!credentials.group_cred || !credentials.share_cred) {
       context.addServerLog('error', 'Cannot start node: missing group or share credentials');
-      return;
+      throw new Error('Missing group or share credentials');
     }
 
-    // Log node replacement if applicable
+    // Properly dispose of existing node before creating a new one
     if (context.node) {
       context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
+      
+      const oldNode = context.node;
+      
+      try {
+        // Stop monitoring for the old node
+        const { cleanupMonitoring } = await import('../node/manager.js');
+        cleanupMonitoring();
+        
+        // Clear the node reference
+        context.updateNode(null);
+        
+        // Cleanup the old node (cast to any to handle type mismatch)
+        cleanupBifrostNode(oldNode as any);
+        
+        context.addServerLog('info', 'Previous node disposed successfully');
+      } catch (cleanupError) {
+        context.addServerLog('error', 'Error during node cleanup, scheduling async cleanup', cleanupError);
+
+        // Simple fallback: clear the reference and schedule async cleanup
+        context.updateNode(null);
+        
+        // Schedule async cleanup without blocking
+        const timer = setTimeout(() => {
+          cleanupTimers.delete(timer);
+          try {
+            cleanupBifrostNode(oldNode as any);
+            context.addServerLog('info', 'Async cleanup completed for old node');
+          } catch (e) {
+            context.addServerLog('error', 'Async cleanup failed', e);
+          }
+        }, 0);
+        cleanupTimers.add(timer);
+      }
     }
 
     const nodeRelays = getValidRelays(
@@ -79,7 +114,7 @@ export async function createAndStartNode(
         context.addServerLog('info', 'Node connected and ready');
         
         if (result.state) {
-          context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
+          context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays?.length ?? 0} relays`);
         }
       } else {
         throw new Error('Enhanced node creation returned no node');
@@ -106,7 +141,19 @@ export async function createAndStartNode(
     }
     
     if (!newNode) {
-      context.addServerLog('error', 'Failed to create node after all attempts');
+      context.addServerLog('error', 'Failed to create node after all attempts - both enhanced and basic connection methods failed');
+      throw new Error('Failed to create node after all attempts - both enhanced and basic connection methods failed');
     }
-  });
+  }, context);
+}
+
+/**
+ * Clears all pending cleanup timers
+ * Should be called on server shutdown
+ */
+export function clearCleanupTimers(): void {
+  for (const timer of cleanupTimers) {
+    clearTimeout(timer);
+  }
+  cleanupTimers.clear();
 }

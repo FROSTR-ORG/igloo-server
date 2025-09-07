@@ -21,18 +21,40 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [hasAdminSecret, setHasAdminSecret] = useState(true);
+  const [networkError, setNetworkError] = useState('');
+  const [isCheckingStatus, setIsCheckingStatus] = useState(true);
+  const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     checkStatus();
+    
+    // Cleanup timeout on unmount
+    return () => {
+      if (timeoutRef.current !== null) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
   }, []);
 
   const checkStatus = async () => {
+    setIsCheckingStatus(true);
+    setNetworkError('');
+    
     try {
       const response = await fetch('/api/onboarding/status');
+      
+      if (!response.ok) {
+        throw new Error(`Server responded with status ${response.status}`);
+      }
+      
       const data = await response.json();
       setHasAdminSecret(data.hasAdminSecret);
     } catch (error) {
       console.error('Error checking onboarding status:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Network error occurred';
+      setNetworkError(`Failed to check server status: ${errorMessage}`);
+    } finally {
+      setIsCheckingStatus(false);
     }
   };
 
@@ -50,8 +72,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminSecret}`,
         },
-        body: JSON.stringify({ adminSecret }),
+        body: JSON.stringify({}),
       });
 
       const data = await response.json();
@@ -99,9 +122,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${adminSecret}`,
         },
         body: JSON.stringify({
-          adminSecret,
           username,
           password,
         }),
@@ -117,7 +140,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       setStep('complete');
       
       // Auto-redirect to login after 3 seconds
-      setTimeout(() => {
+      timeoutRef.current = setTimeout(() => {
         onComplete();
       }, 3000);
     } catch (error) {
@@ -127,13 +150,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
   };
 
-  const handleAdminKeyPress = (e: React.KeyboardEvent) => {
+  const handleAdminKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !isLoading) {
       validateAdminSecret();
     }
   };
 
-  const handleSetupKeyPress = (e: React.KeyboardEvent) => {
+  const handleSetupKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter' && !isLoading) {
       createUser();
     }
@@ -142,6 +165,71 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const getCurrentStepNumber = () => {
     return step === 'admin' ? 1 : step === 'setup' ? 2 : 3;
   };
+
+  // Step indicator component
+  const StepIndicator: React.FC<{ currentStep: number }> = ({ currentStep }) => (
+    <div className="flex items-center justify-center space-x-2">
+      {['Admin', 'Setup', 'Complete'].map((label, i) => {
+        const stepNum = i + 1;
+        const isActive = stepNum === currentStep;
+        const isPast = stepNum < currentStep;
+        return (
+          <div key={i} className="flex items-center">
+            <div
+              className={`
+                w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
+                ${
+                  isPast
+                    ? 'bg-green-600/80 text-white'
+                    : isActive
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-800/50 text-gray-500'
+                }
+              `}
+            >
+              {isPast ? '✓' : stepNum}
+            </div>
+            {i < 2 && (
+              <div
+                className={`w-8 h-0.5 ${
+                  isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
+                }`}
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (isCheckingStatus) {
+    return (
+      <PageLayout>
+        <AppHeader subtitle="Initial Setup" />
+        <ContentCard>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-blue-300">Checking server status...</div>
+          </div>
+        </ContentCard>
+      </PageLayout>
+    );
+  }
+
+  if (networkError) {
+    return (
+      <PageLayout>
+        <AppHeader subtitle="Initial Setup" />
+        <ContentCard>
+          <div className="p-8 text-center">
+            <Alert variant="error">{networkError}</Alert>
+            <Button onClick={checkStatus} className="mt-4">
+              Retry
+            </Button>
+          </div>
+        </ContentCard>
+      </PageLayout>
+    );
+  }
 
   if (!hasAdminSecret) {
     return (
@@ -176,40 +264,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         <div className="space-y-6">
         {step === 'admin' && (
           <>
-            {/* Step indicator */}
-            <div className="flex items-center justify-center space-x-2">
-              {['Admin', 'Setup', 'Complete'].map((label, i) => {
-                const stepNum = i + 1;
-                const currentStep = getCurrentStepNumber();
-                const isActive = stepNum === currentStep;
-                const isPast = stepNum < currentStep;
-                return (
-                  <div key={i} className="flex items-center">
-                    <div
-                      className={`
-                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
-                        ${
-                          isPast
-                            ? 'bg-green-600/80 text-white'
-                            : isActive
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-800/50 text-gray-500'
-                        }
-                      `}
-                    >
-                      {isPast ? '✓' : stepNum}
-                    </div>
-                    {i < 2 && (
-                      <div
-                        className={`w-8 h-0.5 ${
-                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
-                        }`}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <StepIndicator currentStep={getCurrentStepNumber()} />
 
             {/* Icon and Title */}
             <div className="flex items-center justify-center">
@@ -235,7 +290,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   placeholder="Enter admin secret"
                   value={adminSecret}
                   onChange={(e) => setAdminSecret(e.target.value)}
-                  onKeyPress={handleAdminKeyPress}
+                  onKeyDown={handleAdminKeyDown}
                   disabled={isLoading}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                   autoFocus
@@ -274,40 +329,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
         {step === 'setup' && (
           <>
-            {/* Step indicator */}
-            <div className="flex items-center justify-center space-x-2">
-              {['Admin', 'Setup', 'Complete'].map((label, i) => {
-                const stepNum = i + 1;
-                const currentStep = getCurrentStepNumber();
-                const isActive = stepNum === currentStep;
-                const isPast = stepNum < currentStep;
-                return (
-                  <div key={i} className="flex items-center">
-                    <div
-                      className={`
-                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
-                        ${
-                          isPast
-                            ? 'bg-green-600/80 text-white'
-                            : isActive
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-800/50 text-gray-500'
-                        }
-                      `}
-                    >
-                      {isPast ? '✓' : stepNum}
-                    </div>
-                    {i < 2 && (
-                      <div
-                        className={`w-8 h-0.5 ${
-                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
-                        }`}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <StepIndicator currentStep={getCurrentStepNumber()} />
 
             {/* Icon and Title */}
             <div className="flex items-center justify-center">
@@ -358,7 +380,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
                   placeholder="Confirm password"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
-                  onKeyPress={handleSetupKeyPress}
+                  onKeyDown={handleSetupKeyDown}
                   disabled={isLoading}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                 />
@@ -396,40 +418,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
         {step === 'complete' && (
           <>
-            {/* Step indicator */}
-            <div className="flex items-center justify-center space-x-2">
-              {['Admin', 'Setup', 'Complete'].map((label, i) => {
-                const stepNum = i + 1;
-                const currentStep = getCurrentStepNumber();
-                const isActive = stepNum === currentStep;
-                const isPast = stepNum < currentStep;
-                return (
-                  <div key={i} className="flex items-center">
-                    <div
-                      className={`
-                        w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
-                        ${
-                          isPast
-                            ? 'bg-green-600/80 text-white'
-                            : isActive
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-800/50 text-gray-500'
-                        }
-                      `}
-                    >
-                      {isPast ? '✓' : stepNum}
-                    </div>
-                    {i < 2 && (
-                      <div
-                        className={`w-8 h-0.5 ${
-                          isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
-                        }`}
-                      />
-                    )}
-                  </div>
-                );
-              })}
-            </div>
+            <StepIndicator currentStep={getCurrentStepNumber()} />
 
             {/* Icon and Title */}
             <div className="flex items-center justify-center">

@@ -165,9 +165,15 @@ The script performs these checks in sequence:
    ```
    Example: `release/prepare-v1.2.3`
 
-2. **Create and Push Branch**
+2. **Create Branch, Commit Version Bump, and Push**
    ```bash
    git checkout -b "$RELEASE_BRANCH"
+
+   # Stage and commit the version bump so the PR contains the change
+   git add package.json
+   git commit -m "chore(release): bump version to v${NEW_VERSION}"
+
+   # Push the branch to open a PR with the version change
    git push origin "$RELEASE_BRANCH"
    ```
 
@@ -177,21 +183,21 @@ After the script completes, you must:
 
 1. **Review Changes**
    - Visit the comparison URL provided
-   - Example: `https://github.com/FROSTR-ORG/igloo-server/compare/master...release/prepare-v1.2.3`
+   - Example: `https://github.com/FROSTR-ORG/igloo-server/compare/main...release/prepare-v1.2.3`
 
 2. **Create Pull Request**
    - Source: `release/prepare-v{version}`
-   - Target: `master` branch
+   - Target: `main` branch
    - Title: "Release v{version}"
    - Description: Include changelog and notable changes
 
 3. **Merge PR**
    - Get approvals if required
-   - Merge to master to trigger automated release
+   - Merge to main to trigger automated release
 
 ### 4. GitHub Actions Automation
 
-When the PR is merged to master:
+When the PR is merged to main:
 
 1. **Release Creation**
    - GitHub automatically creates a release
@@ -318,7 +324,7 @@ Apply appropriate labels for changelog categorization:
 ## Release Artifacts
 
 Each release produces:
-1. **Git Tag**: `v{version}` on master branch
+1. **Git Tag**: `v{version}` on main branch
 2. **GitHub Release**: With auto-generated changelog
 3. **Updated package.json**: New version number
 4. **Release Branch**: Archived as `release/prepare-v{version}`
@@ -329,9 +335,9 @@ If a release needs to be rolled back:
 
 1. **Revert on Master**
    ```bash
-   git checkout master
+   git checkout main
    git revert <merge-commit-hash>
-   git push origin master
+   git push origin main
    ```
 
 2. **Create Hotfix**
@@ -339,7 +345,7 @@ If a release needs to be rolled back:
    git checkout -b hotfix/v{version}-rollback
    # Make fixes
    git push origin hotfix/v{version}-rollback
-   # Create PR to master
+   # Create PR to main
    ```
 
 ## Monitoring Post-Release

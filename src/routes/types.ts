@@ -56,7 +56,19 @@ export interface ServerBifrostNode {
 export interface AuthContext {
   userId?: string | number; // Support both string (env auth) and number (database user id)
   authenticated: boolean;
-  password?: string; // For database users who need decryption
+  // password removed - should be passed as explicit parameter
+}
+
+// Per-request auth data that includes sensitive information
+export interface RequestAuth {
+  userId?: string | number;
+  authenticated: boolean;
+  password?: string; // Transient password for database users - never stored in context
+  readonly derivedKey?: Uint8Array | ArrayBuffer; // Derived key for decryption operations (binary, non-serializable) - only Uint8Array/Buffer accepted in practice
+  
+  // Secure getter functions that clear sensitive data after first access
+  getPassword?(): string | undefined;
+  getDerivedKey?(): Uint8Array | ArrayBuffer | undefined;
 }
 
 import type { ServerWebSocket } from 'bun';

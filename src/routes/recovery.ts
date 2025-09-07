@@ -5,10 +5,11 @@ import {
   validateGroup,
   validateShare
 } from '@frostr/igloo-core';
-import { RouteContext } from './types.js';
+import { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
+import { authenticate, AUTH_CONFIG } from './auth.js';
 
-export async function handleRecoveryRoute(req: Request, url: URL, _context: RouteContext): Promise<Response | null> {
+export async function handleRecoveryRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/recover')) return null;
 
   // Get secure CORS headers based on request origin
@@ -20,6 +21,27 @@ export async function handleRecoveryRoute(req: Request, url: URL, _context: Rout
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };
+
+  // Allow CORS preflight without authentication
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+
+  // Check authentication - prefer passed auth, fallback to authenticate()
+  // Key recovery is a sensitive operation that requires authentication
+  if (AUTH_CONFIG.ENABLED) {
+    // Use provided auth if available, otherwise authenticate the request
+    const authCandidate = _auth ?? authenticate(req);
+    const authToUse: RequestAuth | null = authCandidate ?? null;
+    
+    if (!authToUse || !authToUse.authenticated) {
+      context.addServerLog('warn', `Unauthorized key recovery attempt from ${req.headers.get('x-forwarded-for') || 'unknown'}`);
+      return Response.json(
+        { error: 'Authentication required for key recovery operations' },
+        { status: 401, headers }
+      );
+    }
+  }
 
   try {
     switch (url.pathname) {

@@ -5,8 +5,8 @@ import {
   comparePubkeys,
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
-import { RouteContext, PeerStatus } from './types.js';
-import { readEnvFile, getSecureCorsHeaders } from './utils.js';
+import { RouteContext, PeerStatus, RequestAuth } from './types.js';
+import { readEnvFile, getSecureCorsHeaders, bytesToHex } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
 
@@ -14,7 +14,7 @@ import { getUserCredentials } from '../db/database.js';
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 
 // Helper function to get credentials based on mode
-async function getCredentials(context: RouteContext): Promise<{ group_cred?: string; share_cred?: string } | null> {
+async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?: string; share_cred?: string } | null> {
   if (HEADLESS) {
     // Headless mode - get from environment
     const env = await readEnvFile();
@@ -24,16 +24,54 @@ async function getCredentials(context: RouteContext): Promise<{ group_cred?: str
     };
   } else {
     // Database mode - get from authenticated user's stored credentials
-    const auth = (context as any).auth;
-    if (auth?.authenticated && typeof auth.userId === 'number' && auth.password) {
-      const credentials = getUserCredentials(auth.userId, auth.password);
-      return credentials;
+    const password = auth?.getPassword?.();
+    const derivedKey = auth?.getDerivedKey?.();
+    
+    if (auth?.authenticated && typeof auth.userId === 'number' && (password || derivedKey)) {
+      let secret: string | null = null;
+      let isDerivedKey = false;
+      if (password) {
+        secret = password;
+      } else if (derivedKey != null) {
+        // Accept only Uint8Array or Buffer for derivedKey
+        let keyBytes: Uint8Array | null = null;
+        if (derivedKey instanceof Uint8Array) {
+          keyBytes = derivedKey;
+        } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(derivedKey)) {
+          keyBytes = new Uint8Array(derivedKey);
+        } else {
+          console.warn('Invalid derivedKey provided; expected Uint8Array or Buffer');
+          return null;
+        }
+        secret = bytesToHex(keyBytes);
+        isDerivedKey = true;
+      }
+      if (!secret) return null;
+      let credentials;
+      try {
+        credentials = getUserCredentials(
+          auth.userId,
+          secret,
+          isDerivedKey
+        );
+      } catch (error) {
+        console.error('Failed to retrieve user credentials for peers:', error);
+        return null;
+      }
+      if (credentials) {
+        // Convert nulls to undefined for consistency with expected type
+        return {
+          group_cred: credentials.group_cred || undefined,
+          share_cred: credentials.share_cred || undefined
+        };
+      }
+      return null;
     }
     return null;
   }
 }
 
-export async function handlePeersRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+export async function handlePeersRoute(req: Request, url: URL, context: RouteContext, auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/peers')) return null;
 
   // Get secure CORS headers based on request origin
@@ -51,9 +89,11 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
       case '/api/peers':
         if (req.method === 'GET') {
           // Get credentials based on mode
-          const credentials = await getCredentials(context);
+          const credentials = await getCredentials(auth);
           if (!credentials || !credentials.group_cred) {
-            return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+            // Return 401 in DB mode for auth failures, 400 in headless for missing env
+            const statusCode = !HEADLESS ? 401 : 400;
+            return Response.json({ error: 'No group credential available' }, { status: statusCode, headers });
           }
           
           try {
@@ -102,9 +142,11 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
 
       case '/api/peers/self':
         if (req.method === 'GET') {
-          const credentials = await getCredentials(context);
+          const credentials = await getCredentials(auth);
           if (!credentials || !credentials.group_cred || !credentials.share_cred) {
-            return Response.json({ error: 'Missing credentials' }, { status: 400, headers });
+            // Return 401 in DB mode for auth failures, 400 in headless for missing env
+            const statusCode = !HEADLESS ? 401 : 400;
+            return Response.json({ error: 'Missing credentials' }, { status: statusCode, headers });
           }
           
           const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
@@ -132,7 +174,7 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
           const { target } = body;
           
           if (target === 'all') {
-            return await handlePingAllPeers(context, headers);
+            return await handlePingAllPeers(context, headers, auth);
           } else if (typeof target === 'string') {
             return await handlePingSinglePeer(target, context, headers);
           } else {
@@ -149,11 +191,12 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
   }
 }
 
-async function handlePingAllPeers(context: RouteContext, headers: Record<string, string>): Promise<Response> {
+async function handlePingAllPeers(context: RouteContext, headers: Record<string, string>, auth?: RequestAuth | null): Promise<Response> {
   // Get credentials based on mode
-  const credentials = await getCredentials(context);
+  const credentials = await getCredentials(auth);
   if (!credentials || !credentials.group_cred) {
-    return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+    // Use 401 for all credential failures as it's an authentication issue
+    return Response.json({ error: 'No group credential available' }, { status: 401, headers });
   }
   
   try {

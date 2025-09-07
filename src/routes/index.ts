@@ -11,7 +11,7 @@ export { handleStaticRoute } from './static.js';
 export * from './types.js';
 export * from './utils.js';
 
-import { RouteContext, PrivilegedRouteContext } from './types.js';
+import { RouteContext, PrivilegedRouteContext, RequestAuth } from './types.js';
 import { handleStatusRoute } from './status.js';
 import { handleEventsRoute } from './events.js';
 import { handlePeersRoute } from './peers.js';
@@ -27,7 +27,8 @@ import {
   handleLogout, 
   getAuthStatus, 
   AUTH_CONFIG,
-  authenticate 
+  authenticate,
+  checkRateLimit 
 } from './auth.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
@@ -57,6 +58,24 @@ export async function handleRequest(
 
   // Handle onboarding endpoints first (bypass auth in non-headless mode)
   if (!HEADLESS && url.pathname.startsWith('/api/onboarding')) {
+    // Apply rate limiting to protect ADMIN_SECRET validation from brute-force
+    // Only rate limit validation and setup endpoints, not the status endpoint
+    if (url.pathname === '/api/onboarding/validate-admin' || 
+        url.pathname === '/api/onboarding/setup') {
+      const rateLimit = checkRateLimit(req);
+      if (!rateLimit.allowed) {
+        return Response.json({ 
+          error: 'Rate limit exceeded. Try again later.' 
+        }, { 
+          status: 429,
+          headers: {
+            ...headers,
+            'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+          }
+        });
+      }
+    }
+    
     const onboardingResult = await handleOnboardingRoute(req, url, baseContext);
     if (onboardingResult) return onboardingResult;
   }
@@ -109,12 +128,14 @@ export async function handleRequest(
   const needsPrivilegedAccess = privilegedRoutes.some(route => url.pathname.startsWith(route));
   const context = needsPrivilegedAccess ? privilegedContext : baseContext;
 
+  // Authentication info for this request (not stored in shared context)
+  let authInfo: RequestAuth | null = null;
+
   // Define endpoints that should be accessible without authentication
   const publicEndpoints = [
     '/api/auth/login',
     '/api/auth/logout', 
     '/api/auth/status',
-    '/api/status',  // Health check endpoint should be public
     '/api/onboarding/status',
     '/api/onboarding/validate-admin',
     '/api/onboarding/setup'
@@ -122,7 +143,10 @@ export async function handleRequest(
 
   const isPublicEndpoint = publicEndpoints.some(endpoint => url.pathname === endpoint);
 
-  // Authentication check for API endpoints (skip public endpoints)
+  // Special handling for /api/status: try authentication if headers present, but allow unauthenticated access
+  const isStatusEndpoint = url.pathname === '/api/status';
+
+  // Authentication check for API endpoints (skip public endpoints, handle status specially)
   if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint) {
     const authResult = authenticate(req);
     
@@ -150,31 +174,85 @@ export async function handleRequest(
       });
     }
     
-    // Add auth info to context
-    context.auth = {
+    // Create local auth info object instead of mutating shared context
+    // Store sensitive values that will be cleared after first access
+    let password = authResult.password;
+    let derivedKey = authResult.derivedKey;
+    
+    authInfo = {
       userId: authResult.userId,
       authenticated: true,
-      password: authResult.password // For database users who need decryption
+      // Removed direct storage of sensitive data to prevent exposure
+      // Use secure getter functions instead
+      
+      // Secure getter functions that clear sensitive data after first access
+      getPassword(): string | undefined {
+        const value = password;
+        password = undefined; // Clear after access
+        return value;
+      },
+      
+      getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
+        const value = derivedKey;
+        derivedKey = undefined; // Clear after access
+        return value;
+      }
     };
+  } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
+    // Special handling for /api/status: attempt authentication if headers are present
+    // but don't require it (allow unauthenticated health checks)
+    try {
+      const authResult = authenticate(req);
+      
+      // Only use auth info if authentication actually succeeded (not rate limited or failed)
+      if (authResult.authenticated && !authResult.rateLimited) {
+        // Create auth info object same as above
+        let password = authResult.password;
+        let derivedKey = authResult.derivedKey;
+        
+        authInfo = {
+          userId: authResult.userId,
+          authenticated: true,
+          
+          // Secure getter functions that clear sensitive data after first access
+          getPassword(): string | undefined {
+            const value = password;
+            password = undefined; // Clear after access
+            return value;
+          },
+          
+          getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
+            const value = derivedKey;
+            derivedKey = undefined; // Clear after access
+            return value;
+          }
+        };
+      }
+      // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
+    } catch (error) {
+      // If authentication throws an error, allow unauthenticated access
+      // Authentication attempt failed, allowing unauthenticated access for health checks
+    }
   }
 
   // Note: Authentication is now handled above for all non-public API endpoints
 
   // Handle user routes (database mode only)
   if (!HEADLESS && url.pathname.startsWith('/api/user')) {
-    const userResult = await handleUserRoute(req, url, privilegedContext);
+    const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
     if (userResult) return userResult;
   }
   
   // Handle privileged routes separately
   if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
-    const result = await handleEnvRoute(req, url, privilegedContext);
+    const result = await handleEnvRoute(req, url, privilegedContext, authInfo);
     if (result) {
       return result;
     }
   }
 
   // Try each non-privileged route handler in order
+  // Note: These handlers now accept auth as an optional parameter
   const routeHandlers = [
     handleStatusRoute,    // Allow unauthenticated for health checks
     handleEventsRoute,
@@ -184,7 +262,7 @@ export async function handleRequest(
   ];
 
   for (const handler of routeHandlers) {
-    const result = await handler(req, url, context);
+    const result = await handler(req, url, context, authInfo);
     if (result) {
       return result;
     }

@@ -2,7 +2,7 @@ import { serve, type ServerWebSocket } from 'bun';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
-import { closeDatabase } from './db/database.js';
+import { closeDatabase, isDatabaseInitialized } from './db/database.js';
 import { 
   handleRequest, 
   PeerStatus, 
@@ -16,6 +16,7 @@ import {
   cleanupMonitoring,
   resetHealthMonitoring
 } from './node/manager.js';
+import { clearCleanupTimers } from './routes/node-manager.js';
 
 // Node restart configuration with validation
 const parseRestartConfig = () => {
@@ -68,12 +69,21 @@ const addServerLog = createAddServerLog(broadcastEvent);
 
 // Initialize database if not in headless mode
 if (!CONST.HEADLESS) {
+  // Initialize database module
+  await import('./db/database.js');
+  
   console.log('🗄️  Database mode enabled - using SQLite for user management');
-  if (!CONST.ADMIN_SECRET) {
-    console.warn('⚠️  ADMIN_SECRET not set - onboarding will require configuration');
+  
+  // In database mode, ADMIN_SECRET is mandatory
+  if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
+    console.error('❌ ADMIN_SECRET is mandatory in database mode.');
+    console.error('   It must be set to a unique, secure value in your environment variables.');
+    console.error('   Generate a secure secret with: openssl rand -hex 32');
+    console.error('   Then, set it in your .env file or as an environment variable.');
+    process.exit(1);
   }
 } else {
-  console.log('📁 Headless mode enabled - using environment variables');
+  console.log('⚙️  Headless mode enabled - using environment variables for configuration');
 }
 
 // Create the Nostr relay
@@ -435,6 +445,7 @@ process.on('SIGTERM', () => {
   }
   
   cleanupMonitoring();
+  clearCleanupTimers();
   
   // Close database connection if not in headless mode
   if (!CONST.HEADLESS) {
@@ -454,6 +465,7 @@ process.on('SIGINT', () => {
   }
   
   cleanupMonitoring();
+  clearCleanupTimers();
   
   // Close database connection if not in headless mode
   if (!CONST.HEADLESS) {

@@ -5,7 +5,7 @@ import { LogOut, User } from 'lucide-react';
 interface AppHeaderProps {
   subtitle?: React.ReactNode;
   authEnabled?: boolean;
-  userId?: string;
+  userId?: string | number;
   onLogout?: () => void;
 }
 
@@ -28,7 +28,7 @@ export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeader
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 text-blue-300 text-sm">
                 <User size={16} />
-                <span>{userId}</span>
+                <span>{String(userId)}</span>
               </div>
               <Button
                 variant="ghost"

@@ -83,6 +83,9 @@ Starting with this version, Igloo Server **automatically generates and persists*
    - **Keep it secret**: Never share or commit to version control
    - **Rotate after setup**: Change it after initial configuration
    - **Store securely**: Use a password manager or secure vault
+   - **Container deployments**: Prefer Docker/Kubernetes secrets over environment variables
+   - **Process visibility**: Environment variables can be exposed via `ps` and system logs
+   - **Log sanitization**: Ensure ADMIN_SECRET is never logged or included in error messages
 
 #### Database Security Features
 - **Password Hashing**: Bcrypt with salt (cost factor 12)
@@ -404,11 +407,89 @@ grep "login" server.log
 # Backup database file
 cp data/igloo.db data/igloo-backup-$(date +%Y%m%d).db
 
-# Backup with encryption
-tar -czf - data/igloo.db | openssl enc -aes-256-cbc -salt -out backup.tar.gz.enc
+# Backup with modern AEAD encryption (AES-256-GCM - recommended)
+# Note: Use OpenSSL 1.1.0+ for GCM support
+tar -czf - data/igloo.db | \
+  openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -salt -md sha256 -out backup.tar.gz.enc
 
-# Restore from backup
+# Alternative: Using age encryption (simpler and more secure)
+# Install: https://github.com/FiloSottile/age
+tar -czf - data/igloo.db | \
+  age -p > backup.tar.gz.age
+# Enter passphrase when prompted
+
+# Alternative: Using gpg with AES256 and SHA512
+tar -czf - data/igloo.db | \
+  gpg --symmetric --cipher-algo AES256 --digest-algo SHA512 \
+  --s2k-mode 3 --s2k-count 65536 --compress-algo none \
+  -o backup.tar.gz.gpg
+
+# Restore from encrypted backup (OpenSSL)
+openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -d -in backup.tar.gz.enc | \
+  tar -xzf - 
+
+# Restore from encrypted backup (age)
+age -d backup.tar.gz.age | tar -xzf -
+
+# Restore from encrypted backup (gpg)
+gpg --decrypt backup.tar.gz.gpg | tar -xzf -
+
+# Restore from unencrypted backup
 cp data/igloo-backup-20240101.db data/igloo.db
+```
+
+#### Secure Backup Script Example
+```bash
+#!/bin/bash
+# secure-backup.sh - Production-ready backup with encryption
+
+set -euo pipefail
+
+BACKUP_DIR="/secure/backups"
+DB_FILE="data/igloo.db"
+DATE=$(date +%Y%m%d-%H%M%S)
+BACKUP_NAME="igloo-backup-${DATE}"
+
+# Create backup directory if it doesn't exist
+mkdir -p "${BACKUP_DIR}"
+
+# Check if database exists
+if [ ! -f "${DB_FILE}" ]; then
+    echo "Error: Database file not found"
+    exit 1
+fi
+
+# Create encrypted backup using age (recommended)
+if command -v age &> /dev/null; then
+    tar -czf - "${DB_FILE}" | \
+        age -p -o "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.age"
+    echo "Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.age"
+    
+# Fallback to OpenSSL with AEAD
+elif command -v openssl &> /dev/null; then
+    tar -czf - "${DB_FILE}" | \
+        openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -salt -md sha256 \
+        -out "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
+    echo "Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
+    
+else
+    echo "Error: No encryption tool available (install age or openssl)"
+    exit 1
+fi
+
+# Set secure permissions
+chmod 600 "${BACKUP_DIR}/${BACKUP_NAME}".tar.gz.*
+
+# Clean up old backups (keep last 30 days)
+find "${BACKUP_DIR}" -name "igloo-backup-*.tar.gz.*" -mtime +30 -delete
+
+echo "Backup completed successfully"
+```
+
+#### Automated Backup with Cron
+```bash
+# Add to crontab for daily backups at 2 AM
+0 2 * * * /path/to/secure-backup.sh >> /var/log/igloo-backup.log 2>&1
 ```
 
 ### Migration Between Modes

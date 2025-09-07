@@ -1,10 +1,11 @@
-import { RouteContext } from './types.js';
+import { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, getValidRelays } from './utils.js';
 import { getNodeHealth } from '../node/manager.js';
 import { HEADLESS } from '../const.js';
+import { userHasStoredCredentials } from '../db/database.js';
 
-export async function handleStatusRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+export async function handleStatusRoute(req: Request, url: URL, context: RouteContext, auth?: RequestAuth | null): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
 
   // Get secure CORS headers based on request origin
@@ -26,16 +27,70 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
       // Get node health information
       const nodeHealth = getNodeHealth();
       
-      // In database mode, if the node is running, credentials must exist
-      // In headless mode, check environment variables
-      const hasCredentials = HEADLESS 
-        ? !!(env.SHARE_CRED && env.GROUP_CRED)
-        : context.node !== null;
+      // Check for stored credentials properly in both modes
+      let hasCredentials: boolean | null = null;
+      if (HEADLESS) {
+        // In headless mode, check environment variables
+        hasCredentials = !!(env.SHARE_CRED && env.GROUP_CRED);
+      } else {
+        // In database mode, only check credentials for authenticated users
+        // This prevents information leakage about whether ANY user has credentials
+        if (auth?.authenticated && auth.userId != null) {
+          try {
+            let parsedUserId: number | null = null;
+
+            // Conversion step: handle string, number, and bigint explicitly
+            try {
+              if (typeof auth.userId === 'number') {
+                parsedUserId = auth.userId;
+              } else if (typeof auth.userId === 'string') {
+                const trimmed = auth.userId.trim();
+                if (!/^\d+$/.test(trimmed)) throw new Error('Non-numeric userId string');
+                const value = parseInt(trimmed, 10);
+                if (!Number.isFinite(value)) throw new Error('Parsed userId is not finite');
+                parsedUserId = value;
+              } else if (typeof auth.userId === 'bigint') {
+                if (auth.userId <= 0n) throw new Error('bigint userId must be positive');
+                if (auth.userId > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('bigint userId exceeds MAX_SAFE_INTEGER');
+                parsedUserId = Number(auth.userId);
+              } else {
+                throw new Error(`Unsupported userId type: ${typeof auth.userId}`);
+              }
+            } catch (conversionError) {
+              console.error('User ID conversion error in status endpoint:', conversionError);
+              hasCredentials = false;
+              parsedUserId = null;
+            }
+
+            // Validation step: only proceed if conversion succeeded
+            if (parsedUserId != null) {
+              const isValid = Number.isFinite(parsedUserId)
+                && Number.isSafeInteger(parsedUserId)
+                && parsedUserId > 0
+                && parsedUserId <= Number.MAX_SAFE_INTEGER;
+
+              if (!isValid) {
+                console.error('User ID validation error in status endpoint: not a positive safe integer within bounds');
+                hasCredentials = false;
+              } else {
+                hasCredentials = userHasStoredCredentials(parsedUserId);
+              }
+            }
+          } catch (unexpectedError) {
+            console.error('Unexpected error checking user credentials in status endpoint:', unexpectedError);
+            hasCredentials = false; // Return false on error to avoid leaking info
+          }
+        } else {
+          // For unauthenticated requests, don't reveal if any users have credentials
+          // Return a safe generic value to avoid inference of global state
+          hasCredentials = null;
+        }
+      }
 
       const status = {
         serverRunning: true,
         nodeActive: context.node !== null,
-        hasCredentials: hasCredentials,
+        hasCredentials,
         relayCount: currentRelays.length,
         relays: currentRelays,
         timestamp: new Date().toISOString(),

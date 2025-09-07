@@ -102,7 +102,13 @@ RELEASE_BRANCH="release/prepare-v${NEW_VERSION:-next}"
 echo "🌿 Creating release branch: $RELEASE_BRANCH"
 git checkout -b "$RELEASE_BRANCH"
 
+# Stage and commit the version bump
+echo "📦 Committing version bump..."
+git add package.json
+git commit -m "chore(release): bump version to v$NEW_VERSION"
+
 # Push release branch
+echo "🚀 Pushing release branch to origin..."
 git push origin "$RELEASE_BRANCH"
 
 echo ""

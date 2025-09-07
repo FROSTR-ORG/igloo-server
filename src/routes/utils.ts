@@ -1,5 +1,19 @@
 import { promises as fs } from 'fs';
 
+// Binary helpers
+/**
+ * Convert a Uint8Array or ArrayBuffer to a lowercase hex string without mutating the input.
+ */
+export function bytesToHex(input: Uint8Array | ArrayBuffer): string {
+  const bytes = input instanceof Uint8Array ? input : new Uint8Array(input);
+  const hex: string[] = new Array(bytes.length);
+  for (let i = 0; i < bytes.length; i++) {
+    const v = bytes[i];
+    hex[i] = (v < 16 ? '0' : '') + v.toString(16);
+  }
+  return hex.join('');
+}
+
 // Helper function to get valid relay URLs
 export function getValidRelays(envRelays?: string): string[] {
   // Use single default relay as requested
@@ -55,14 +69,23 @@ export function getValidRelays(envRelays?: string): string[] {
 // Helper functions for .env file management
 const ENV_FILE_PATH = '.env';
 
-// Security: Whitelist of allowed environment variable keys
+// Security: Whitelist of allowed environment variable keys (for write/validation)
 const ALLOWED_ENV_KEYS = new Set([
   'SHARE_CRED',         // Share credential for signing
   'GROUP_CRED',         // Group credential for signing
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
-  'SESSION_SECRET'      // Session secret for cookie signing (optional, auto-generated if not provided)
+  'SESSION_SECRET'      // Session secret for cookie signing (kept for write/validation only)
+]);
+
+// Public environment variable keys that can be exposed through GET endpoints
+// Only include non-sensitive keys. Do NOT include signing credentials.
+const PUBLIC_ENV_KEYS = new Set([
+  'RELAYS',             // Relay URLs configuration
+  'GROUP_NAME',         // Display name for the signing group
+  'CREDENTIALS_SAVED_AT' // Timestamp when credentials were last saved
+  // SESSION_SECRET, SHARE_CRED, GROUP_CRED explicitly excluded from public exposure
 ]);
 
 // Validate environment variable keys against whitelist
@@ -72,7 +95,7 @@ export function validateEnvKeys(keys: string[]): { validKeys: string[]; invalidK
   return { validKeys, invalidKeys };
 }
 
-// Filter environment object to only include whitelisted keys
+// Filter environment object to only include whitelisted keys (for validation/write operations)
 export function filterEnvObject(env: Record<string, string>): { 
   filteredEnv: Record<string, string>; 
   rejectedKeys: string[] 
@@ -89,6 +112,19 @@ export function filterEnvObject(env: Record<string, string>): {
   }
   
   return { filteredEnv, rejectedKeys };
+}
+
+// Filter environment object for public exposure (excludes sensitive keys like SESSION_SECRET)
+export function filterPublicEnvObject(env: Record<string, string>): Record<string, string> {
+  const publicEnv: Record<string, string> = {};
+  
+  for (const [key, value] of Object.entries(env)) {
+    if (PUBLIC_ENV_KEYS.has(key)) {
+      publicEnv[key] = value;
+    }
+  }
+  
+  return publicEnv;
 }
 
 function parseEnvFile(content: string): Record<string, string> {
@@ -139,8 +175,8 @@ export async function readEnvFile(): Promise<Record<string, string>> {
 function getEnvVarsFromProcess(): Record<string, string> {
   const envVars: Record<string, string> = {};
   
-  // Only include whitelisted environment variables
-  for (const key of ALLOWED_ENV_KEYS) {
+  // Only include public environment variables (excludes SESSION_SECRET)
+  for (const key of PUBLIC_ENV_KEYS) {
     const value = process.env[key];
     if (value) {
       envVars[key] = value;
@@ -256,6 +292,10 @@ export function safeStringify(obj: any, maxDepth = 3): string {
     for (const [k, v] of Object.entries(value)) {
       // Skip functions and undefined values
       if (typeof v === 'function' || v === undefined) {
+        continue;
+      }
+      // Explicitly skip sensitive binary keys to avoid accidental exposure
+      if (k === 'derivedKey') {
         continue;
       }
       result[k] = replacer(k, v, depth + 1);

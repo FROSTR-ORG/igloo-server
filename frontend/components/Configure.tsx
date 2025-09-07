@@ -16,7 +16,7 @@ interface ConfigureProps {
 }
 
 const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSaved, onBack, authHeaders = {} }) => {
-  const [keysetGenerated, setKeysetGenerated] = useState<{ success: boolean; location: string | React.ReactNode }>({ success: false, location: null });
+  const [keysetGenerated, setKeysetGenerated] = useState<{ success: boolean; location: string | React.ReactNode | null }>({ success: false, location: null });
   const [isGenerating, setIsGenerating] = useState(false);
   const [keysetName, setKeysetName] = useState("");
   const [share, setShare] = useState("");
@@ -40,8 +40,13 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       try {
         // Check if we're in headless mode
         const statusResponse = await fetch('/api/onboarding/status');
+        
+        if (!statusResponse.ok) {
+          throw new Error('Unable to determine server mode');
+        }
+        
         const statusData = await statusResponse.json();
-        const headlessMode = statusData.headlessMode !== false; // Default to true if not set
+        const headlessMode = statusData.headlessMode === true;
         setIsHeadlessMode(headlessMode);
         
         // Load credentials based on mode
@@ -52,10 +57,12 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
           const response = await fetch('/api/env', {
             headers: authHeaders
           });
-          const envVars = await response.json();
-          savedShare = envVars.SHARE_CRED;
-          savedGroup = envVars.GROUP_CRED;
-          savedName = envVars.GROUP_NAME;
+          if (response.ok) {
+            const envVars = await response.json();
+            savedShare = envVars.SHARE_CRED;
+            savedGroup = envVars.GROUP_CRED;
+            savedName = envVars.GROUP_NAME;
+          }
         } else {
           // Database mode - fetch from user credentials
           const response = await fetch('/api/user/credentials', {
@@ -69,7 +76,11 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
           }
         }
         
-        if (savedShare && savedGroup) {
+        // Check if we have real credentials (not placeholders)
+        const isRealShare = savedShare && savedShare !== '[CONFIGURED]';
+        const isRealGroup = savedGroup && savedGroup !== '[CONFIGURED]';
+        
+        if (isRealShare && isRealGroup) {
           setHasExistingCredentials(true);
           setShare(savedShare);
           setIsValidShare(true);
@@ -151,9 +162,11 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
 
   const handleClearCredentials = async () => {
     try {
+      let response;
+      
       if (isHeadlessMode) {
         // Headless mode - delete from env
-        await fetch('/api/env/delete', {
+        response = await fetch('/api/env/delete', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -165,10 +178,20 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         });
       } else {
         // Database mode - delete from user credentials
-        await fetch('/api/user/credentials', {
+        response = await fetch('/api/user/credentials', {
           method: 'DELETE',
           headers: authHeaders
         });
+      }
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `Failed to delete credentials: ${response.status}`);
+      }
+      
+      // Notify parent component to refresh views
+      if (onCredentialsSaved) {
+        onCredentialsSaved();
       }
       
       // Clear the form
