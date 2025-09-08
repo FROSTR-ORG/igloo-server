@@ -171,6 +171,13 @@ export async function readEnvFile(): Promise<Record<string, string>> {
   }
 }
 
+// Safe wrapper that reads env file and filters out sensitive keys
+// Use this in GET/read endpoints to prevent accidental exposure of secrets
+export async function readPublicEnvFile(): Promise<Record<string, string>> {
+  const env = await readEnvFile();
+  return filterPublicEnvObject(env);
+}
+
 // Helper function to get environment variables from process.env
 function getEnvVarsFromProcess(): Record<string, string> {
   const envVars: Record<string, string> = {};

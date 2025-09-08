@@ -6,7 +6,8 @@ import { PageLayout } from './ui/page-layout';
 import { AppHeader } from './ui/app-header';
 import { ContentCard } from './ui/content-card';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
-import { Lock, User, Key, ArrowRight } from 'lucide-react';
+import { Tooltip } from './ui/tooltip';
+import { Lock, User, Key, ArrowRight, HelpCircle } from 'lucide-react';
 
 interface OnboardingProps {
   onComplete: () => void;
@@ -24,6 +25,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [networkError, setNetworkError] = useState('');
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Match server-side password policy exactly (see src/routes/onboarding.ts)
+  // - Minimum 8 characters
+  // - At least one uppercase letter, one lowercase letter, one digit, and one special character
+  const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
 
   useEffect(() => {
     checkStatus();
@@ -109,6 +115,12 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       return;
     }
 
+    // Enforce same password rules as server (uppercase, lowercase, digit, special)
+    if (!PASSWORD_REGEX.test(password)) {
+      setError('Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character');
+      return;
+    }
+
     if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
@@ -130,14 +142,35 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         }),
       });
 
-      const data = await response.json();
+      // Handle rate limiting first (Retry-After can be seconds or HTTP-date)
+      if (response.status === 429) {
+        const raw = response.headers.get('Retry-After');
+        let seconds: number | null = null;
+        if (raw) {
+          if (/^\d+$/.test(raw)) {
+            seconds = Number(raw);
+          } else {
+            const t = new Date(raw).getTime();
+            if (!Number.isNaN(t)) seconds = Math.max(0, Math.ceil((t - Date.now()) / 1000));
+          }
+        }
+        throw new Error(seconds != null ? `Rate limited. Try again in ${seconds}s.` : 'Rate limited. Try again shortly.');
+      }
 
+      const isJson = response.headers.get('Content-Type')?.includes('application/json');
+      const data = isJson ? await response.json().catch(() => null) : null;
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to create user');
+        throw new Error((data && (data.error || data.message)) || 'Failed to create user');
       }
 
       // Move to complete step
       setStep('complete');
+      
+      // Clear sensitive data from memory
+      setAdminSecret('');
+      setUsername('');
+      setPassword('');
+      setConfirmPassword('');
       
       // Auto-redirect to login after 3 seconds
       timeoutRef.current = setTimeout(() => {
@@ -349,8 +382,26 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             {/* Form */}
             <div className="space-y-4">
               <div className="space-y-2">
-                <label className="text-sm font-medium text-blue-200">Username</label>
+                <label htmlFor="username" className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                  <span>Username</span>
+                  <Tooltip
+                    trigger={
+                      <button type="button" aria-label="Username help" className="text-blue-400">
+                        <HelpCircle size={16} />
+                      </button>
+                    }
+                    content={
+                      <>
+                        <p className="mb-2 font-semibold">Your admin username:</p>
+                        <p className="mb-2">Choose a unique username that will identify you as the administrator of this Igloo Server.</p>
+                        <p>Requirements: 3-50 characters, can include letters, numbers, and underscores.</p>
+                      </>
+                    }
+                    width="w-60"
+                  />
+                </label>
                 <Input
+                  id="username"
                   type="text"
                   placeholder="Enter username (3-50 characters)"
                   value={username}
@@ -362,22 +413,62 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-blue-200">Password</label>
+                <label htmlFor="password" className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                  <span>Password</span>
+                  <Tooltip
+                    trigger={
+                      <button type="button" aria-label="Password help" className="text-blue-400">
+                        <HelpCircle size={16} />
+                      </button>
+                    }
+                    content={
+                      <>
+                        <p className="mb-2 font-semibold">Your secure password:</p>
+                        <p className="mb-2">Create a strong password to protect your admin account. This password will be securely hashed using Argon2id.</p>
+                        <p>Requirements: Minimum 8 characters, with at least one uppercase letter, one lowercase letter, one number, and one special character.</p>
+                      </>
+                    }
+                    width="w-60"
+                  />
+                </label>
                 <Input
+                  id="password"
+                  autoComplete="new-password"
                   type="password"
-                  placeholder="Enter password (min 8 characters)"
+                  placeholder="Enter password (min 8, incl. upper, lower, number, special)"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
+                  pattern={PASSWORD_REGEX.source}
+                  title="Minimum 8 characters, with at least one uppercase letter, one lowercase letter, one number, and one special character"
                 />
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-medium text-blue-200">Confirm Password</label>
+                <label htmlFor="confirmPassword" className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                  <span>Confirm Password</span>
+                  <Tooltip
+                    trigger={
+                      <button type="button" aria-label="Confirm password help" className="text-blue-400">
+                        <HelpCircle size={16} />
+                      </button>
+                    }
+                    content={
+                      <>
+                        <p className="mb-2 font-semibold">Password confirmation:</p>
+                        <p className="mb-2">Re-enter your password to ensure it was typed correctly. Both passwords must match exactly.</p>
+                        <p>Passwords must meet the strength requirements: Minimum 8 characters, with at least one uppercase letter, one lowercase letter, one number, and one special character.</p>
+                      </>
+                    }
+                    width="w-60"
+                  />
+                </label>
                 <Input
+                  id="confirmPassword"
+                  autoComplete="new-password"
                   type="password"
-                  placeholder="Confirm password"
+                  placeholder="Confirm password (must match and meet requirements)"
                   value={confirmPassword}
                   onChange={(e) => setConfirmPassword(e.target.value)}
                   onKeyDown={handleSetupKeyDown}

@@ -1,9 +1,7 @@
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders } from './utils.js';
-import { readEnvFile, getValidRelays } from './utils.js';
+import { getSecureCorsHeaders, readEnvFile, readPublicEnvFile, getValidRelays } from './utils.js';
 import { getNodeHealth } from '../node/manager.js';
 import { HEADLESS } from '../const.js';
-import { userHasStoredCredentials } from '../db/database.js';
 
 export async function handleStatusRoute(req: Request, url: URL, context: RouteContext, auth?: RequestAuth | null): Promise<Response | null> {
   if (url.pathname !== '/api/status') return null;
@@ -18,11 +16,15 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };
 
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+  
   if (req.method === 'GET') {
     try {
-      // Get current relay count from environment or use default
-      const env = await readEnvFile();
-      const currentRelays = getValidRelays(env.RELAYS);
+      // Get current relay count from environment or use default (use public env for relays)
+      const publicEnv = await readPublicEnvFile();
+      const currentRelays = getValidRelays(publicEnv.RELAYS);
       
       // Get node health information
       const nodeHealth = getNodeHealth();
@@ -31,7 +33,11 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
       let hasCredentials: boolean | null = null;
       if (HEADLESS) {
         // In headless mode, check environment variables
-        hasCredentials = !!(env.SHARE_CRED && env.GROUP_CRED);
+        // Need to check existence only; include process.env fallback for extra safety
+        const fullEnv = await readEnvFile();
+        const shareCred = fullEnv.SHARE_CRED ?? process.env.SHARE_CRED;
+        const groupCred = fullEnv.GROUP_CRED ?? process.env.GROUP_CRED;
+        hasCredentials = Boolean(shareCred && groupCred);
       } else {
         // In database mode, only check credentials for authenticated users
         // This prevents information leakage about whether ANY user has credentials
@@ -73,6 +79,8 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
                 console.error('User ID validation error in status endpoint: not a positive safe integer within bounds');
                 hasCredentials = false;
               } else {
+                // Lazy-load DB only in non-headless, authenticated path
+                const { userHasStoredCredentials } = await import('../db/database.js');
                 hasCredentials = userHasStoredCredentials(parsedUserId);
               }
             }

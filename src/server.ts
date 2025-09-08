@@ -2,7 +2,6 @@ import { serve, type ServerWebSocket } from 'bun';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
-import { closeDatabase, isDatabaseInitialized } from './db/database.js';
 import { 
   handleRequest, 
   PeerStatus, 
@@ -52,6 +51,15 @@ const parseRestartConfig = () => {
 
 const RESTART_CONFIG = parseRestartConfig();
 
+// Define expected database module interface
+interface DatabaseModule {
+  isDatabaseInitialized(): boolean;
+  closeDatabase(): Promise<void>;
+}
+
+// Store database module reference at module scope
+let dbModule: DatabaseModule | null = null;
+
 // WebSocket data type for event streams
 type EventStreamData = { isEventStream: true };
 
@@ -69,17 +77,55 @@ const addServerLog = createAddServerLog(broadcastEvent);
 
 // Initialize database if not in headless mode
 if (!CONST.HEADLESS) {
-  // Initialize database module
-  await import('./db/database.js');
+  // Attempt dynamic import of the database module with explicit error handling
+  const validationErrors: string[] = [];
+  try {
+    dbModule = await import('./db/database.js');
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error('❌ Failed to import database module:', message);
+    validationErrors.push(`dynamic import error: ${message}`);
+    dbModule = null;
+  }
   
+  if (!dbModule) {
+    validationErrors.push('module failed to load');
+  } else {
+    if (typeof dbModule.isDatabaseInitialized !== 'function') {
+      validationErrors.push('isDatabaseInitialized export missing or not a function');
+    }
+    if (typeof dbModule.closeDatabase !== 'function') {
+      validationErrors.push('closeDatabase export missing or not a function');
+    }
+  }
+
+  if (validationErrors.length > 0) {
+    console.error('❌ Database module validation failed:');
+    for (const issue of validationErrors) console.error(`   - ${issue}`);
+    process.exit(1);
+  }
+
   console.log('🗄️  Database mode enabled - using SQLite for user management');
-  
-  // In database mode, ADMIN_SECRET is mandatory
-  if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
-    console.error('❌ ADMIN_SECRET is mandatory in database mode.');
-    console.error('   It must be set to a unique, secure value in your environment variables.');
-    console.error('   Generate a secure secret with: openssl rand -hex 32');
-    console.error('   Then, set it in your .env file or as an environment variable.');
+
+  // Enforce ADMIN_SECRET only on first-run (when database is uninitialized)
+  // After initial setup, admin operations are protected by user authentication
+  // The ADMIN_SECRET is intentionally not required for normal operations to prevent
+  // it from being stored in production environments after setup
+  try {
+    if (!dbModule) {
+      throw new Error('Database module is not loaded');
+    }
+    const initialized = dbModule.isDatabaseInitialized();
+    if (!initialized) {
+      if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
+        console.error('❌ ADMIN_SECRET is required for initial setup (database uninitialized).');
+        console.error('   Generate a secure secret with: openssl rand -hex 32');
+        console.error('   Then, set it in your .env file or as an environment variable.');
+        process.exit(1);
+      }
+    }
+  } catch (err) {
+    console.error('❌ Error checking database initialization state:', err instanceof Error ? err.message : String(err));
     process.exit(1);
   }
 } else {
@@ -434,8 +480,25 @@ if (!node) {
   addServerLog('info', 'Node not initialized - credentials not available. Server is ready for configuration.');
 }
 
+// Shared database cleanup function
+async function cleanupDatabase(): Promise<void> {
+  if (!CONST.HEADLESS && dbModule && dbModule.closeDatabase) {
+    try {
+      // Add 10-second timeout to prevent hanging
+      await Promise.race([
+        Promise.resolve(dbModule.closeDatabase()),
+        new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Database close timeout after 10 seconds')), 10000)
+        )
+      ]);
+    } catch (err) {
+      console.error('Error during database close:', err);
+    }
+  }
+}
+
 // Graceful shutdown handling
-process.on('SIGTERM', () => {
+process.on('SIGTERM', async () => {
   addServerLog('system', 'Received SIGTERM, shutting down gracefully');
   
   // Clear any pending restart timeout
@@ -447,15 +510,12 @@ process.on('SIGTERM', () => {
   cleanupMonitoring();
   clearCleanupTimers();
   
-  // Close database connection if not in headless mode
-  if (!CONST.HEADLESS) {
-    closeDatabase();
-  }
+  await cleanupDatabase();
   
   process.exit(0);
 });
 
-process.on('SIGINT', () => {
+process.on('SIGINT', async () => {
   addServerLog('system', 'Received SIGINT, shutting down gracefully');
   
   // Clear any pending restart timeout
@@ -467,10 +527,7 @@ process.on('SIGINT', () => {
   cleanupMonitoring();
   clearCleanupTimers();
   
-  // Close database connection if not in headless mode
-  if (!CONST.HEADLESS) {
-    closeDatabase();
-  }
+  await cleanupDatabase();
   
   process.exit(0);
 });

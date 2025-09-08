@@ -8,6 +8,11 @@ Igloo Server is a server-based signing device and personal ephemeral relay for t
 
 **Core Purpose**: Always-on FROSTR signing node that handles Nostr signature requests automatically using threshold signatures without ever reconstructing the full private key.
 
+**Repository Structure**:
+- Main branch: `master` (production releases)
+- Development branch: `dev` (active development)
+- Release branches: `release/prepare-v*` (temporary during release process)
+
 ## Key Commands
 
 ### Development
@@ -48,13 +53,22 @@ bun run docs:bundle
 
 # Health check (server provides auto-restart on failures)
 curl http://localhost:8002/api/status
+
+# Monitor server logs and health
+curl http://localhost:8002/api/status | jq '.health'
+
+# Check peer connectivity
+curl http://localhost:8002/api/peers | jq
+
+# Test WebSocket event stream
+wscat -c ws://localhost:8002/api/events
 ```
 
 ## Architecture
 
 ### Core Components
 
-1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests
+1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests. Uses dynamic imports for the database module so HEADLESS builds don’t include DB code.
 2. **Bifrost Node**: Core logic in `src/node/manager.ts` handles the FROSTR signing node with health monitoring and auto-restart. The routes in `src/routes/node-manager.ts` expose this functionality via API endpoints.
 3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
 4. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status, user, onboarding
@@ -68,18 +82,29 @@ curl http://localhost:8002/api/status
 - **Exponential Backoff**: Progressive retry delays for connection failures
 - **Session Management**: Secure cookie-based sessions with configurable auth methods
 - **Static File Caching**: Different strategies for dev (no cache) vs production (aggressive cache)
+- **Auth Factory Pattern**: Secure ephemeral storage using WeakMaps (`src/routes/auth-factory.ts:1-80`)
+  - Prevents secret leakage through spread/JSON/structuredClone operations
+  - Auto-clears sensitive data after first access
+  - Non-enumerable getter functions for password and derivedKey
 
 ### Node Restart System
 
-**Main Restart**: Handles manual restarts with exponential backoff (env vars: NODE_RESTART_DELAY, NODE_MAX_RETRIES, NODE_BACKOFF_MULTIPLIER, NODE_MAX_RETRY_DELAY)
+**Main Restart**: Handles manual restarts with exponential backoff
+- Configuration validated in `src/server.ts:21-52`
+- Environment variables with safe defaults:
+  - `NODE_RESTART_DELAY`: Initial delay (default: 30000ms, max: 1 hour)
+  - `NODE_MAX_RETRIES`: Max attempts (default: 5, max: 100)
+  - `NODE_BACKOFF_MULTIPLIER`: Delay multiplier (default: 1.5, max: 10)
+  - `NODE_MAX_RETRY_DELAY`: Max delay between retries (default: 300000ms, max: 2 hours)
 
 ### Connectivity Monitoring & Idle Handling
 
-- **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds to prevent false unhealthy detection
+- **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds (`src/node/manager.ts:34-36`)
 - **Simple monitoring**: Single 60-second check interval for relay connectivity
 - **Auto-recovery**: Recreates node after 3 consecutive connectivity failures
 - **Null node handling**: Treats null nodes as failures to ensure recovery mechanisms activate
-- **Self-ping detection**: Filters any self-pings from logs by comparing normalized pubkeys
+- **Self-ping detection**: Filters self-pings by comparing normalized pubkeys
+- **Race-condition safe**: Uses `withTimeout` helper (`src/node/manager.ts:46-61`) to prevent stray timer callbacks
 - **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
@@ -97,7 +122,9 @@ The server supports two operation modes controlled by the `HEADLESS` environment
 
 #### Database Mode (Default - HEADLESS=false)
 - **Multi-user support** with individual accounts
-- **Credential security**: Password hashing via Bun.password (Argon2id by default, bcrypt compatible); encryption via AEAD (AES-GCM using WebCrypto).
+- **Credential security**: 
+  - Password hashing: Argon2id via Bun.password (for user authentication)
+  - Credential encryption: AES-256-GCM with PBKDF2 key derivation (for storing FROSTR credentials)
 - **Onboarding flow** with `ADMIN_SECRET` for initial setup
 - **Session management** for web UI authentication
 - **Auto-start node** on login or credential save
@@ -150,13 +177,13 @@ Environment variables:
    - Prod: Use `NODE_ENV=production` with proper auth configuration
 
 3. **Mode-Specific Requirements**:
-   - **Database Mode**: `ADMIN_SECRET` for initial setup, then username/password login
+   - **Database Mode**: `ADMIN_SECRET` for initial setup only (first run, enforced when the DB is uninitialized), then username/password login
    - **Headless Mode**: `GROUP_CRED` and `SHARE_CRED` environment variables
    - **Both Modes**: `SESSION_SECRET` auto-generated if not provided (stored in `data/.session-secret`)
 
 4. **WebSocket Migration**: Events have been migrated from SSE to WebSockets for better reliability
 
-5. **Release Process**: Must be on `dev` branch, merges to `main` after tests pass
+5. **Release Process**: See "Release Workflow" section below for detailed instructions
 
 6. **Node Event Flow**: 
    - All Bifrost events update `lastActivity` timestamp
@@ -164,6 +191,74 @@ Environment variables:
    - Peer status tracked independently from health monitoring
    - Null node states properly trigger failure counting and recovery
    - Connectivity monitoring continues even with null nodes to enable recovery
+
+7. **Security Considerations**:
+   - Auth factory pattern prevents secret leakage through object operations
+   - Database users have persistent salts for consistent key derivation
+   - Environment auth users receive ephemeral session-specific salts
+   - Timing-safe authentication prevents timing attacks
+
+## Release Workflow
+
+### Quick Release Commands
+```bash
+# Patch release (1.0.0 → 1.0.1)
+bun run release        # or bun run release:patch
+
+# Minor release (1.0.0 → 1.1.0)
+bun run release:minor
+
+# Major release (1.0.0 → 2.0.0)
+bun run release:major
+
+# Specific version
+./scripts/release.sh 2.5.0
+```
+
+### Release Process Steps
+1. **Pre-checks** (`scripts/release.sh:1-122`):
+   - Must be on `dev` branch
+   - Working directory must be clean
+   - Port 8002 must be available
+
+2. **Automated validation**:
+   - Builds frontend and CSS
+   - Starts server and tests health endpoint
+   - Validates OpenAPI documentation
+   - Creates release branch `release/prepare-v{version}`
+   - Commits version bump and pushes to origin
+
+3. **Manual steps**:
+   - Create PR from release branch to `master`
+   - Review and merge PR to trigger GitHub Actions
+   - Actions create GitHub release with changelog
+
+### Error Recovery
+- Server cleanup handled by trap (`scripts/release.sh:47-53`)
+- Rollback procedure documented in `llm/workflows/RELEASE_PROCESS.md:337-351`
+
+## Troubleshooting Common Issues
+
+### Build/Frontend Issues
+- **Problem**: Frontend changes not appearing
+- **Solution**: Use `bun run build:dev` and `NODE_ENV=development bun start` to disable caching
+- **Check**: Verify static files exist in `static/` directory
+
+### Authentication Issues
+- **Problem**: "Cannot access credential storage endpoints" error
+- **Cause**: Environment auth users (API key/Basic auth) can't save credentials
+- **Solution**: Use database mode with proper user account for credential storage
+
+### Node Health Issues
+- **Problem**: Node marked unhealthy despite being responsive
+- **Solution**: Check `lastActivity` timestamp - keepalive updates occur after 45s idle
+- **Debug**: Monitor with `curl http://localhost:8002/api/status | jq '.health'`
+
+### Release Script Issues
+- **Problem**: Port 8002 already in use
+- **Solution**: `lsof -i :8002` to find process, then `kill <PID>`
+- **Problem**: Server health check fails
+- **Solution**: Check credentials are valid, verify build completed
 
 ## Dependencies
 

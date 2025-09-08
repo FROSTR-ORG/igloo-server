@@ -144,6 +144,7 @@ The server provides three integrated services:
 1. **FROSTR Signing Node** - Built on igloo-core with bifrost protocol implementation
 2. **Web Interface** - React frontend for configuration and monitoring  
 3. **Ephemeral Test Relay** - In-memory relay included for development/testing convenience; not suitable for production
+4. **Database Module** - SQLite database for multi-user support (included in all builds but only initialized in database mode)
 
 ## Health Monitoring & Auto-Restart
 
@@ -224,6 +225,65 @@ This mode provides user management with secure credential storage in a SQLite da
    - **Share Credential** (`bfshare1...`)
    - **Relay URLs** (optional - defaults to `wss://relay.primal.net`)
 8. Your credentials are encrypted and stored in the database
+
+Important: `ADMIN_SECRET` behavior and operational guidance
+
+- The startup check for `ADMIN_SECRET` is enforced only on first run (when the database is uninitialized).
+- Keep `ADMIN_SECRET` set in production even after initialization. The admin API (`/api/admin/*`) requires a valid `ADMIN_SECRET` on every call; if it is unset, admin endpoints will return 401 and cannot be used.
+- Rotate `ADMIN_SECRET` by changing its value and restarting the server. This changes the credential required for admin API access and does not affect existing users or database contents.
+- Lost `ADMIN_SECRET` but still have server access: set a new `ADMIN_SECRET` in the environment and restart. If you also need to recreate the first admin user, see “Force first-run (reinitialize)” below.
+
+Force first-run (reinitialize)
+
+To intentionally trigger the first-run onboarding flow again, delete the SQLite database so the server detects an uninitialized state on next start. The database location is controlled by `DB_PATH`:
+
+- If `DB_PATH` is unset (default): database file is `./data/igloo.db`.
+- If `DB_PATH` points to a directory: database file is `$DB_PATH/igloo.db`.
+- If `DB_PATH` points to a file (ends with a filename): that file is the database.
+
+Examples (Linux/macOS):
+
+```bash
+# Default location
+rm -f ./data/igloo.db
+
+# Custom directory
+export DB_PATH=/var/lib/igloo/data
+sudo rm -f "$DB_PATH/igloo.db"
+
+# Custom explicit file path
+export DB_PATH=/var/lib/igloo/app.db
+sudo rm -f "$DB_PATH"
+
+# Optional: remove entire data directory (also removes .session-secret)
+rm -rf ./data
+```
+
+Then set a secure `ADMIN_SECRET` and start the server to run onboarding again.
+
+Note about overrides: There is currently no `--force-first-run` flag in the codebase. If you need to reinitialize without deleting the database, consider implementing a startup override (e.g., `--force-first-run` or `FORCE_FIRST_RUN=true`) that temporarily disables normal routes and only enables the onboarding endpoints until the first user is created.
+
+Database directory permissions and ownership
+
+Apply the principle of least privilege to the database directory and files. Recommended settings (Linux/macOS):
+
+```bash
+# Example: dedicated user and group running the server
+sudo chown -R igloo:igloo /var/lib/igloo/data
+
+# Restrictive directory permissions
+sudo chmod 700 /var/lib/igloo/data
+
+# Restrictive file permissions (database and secrets)
+sudo chmod 600 /var/lib/igloo/data/igloo.db
+sudo chmod 600 /var/lib/igloo/data/.session-secret
+
+# If using the default local path
+chmod 700 ./data
+chmod 600 ./data/igloo.db ./data/.session-secret
+```
+
+Ownership should be assigned to the user that runs the `igloo-server` process. For Docker, enforce permissions via the volume’s UID:GID and Dockerfile/entrypoint.
 
 ##### Subsequent Access
 1. Start the server: `bun run start`

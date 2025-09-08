@@ -173,27 +173,28 @@ The script performs these checks in sequence:
    git add package.json
    git commit -m "chore(release): bump version to v${NEW_VERSION}"
 
-   # Push the branch to open a PR with the version change
+   # Push the branch to upload it to the remote repository
    git push origin "$RELEASE_BRANCH"
    ```
 
 ### 3. Manual Steps (Developer Action Required)
 
-After the script completes, you must:
+After the script pushes the release branch, you must create a pull request to merge the changes into the `main` branch.
 
-1. **Review Changes**
-   - Visit the comparison URL provided
-   - Example: `https://github.com/FROSTR-ORG/igloo-server/compare/main...release/prepare-v1.2.3`
+1.  **Create a Pull Request**
 
-2. **Create Pull Request**
-   - Source: `release/prepare-v{version}`
-   - Target: `main` branch
-   - Title: "Release v{version}"
-   - Description: Include changelog and notable changes
+    Pushing the branch makes it available on the remote repository. To create a pull request, you can use the GitHub web interface. GitHub will typically show a prompt to create a PR from a recently pushed branch, or you can use the comparison URL provided by the script.
 
-3. **Merge PR**
-   - Get approvals if required
-   - Merge to main to trigger automated release
+    Alternatively, if you have the [GitHub CLI](https://cli.github.com/) installed, you can create the pull request from your terminal:
+    ```bash
+    # Optional: Create the pull request using the GitHub CLI
+    # Replace <VERSION> with the new version number from the script's output
+    gh pr create --base main --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
+    ```
+
+2.  **Review and Merge PR**
+    - Get approvals if required.
+    - Merge the pull request to `main` to trigger the automated release workflow.
 
 ### 4. GitHub Actions Automation
 

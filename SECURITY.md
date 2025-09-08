@@ -25,7 +25,7 @@ Igloo Server supports two operation modes with different security models:
 | Multi-user Support | ✅ Yes | ❌ No (single user) |
 | Credential Storage | 🔐 Encrypted in database | 📝 Plain in environment |
 | Initial Setup | 🔑 ADMIN_SECRET required | ⚙️ Direct env configuration |
-| Password Protection | ✅ Bcrypt hashed | 🔑 API key/basic auth only |
+| Password Protection | ✅ Argon2id hashed | 🔑 API key/basic auth only |
 | Credential Rotation | ✅ Per-user basis | 🔄 Server restart required |
 | User Management | ✅ Add/remove users | ❌ Not applicable |
 | Backup Complexity | 📦 Database file + env | 📄 Environment only |
@@ -83,21 +83,42 @@ Starting with this version, Igloo Server **automatically generates and persists*
    - **Keep it secret**: Never share or commit to version control
    - **Rotate after setup**: Change it after initial configuration
    - **Store securely**: Use a password manager or secure vault
-   - **Container deployments**: Prefer Docker/Kubernetes secrets over environment variables
-   - **Process visibility**: Environment variables can be exposed via `ps` and system logs
-   - **Log sanitization**: Ensure ADMIN_SECRET is never logged or included in error messages
+   - **Container deployments**: Prefer container-native secrets (Docker/Kubernetes secrets) over environment variables
+   - **Process security**: Environment variables can leak via process listings (ps), crash dumps, or metadata endpoints
+   - **Log sanitization**: Never log or include `ADMIN_SECRET` in error messages
 
 #### Database Security Features
-- **Password Hashing**: Bcrypt with salt (cost factor 12)
-- **Credential Encryption**: AES-256 with PBKDF2 key derivation
+- **Password Hashing**: Argon2id via Bun.password (secure default)
+- **Credential Encryption**: AES-256-GCM with PBKDF2 key derivation
 - **Database Location**: Configurable via DB_PATH (default: ./data)
 - **Per-user isolation**: Each user has encrypted credentials
+- **Persistent Salts**: Database users have persistent salts for consistent key derivation
+  - **Why persistent salts?** Unlike password hashing (where random salts are ideal), credential encryption requires deterministic key derivation to decrypt stored data across sessions
+  - **Security maintained**: Each user still has a unique salt stored securely in the database, preventing rainbow table attacks
+  - **Trade-off**: Salt persistence is necessary for the encryption/decryption of stored FROSTR credentials without storing the user's password
 
 #### User Management Flow
 1. Admin validates with ADMIN_SECRET
 2. Creates username and password
 3. User logs in with credentials
 4. Credentials stored encrypted with user's password as key
+
+#### User Type Separation (Security Design)
+Igloo Server distinguishes between two user types for security:
+
+**Database Users** (userId: number):
+- Created through onboarding process
+- Have persistent salts stored in database
+- Can save/retrieve encrypted credentials
+- Access to `/api/user/*` endpoints
+- Credentials persist across sessions
+
+**Environment Auth Users** (userId: string):
+- Authenticated via Basic Auth or API Key
+- Receive ephemeral session-specific salts
+- **Cannot access credential storage endpoints**
+- Designed for API access, not credential management
+- Prevents accidental data loss from ephemeral keys
 
 ### Headless Mode Setup (HEADLESS=true)
 

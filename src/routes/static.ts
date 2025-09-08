@@ -1,5 +1,6 @@
 import { getContentType } from './utils.js';
 import { resolve, relative } from 'path';
+import { HEADLESS } from '../const.js';
 
 // Load static files into memory
 const index_page = Bun.file('static/index.html');
@@ -69,6 +70,20 @@ function getCachingHeaders(filePath: string): Record<string, string> {
 }
 
 export async function handleStaticRoute(_req: Request, url: URL): Promise<Response | null> {
+  // Headless mode guard - frontend is disabled
+  if (HEADLESS) {
+    return new Response(JSON.stringify({
+      error: 'Frontend disabled in headless mode',
+      message: 'This server is running in headless mode. Static files are not served.',
+      requestedPath: url.pathname
+    }), {
+      status: 404,
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+  }
+  
   // Handle specific routes first
   switch (url.pathname) {
     case '/styles.css':

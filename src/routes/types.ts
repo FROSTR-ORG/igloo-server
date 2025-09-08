@@ -1,5 +1,25 @@
 // Shared types for route handlers
 
+/**
+ * Shared type for user IDs across different auth methods.
+ * 
+ * IMPORTANT: BigInt Serialization Warning
+ * ----------------------------------------
+ * The bigint type is included for flexibility but requires careful handling:
+ * - JSON.stringify() does NOT natively support BigInt and will throw TypeError
+ * - Before JSON serialization, convert bigint to string or number:
+ *   - Use toString() for preserving large values: userId.toString()
+ *   - Use Number() if value fits in safe integer range: Number(userId)
+ * 
+ * Current usage patterns in codebase:
+ * - status.ts: Converts bigint to number after validation (lines 59-63)
+ * - app-header.tsx: Converts to string for display: String(userId)
+ * - No direct JSON serialization of raw userId found in Response.json() calls
+ * 
+ * Recommended: Always validate and convert bigint before serialization.
+ */
+export type UserId = string | number | bigint;
+
 export interface PeerStatus {
   pubkey: string;
   online: boolean;
@@ -54,21 +74,23 @@ export interface ServerBifrostNode {
 }
 
 export interface AuthContext {
-  userId?: string | number; // Support both string (env auth) and number (database user id)
+  userId?: UserId; // Support string (env auth), number (database user id), and bigint
   authenticated: boolean;
   // password removed - should be passed as explicit parameter
 }
 
-// Per-request auth data that includes sensitive information
+// Per-request auth data with secure ephemeral getters for sensitive information
+// Secrets are stored in non-enumerable/non-serializable storage and accessed via getters
+// that clear the data after first access to prevent leakage
 export interface RequestAuth {
-  userId?: string | number;
+  userId?: UserId;
   authenticated: boolean;
-  password?: string; // Transient password for database users - never stored in context
-  readonly derivedKey?: Uint8Array | ArrayBuffer; // Derived key for decryption operations (binary, non-serializable) - only Uint8Array/Buffer accepted in practice
+  // Removed password and derivedKey properties - access only via secure getters
   
   // Secure getter functions that clear sensitive data after first access
+  // These access secrets from ephemeral storage (WeakMap/closure) and clear after reading
   getPassword?(): string | undefined;
-  getDerivedKey?(): Uint8Array | ArrayBuffer | undefined;
+  getDerivedKey?(): string | undefined;
 }
 
 import type { ServerWebSocket } from 'bun';

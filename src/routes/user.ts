@@ -6,7 +6,7 @@ import {
   deleteUserCredentials,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, bytesToHex } from './utils.js';
+import { getSecureCorsHeaders } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
@@ -24,18 +24,26 @@ function getAuthSecret(auth: RequestAuth): { secret: string; isDerivedKey: boole
   
   const derivedKey = auth.getDerivedKey?.();
   if (derivedKey) {
-    // Validate that derivedKey is Uint8Array or Buffer, convert Buffer to Uint8Array
-    let keyBytes: Uint8Array | null = null;
-    if (derivedKey instanceof Uint8Array) {
-      keyBytes = derivedKey;
-    } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(derivedKey)) {
-      keyBytes = new Uint8Array(derivedKey);
-    } else {
-      // Invalid type - treat as missing
-      console.warn('Invalid derivedKey type in getAuthSecret; expected Uint8Array or Buffer');
+    // derivedKey should be a hex string, optionally prefixed with "0x"
+    if (typeof derivedKey !== 'string') {
+      console.warn('Invalid derivedKey type in getAuthSecret; expected hex string');
       return null;
     }
-    return { secret: bytesToHex(keyBytes), isDerivedKey: true };
+    const hasPrefix = derivedKey.startsWith('0x') || derivedKey.startsWith('0X');
+    const normalizedNoPrefix = hasPrefix ? derivedKey.slice(2) : derivedKey;
+    if (normalizedNoPrefix.length === 0) {
+      console.warn('Invalid derivedKey value in getAuthSecret: empty after removing optional 0x prefix');
+      return null;
+    }
+    if (!/^[0-9a-fA-F]+$/.test(normalizedNoPrefix)) {
+      console.warn('Invalid derivedKey value in getAuthSecret: contains non-hex characters');
+      return null;
+    }
+    if (normalizedNoPrefix.length % 2 !== 0) {
+      console.warn('Invalid derivedKey value in getAuthSecret: hex length must be even');
+      return null;
+    }
+    return { secret: normalizedNoPrefix.toLowerCase(), isDerivedKey: true };
   }
   
   return null;
@@ -57,6 +65,7 @@ export async function handleUserRoute(
   const corsHeaders = getSecureCorsHeaders(req);
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
     ...corsHeaders,
   };
 
@@ -76,9 +85,11 @@ export async function handleUserRoute(
   const userId = typeof auth.userId === 'number' ? auth.userId : null;
   
   // Require a valid database user
-  if (!userId) {
+  // Note: Environment auth users (API Key/Basic Auth) have string userIds and
+  // are intentionally blocked from credential storage operations for security
+  if (userId === null) {
     return Response.json(
-      { error: 'Database user authentication required' },
+      { error: 'Database user authentication required. Credential storage is not available for API Key or Basic Auth users.' },
       { status: 401, headers }
     );
   }
@@ -175,7 +186,24 @@ export async function handleUserRoute(
             );
           }
 
-          const body = await req.json();
+          let body: any;
+          try {
+            body = await req.json();
+          } catch (error) {
+            return Response.json(
+              { error: 'Invalid JSON in request body' },
+              { status: 400, headers }
+            );
+          }
+
+          // Validate that body is an object
+          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+
           const updates: Partial<UserCredentials> = {};
 
           // Only update provided fields with proper type validation
@@ -345,12 +373,37 @@ export async function handleUserRoute(
             );
           }
 
-          const body = await req.json();
-          const { relays } = body;
-
-          if (!Array.isArray(relays) || !relays.every(r => typeof r === 'string')) {
+          let body: any;
+          try {
+            body = await req.json();
+          } catch (error) {
             return Response.json(
-              { error: 'Invalid relays format. Must be an array of strings.' },
+              { error: 'Invalid JSON in request body' },
+              { status: 400, headers }
+            );
+          }
+
+          // Validate that body is an object
+          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+
+          // Check if relays field is present in the request body
+          if (!('relays' in body)) {
+            return Response.json(
+              { error: 'Missing required field: relays' },
+              { status: 400, headers }
+            );
+          }
+
+          const relays = (body as any).relays;
+
+          if (relays !== null && (!Array.isArray(relays) || !relays.every((r: any) => typeof r === 'string'))) {
+            return Response.json(
+              { error: 'Invalid relays format. Must be an array of strings or null.' },
               { status: 400, headers }
             );
           }

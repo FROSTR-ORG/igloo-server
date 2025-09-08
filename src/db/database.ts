@@ -47,7 +47,7 @@ const createUserTable = () => {
 createUserTable();
 
 // Close database connection (for graceful shutdown)
-export const closeDatabase = () => {
+export const closeDatabase = async (): Promise<void> => {
   db.close();
 };
 
@@ -55,7 +55,7 @@ export const closeDatabase = () => {
 process.on('SIGINT', async () => {
   console.log('[db] Received SIGINT. Closing database...');
   try {
-    closeDatabase();
+    await closeDatabase();
     console.log('[db] Database closed successfully');
   } catch (error) {
     console.error('[db] Error closing database:', error);
@@ -66,7 +66,7 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   console.log('[db] Received SIGTERM. Closing database...');
   try {
-    closeDatabase();
+    await closeDatabase();
     console.log('[db] Database closed successfully');
   } catch (error) {
     console.error('[db] Error closing database:', error);
@@ -169,6 +169,13 @@ export interface UserCredentials {
   share_cred: string | null;
   relays: string[] | null;
   group_name: string | null;
+}
+
+export interface AdminUserListItem {
+  id: number;
+  username: string;
+  createdAt: string;
+  hasCredentials: boolean;
 }
 
 // Check if database is initialized (has at least one user)
@@ -415,6 +422,52 @@ export const deleteUserCredentials = (userId: number): boolean => {
     return true;
   } catch (error) {
     console.error('Error deleting user credentials:', error);
+    return false;
+  }
+};
+
+/**
+ * Get all users from the database for admin listing
+ * @returns Array of users with basic info and credential status
+ */
+export const getAllUsers = (): AdminUserListItem[] => {
+  try {
+    const rows = db.prepare(`
+      SELECT 
+        id, 
+        username, 
+        created_at,
+        (group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL) AS hasCredentials
+      FROM users
+      ORDER BY created_at ASC, id ASC
+    `).all() as { id: number; username: string; created_at: string; hasCredentials: 0 | 1 }[];
+    
+    return rows.map(r => ({ 
+      id: r.id,
+      username: r.username,
+      createdAt: r.created_at,
+      hasCredentials: !!r.hasCredentials 
+    }));
+  } catch (error) {
+    console.error('Error fetching all users:', error);
+    return [];
+  }
+};
+
+/**
+ * Delete a user from the database
+ * @param userId - The ID of the user to delete
+ * @returns true if the user was deleted, false otherwise
+ */
+export const deleteUser = (userId: number): boolean => {
+  try {
+    const stmt = db.prepare('DELETE FROM users WHERE id = ?');
+    stmt.run(userId);
+    // Use SQLite changes() to determine affected rows to avoid relying on run() return shape
+    const result = db.query('SELECT changes() as changes').get() as { changes: number } | null;
+    return !!result && result.changes > 0;
+  } catch (error) {
+    console.error('Error deleting user:', error);
     return false;
   }
 };

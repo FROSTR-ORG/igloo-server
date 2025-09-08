@@ -35,7 +35,7 @@ const COMMON_PASSWORDS = new Set([
  * @param adminSecret - The admin secret to validate
  * @returns true if valid, false otherwise
  */
-async function validateAdminSecret(adminSecret: string | undefined): Promise<boolean> {
+export async function validateAdminSecret(adminSecret: string | undefined): Promise<boolean> {
   // Check if admin secret is configured
   if (!ADMIN_SECRET) {
     return false;

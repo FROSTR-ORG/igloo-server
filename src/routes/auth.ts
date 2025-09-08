@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, chmodSync, statSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, openSync, fsyncSync, renameSync, unlinkSync, closeSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
@@ -57,20 +57,61 @@ function loadOrGenerateSessionSecret(): string | null {
     // Generate new secret (32 bytes = 64 hex characters)
     const newSecret = randomBytes(32).toString('hex');
     
-    // Securely write the new secret using Node's fs API
+    // Atomically write the new secret
+    const tempFilePath = path.join(SESSION_SECRET_DIR, '.session-secret.tmp');
+    let tempFileHandle: number | undefined;
+    let dirHandle: number | undefined;
+
     try {
-      writeFileSync(SESSION_SECRET_FILE, newSecret, { encoding: 'utf8', mode: 0o600 });
-      // Ensure file permissions on Unix-like systems
-      if (process.platform !== 'win32') {
+      // Write to a temporary file
+      writeFileSync(tempFilePath, newSecret, { encoding: 'utf8', mode: 0o600 });
+
+      // Open handles for fsync
+      tempFileHandle = openSync(tempFilePath, 'r+');
+      try {
+        dirHandle = openSync(SESSION_SECRET_DIR, 'r');
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        // Windows doesn't support opening directories for fsync
+        console.warn('⚠️  Windows platform detected: Directory fsync not available. Session secret may be lost in case of system crash before filesystem cache flush.');
+        dirHandle = undefined;
+      }
+
+      // First, ensure the temp file is on disk
+      fsyncSync(tempFileHandle);
+
+      // Atomically rename the temp file to the final destination
+      renameSync(tempFilePath, SESSION_SECRET_FILE);
+
+      // Finally, fsync the directory to durably record the rename (best-effort on Windows)
+      if (dirHandle !== undefined) {
         try {
-          chmodSync(SESSION_SECRET_FILE, 0o600);
+          fsyncSync(dirHandle);
         } catch (e) {
-          console.warn('Could not set file permissions for session secret:', e);
+          if (process.platform !== 'win32') {
+            throw e;
+          }
+          // Windows fsync on directory handle may fail even after successful open
+          console.warn('⚠️  Windows platform: Directory fsync failed. Session secret rename may not be durable until filesystem cache flush.');
         }
       }
+
     } catch (error) {
-      console.error('Failed to write session secret:', error);
-      throw error;
+      console.error('Failed to write session secret atomically:', error);
+      // Clean up the temporary file if it exists
+      if (existsSync(tempFilePath)) {
+        try {
+          unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error('Failed to clean up temporary session secret file:', cleanupError);
+        }
+      }
+      throw error; // Re-throw the original error
+    } finally {
+      if (tempFileHandle !== undefined) closeSync(tempFileHandle);
+      if (dirHandle !== undefined) closeSync(dirHandle);
     }
     
     console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
@@ -150,8 +191,8 @@ const DERIVED_KEY_ITERATIONS = 100000;
 const DERIVED_KEY_LENGTH = 32;
 const DERIVED_KEY_ALGORITHM = 'sha256';
 
-// Derive an ephemeral key from password and salt
-function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
+// Derive an ephemeral key from password and salt, returning as hex string
+function deriveKeyFromPassword(password: string, salt: Uint8Array | string): string {
   // Convert salt to Buffer if it's a hex string (for backward compatibility)
   const saltBuffer = typeof salt === 'string' ? Buffer.from(salt, 'hex') : salt;
   const key = pbkdf2Sync(
@@ -161,7 +202,8 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uin
     DERIVED_KEY_LENGTH,
     DERIVED_KEY_ALGORITHM
   );
-  return new Uint8Array(key);
+  // Return as hex string for consistency with database expectations
+  return Buffer.from(key).toString('hex');
 }
 
 // In-memory stores (consider Redis for production clustering)
@@ -171,8 +213,9 @@ const sessionStore = new Map<string, {
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
-  derivedKey?: Uint8Array; // Store derived key as binary (database users only)
-  salt?: Uint8Array; // Random salt for key derivation (more secure than using sessionId)
+  derivedKey?: string; // Store derived key as hex string
+  salt?: string; // Store salt as hex string for non-database users (env auth)
+  // Note: for database users, salt comes from the database
 }>();
 
 export interface AuthResult {
@@ -181,7 +224,7 @@ export interface AuthResult {
   error?: string;
   rateLimited?: boolean;
   password?: string; // Still returned for immediate use, but not stored
-  derivedKey?: Uint8Array; // Derived key for decryption operations (binary)
+  derivedKey?: string; // Derived key for decryption operations (hex string)
 }
 
 // Get client IP address from various headers
@@ -341,19 +384,28 @@ export function createSession(
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
   
-  // Generate separate random salt for key derivation
-  let derivedKey: Uint8Array | undefined;
-  let salt: Uint8Array | undefined;
+  // Generate derived key if password is provided
+  let derivedKey: string | undefined;
+  let sessionSalt: string | undefined; // Salt to store for non-database users
+  
   if (password) {
     if (dbSalt) {
-      // Use the provided database salt for database users
-      // Convert hex string to Uint8Array
-      salt = new Uint8Array(Buffer.from(dbSalt, 'hex'));
-      derivedKey = deriveKeyFromPassword(password, salt);
+      // Database users: Use persistent salt from database
+      // This ensures the derived key can be recreated consistently across sessions
+      derivedKey = deriveKeyFromPassword(password, dbSalt);
+      // Don't store salt in session for database users (it's in the database)
     } else {
-      // Generate a cryptographically secure random salt for non-database auth
-      salt = new Uint8Array(randomBytes(32));
-      derivedKey = deriveKeyFromPassword(password, salt);
+      // Non-database users (env auth): Generate ephemeral salt for this session
+      // SECURITY DESIGN: This salt is intentionally session-specific and ephemeral.
+      // Non-database users (Basic Auth/API Key users with string userIds) are 
+      // explicitly blocked from accessing credential storage endpoints (/api/user/*).
+      // This prevents data loss since they cannot save encrypted credentials anyway.
+      // The ephemeral salt ensures session-scoped operations remain secure without
+      // creating false expectations of data persistence.
+      const salt = randomBytes(32);
+      const saltHex = salt.toString('hex');
+      sessionSalt = saltHex; // Store salt for this session's lifetime only
+      derivedKey = deriveKeyFromPassword(password, saltHex);
     }
   }
   
@@ -362,8 +414,8 @@ export function createSession(
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    derivedKey, // Store derived key instead of password
-    salt // Store salt for future verification
+    derivedKey, // Store derived key as hex string
+    salt: sessionSalt // Store salt for non-database users
   });
   
   cleanupExpiredSessions();
@@ -613,7 +665,7 @@ export function requireAuth(handler: Function) {
         return value;
       },
       
-      getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
+      getDerivedKey(): string | undefined {
         const value = derivedKey;
         derivedKey = undefined; // Clear after access
         return value;

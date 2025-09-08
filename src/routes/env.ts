@@ -175,9 +175,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 // Try to get derived key (session auth) - only use secure getter
                 const derivedKey = auth.getDerivedKey?.();
                 if (derivedKey) {
-                  // Convert binary derived key to hex for PBKDF2
-                  const { bytesToHex } = await import('./utils.js');
-                  secret = bytesToHex(derivedKey);
+                  // derivedKey is already a hex string from auth-factory
+                  secret = derivedKey;
                   isDerivedKey = true;
                 }
               }

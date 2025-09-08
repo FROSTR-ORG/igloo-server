@@ -4,7 +4,7 @@ import {
   normalizePubkey,
   extractSelfPubkeyFromCredentials
 } from '@frostr/igloo-core';
-import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
+import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
 
@@ -217,8 +217,10 @@ async function checkRelayConnectivity(
     
     // If we're idle AND connected, send a keepalive ping (if available)
     if (isIdle) {
-      // Check if ping function exists
-      if (typeof (node as any).ping !== 'function') {
+      // Resolve ping function from either node.ping or node.req.ping
+      const pingFn = (node as any)?.ping ?? (node as any)?.req?.ping;
+      
+      if (typeof pingFn !== 'function') {
         // No ping capability - this is not a critical failure
         // The relay reconnection logic above is sufficient for maintaining connectivity
         // Check if we have any connected relays from the pool check above
@@ -274,11 +276,16 @@ async function checkRelayConnectivity(
         // Send a ping to the first available peer
         const targetPeer = peers[0];
         const peerPubkey = targetPeer.pubkey || targetPeer;
+        // Normalize pubkey to canonical form to avoid case/format mismatches
+        const normalizedPeerPubkey = normalizePubkey(peerPubkey);
         
         // Race ping with timeout using helper to avoid stray rejections
-        const pingResult = await withTimeout((node as any).ping(peerPubkey), CONNECTIVITY_PING_TIMEOUT)
-          .then((res: any) => res as any)
-          .catch((err: any) => ({ ok: false, err: err?.message || 'ping failed' })) as { ok?: boolean; err?: unknown };
+        // NOTE: Currently we treat any resolved ping as successful - if the ping function
+        // returns without throwing, we consider connectivity established. The PingResult
+        // data field is not currently examined for success/failure status.
+        const pingResult = await withTimeout<PingResult>(pingFn(normalizedPeerPubkey), CONNECTIVITY_PING_TIMEOUT)
+          .then((res: PingResult) => ({ ok: true, result: res }))
+          .catch((err: Error) => ({ ok: false, err: err?.message || 'ping failed' })) as { ok: boolean; err?: string; result?: PingResult };
         
         if (pingResult && pingResult.ok) {
           // Ping succeeded - connection is good!

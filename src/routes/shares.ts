@@ -44,14 +44,14 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
     switch (url.pathname) {
       case '/api/shares':
         if (req.method === 'GET') {
-          // Return stored shares (for now, we'll use the current env credentials as an example)
+          // Return metadata about stored shares without exposing actual credentials
           const env = await readEnvFile();
           const shares = [];
           
-          // If we have both credentials in env, return them as a share
+          // If we have both credentials in env, return metadata only
           if (env.SHARE_CRED && env.GROUP_CRED) {
             try {
-              // Validate credentials before returning
+              // Validate credentials before returning metadata
               const shareValidation = validateShare(env.SHARE_CRED);
               const groupValidation = validateGroup(env.GROUP_CRED);
               
@@ -60,9 +60,12 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
                 const savedAt = await getCredentialsSavedAt();
                 
                 shares.push({
-                  shareCredential: env.SHARE_CRED,
-                  groupCredential: env.GROUP_CRED,
-                  savedAt: savedAt || new Date().toISOString(), // Fallback to current time if no timestamp found
+                  // Security: Never expose actual credentials in GET responses
+                  // Only return metadata about the shares
+                  hasShareCredential: true,
+                  hasGroupCredential: true,
+                  isValid: true,
+                  savedAt: savedAt || null, // null indicates timestamp unavailable
                   id: 'env-stored-share',
                   source: 'environment'
                 });

@@ -12,6 +12,7 @@ export * from './types.js';
 export * from './utils.js';
 
 import { RouteContext, PrivilegedRouteContext, RequestAuth } from './types.js';
+import { createRequestAuth } from './auth-factory.js';
 import { handleStatusRoute } from './status.js';
 import { handleEventsRoute } from './events.js';
 import { handlePeersRoute } from './peers.js';
@@ -22,6 +23,7 @@ import { handleStaticRoute } from './static.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
 import { handleUserRoute } from './user.js';
+import { handleAdminRoute } from './admin.js';
 import { 
   handleLogin, 
   handleLogout, 
@@ -40,6 +42,8 @@ export async function handleRequest(
   baseContext: RouteContext, 
   privilegedContext: PrivilegedRouteContext
 ): Promise<Response> {
+  
+  
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
@@ -115,11 +119,24 @@ export async function handleRequest(
     }
   }
 
-  // Handle static files without auth (frontend needs to load to show login)
+  // Handle static files - only serve frontend in database mode
   if (!url.pathname.startsWith('/api/')) {
-    const staticResult = await handleStaticRoute(req, url);
-    if (staticResult) {
-      return staticResult;
+    if (HEADLESS) {
+      // In headless mode, no frontend is served - return 404 for all non-API routes
+      return Response.json({ 
+        error: 'Frontend disabled in headless mode',
+        message: 'This server is running in headless mode. Only API endpoints are available.',
+        availableEndpoints: '/api/*'
+      }, { 
+        status: 404,
+        headers 
+      });
+    } else {
+      // In database mode, serve frontend (needs to load to show login)
+      const staticResult = await handleStaticRoute(req, url);
+      if (staticResult) {
+        return staticResult;
+      }
     }
   }
 
@@ -146,8 +163,11 @@ export async function handleRequest(
   // Special handling for /api/status: try authentication if headers present, but allow unauthenticated access
   const isStatusEndpoint = url.pathname === '/api/status';
 
-  // Authentication check for API endpoints (skip public endpoints, handle status specially)
-  if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint) {
+  // Admin endpoints have their own ADMIN_SECRET authentication
+  const isAdminEndpoint = url.pathname.startsWith('/api/admin');
+
+  // Authentication check for API endpoints (skip public endpoints, status, and admin)
+  if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint && !isStatusEndpoint && !isAdminEndpoint) {
     const authResult = authenticate(req);
     
     if (authResult.rateLimited) {
@@ -174,30 +194,12 @@ export async function handleRequest(
       });
     }
     
-    // Create local auth info object instead of mutating shared context
-    // Store sensitive values that will be cleared after first access
-    let password = authResult.password;
-    let derivedKey = authResult.derivedKey;
-    
-    authInfo = {
+    authInfo = createRequestAuth({
       userId: authResult.userId,
       authenticated: true,
-      // Removed direct storage of sensitive data to prevent exposure
-      // Use secure getter functions instead
-      
-      // Secure getter functions that clear sensitive data after first access
-      getPassword(): string | undefined {
-        const value = password;
-        password = undefined; // Clear after access
-        return value;
-      },
-      
-      getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
-        const value = derivedKey;
-        derivedKey = undefined; // Clear after access
-        return value;
-      }
-    };
+      password: authResult.password,
+      derivedKey: authResult.derivedKey
+    });
   } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
     // Special handling for /api/status: attempt authentication if headers are present
     // but don't require it (allow unauthenticated health checks)
@@ -206,27 +208,13 @@ export async function handleRequest(
       
       // Only use auth info if authentication actually succeeded (not rate limited or failed)
       if (authResult.authenticated && !authResult.rateLimited) {
-        // Create auth info object same as above
-        let password = authResult.password;
-        let derivedKey = authResult.derivedKey;
-        
-        authInfo = {
+        // Create auth info with secure ephemeral storage for secrets
+        authInfo = createRequestAuth({
           userId: authResult.userId,
           authenticated: true,
-          
-          // Secure getter functions that clear sensitive data after first access
-          getPassword(): string | undefined {
-            const value = password;
-            password = undefined; // Clear after access
-            return value;
-          },
-          
-          getDerivedKey(): Uint8Array | ArrayBuffer | undefined {
-            const value = derivedKey;
-            derivedKey = undefined; // Clear after access
-            return value;
-          }
-        };
+          password: authResult.password,
+          derivedKey: authResult.derivedKey
+        });
       }
       // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
     } catch (error) {
@@ -241,6 +229,26 @@ export async function handleRequest(
   if (!HEADLESS && url.pathname.startsWith('/api/user')) {
     const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
     if (userResult) return userResult;
+  }
+
+  // Handle admin routes (database mode only, requires ADMIN_SECRET)
+  if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
+    // Apply rate limiting to protect ADMIN_SECRET from brute-force
+    const rateLimit = checkRateLimit(req);
+    if (!rateLimit.allowed) {
+      return Response.json({ 
+        error: 'Rate limit exceeded. Try again later.' 
+      }, { 
+        status: 429,
+        headers: {
+          ...headers,
+          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+        }
+      });
+    }
+    
+    const adminResult = await handleAdminRoute(req, url, baseContext);
+    if (adminResult) return adminResult;
   }
   
   // Handle privileged routes separately

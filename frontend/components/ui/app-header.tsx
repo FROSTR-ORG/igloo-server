@@ -5,7 +5,7 @@ import { LogOut, User } from 'lucide-react';
 interface AppHeaderProps {
   subtitle?: React.ReactNode;
   authEnabled?: boolean;
-  userId?: string | number;
+  userId?: string | number | bigint;
   onLogout?: () => void;
 }
 
@@ -24,7 +24,7 @@ export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeader
         </div>
         {/* Right: User/Logout */}
         <div className="absolute right-0 top-1/2 -translate-y-1/2">
-          {authEnabled && userId && onLogout && (
+          {authEnabled && userId !== null && userId !== undefined && onLogout && (
             <div className="flex items-center gap-2">
               <div className="flex items-center gap-2 text-blue-300 text-sm">
                 <User size={16} />

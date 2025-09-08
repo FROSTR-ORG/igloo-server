@@ -5,6 +5,21 @@ import { getSecureCorsHeaders } from './utils.js';
 export function handleEventsRoute(req: Request, url: URL, _context: RouteContext, _auth?: RequestAuth | null): Response | null {
   if (url.pathname !== '/api/events') return null;
 
+  // Get secure CORS headers based on request origin
+  const corsHeaders = getSecureCorsHeaders(req);
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+  };
+
+  // Allow CORS preflight without authentication
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+
   // Check authentication - prefer passed auth, fallback to authenticate()
   if (AUTH_CONFIG.ENABLED) {
     // Use provided auth if available, otherwise authenticate the request
@@ -13,19 +28,14 @@ export function handleEventsRoute(req: Request, url: URL, _context: RouteContext
     
     // Explicit null check for extra safety (though authenticate never returns null)
     if (!authToUse || !authToUse.authenticated) {
-      const corsHeaders = getSecureCorsHeaders(req);
       return Response.json({ error: 'Unauthorized' }, { 
-        status: 403,
-        headers: {
-          ...corsHeaders
-        }
+        status: 401,
+        headers
       });
     }
   }
 
   if (req.method === 'GET') {
-    const corsHeaders = getSecureCorsHeaders(req);
-    
     // Return instructions to use WebSocket instead of SSE
     return Response.json({
       error: 'Event streaming has been migrated to WebSocket',
@@ -37,7 +47,7 @@ export function handleEventsRoute(req: Request, url: URL, _context: RouteContext
       headers: {
         'Upgrade': 'websocket',
         'Connection': 'Upgrade',
-        ...corsHeaders
+        ...headers
       }
     });
   }
