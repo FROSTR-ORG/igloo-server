@@ -175,7 +175,14 @@ export async function handleOnboardingRoute(
       case '/api/onboarding/status':
         if (req.method === 'GET') {
           // Check if database is initialized
-          const initialized = isDatabaseInitialized();
+          let initialized = false;
+          try {
+            initialized = isDatabaseInitialized();
+          } catch (err: any) {
+            console.error('[onboarding] Database initialization check failed:', err.message);
+            initialized = false; // Treat errors as not initialized
+          }
+          
           const hasAdminSecret = !!ADMIN_SECRET;
           
           return Response.json(
@@ -195,7 +202,15 @@ export async function handleOnboardingRoute(
           await addUniformDelay();
           
           // Check if already initialized
-          if (isDatabaseInitialized()) {
+          let initialized = false;
+          try {
+            initialized = isDatabaseInitialized();
+          } catch (err: any) {
+            console.error('[onboarding] Database initialization check failed:', err.message);
+            initialized = false; // Treat errors as not initialized
+          }
+          
+          if (initialized) {
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }
@@ -233,7 +248,15 @@ export async function handleOnboardingRoute(
           await addUniformDelay();
           
           // Check if already initialized
-          if (isDatabaseInitialized()) {
+          let initialized = false;
+          try {
+            initialized = isDatabaseInitialized();
+          } catch (err: any) {
+            console.error('[onboarding] Database initialization check failed:', err.message);
+            initialized = false; // Treat errors as not initialized
+          }
+          
+          if (initialized) {
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }

@@ -13,25 +13,36 @@ interface DeleteUserRequest {
 }
 
 /**
- * Convert various `userId` input types into a normalized safe integer number.
- * Accepts: number, numeric string (e.g. "0", "42"), and bigint (e.g. 0n).
- * Returns a finite, safe integer number or null if the conversion fails.
+ * Convert various `userId` input types into a normalized number or bigint.
+ * Only accepts positive integers: number, numeric string (e.g. "1", "42"), and bigint (e.g. 1n).
+ * Returns number for positive safe integers, or null if invalid.
  */
-function normalizeUserId(input: unknown): number | null {
+function normalizeUserId(input: unknown): number | bigint | null {
   if (typeof input === 'number') {
-    return Number.isFinite(input) && Number.isSafeInteger(input) ? input : null;
+    // Require finite, safe integer, and positive (> 0)
+    return Number.isFinite(input) && Number.isSafeInteger(input) && input > 0 ? input : null;
   }
 
   if (typeof input === 'string') {
     const trimmed = input.trim();
-    if (trimmed.length === 0) return null;
+    // Check if it's a valid positive integer string (no negative sign allowed)
+    if (!/^\d+$/.test(trimmed)) return null;
+    
     const parsed = Number(trimmed);
-    return Number.isFinite(parsed) && Number.isSafeInteger(parsed) ? parsed : null;
+    // Require finite, safe integer, and positive (> 0)
+    if (Number.isFinite(parsed) && Number.isSafeInteger(parsed) && parsed > 0) {
+      return parsed;
+    }
+    return null;
   }
 
   if (typeof input === 'bigint') {
-    const coerced = Number(input);
-    return Number.isSafeInteger(coerced) ? coerced : null;
+    // Require positive and within safe integer range
+    if (input > 0n && input <= BigInt(Number.MAX_SAFE_INTEGER)) {
+      // Coerce to number since it's within safe range
+      return Number(input);
+    }
+    return null;
   }
 
   return null;
@@ -67,7 +78,17 @@ export async function handleAdminRoute(
   }
 
   // Database must be initialized for admin operations
-  if (!isDatabaseInitialized()) {
+  try {
+    const initialized = isDatabaseInitialized();
+    if (!initialized) {
+      return Response.json(
+        { error: 'Database not initialized' },
+        { status: 503, headers }
+      );
+    }
+  } catch (err: any) {
+    console.error('[admin] Database initialization check failed:', err.message);
+    // Treat database errors as not initialized
     return Response.json(
       { error: 'Database not initialized' },
       { status: 503, headers }
@@ -136,7 +157,7 @@ export async function handleAdminRoute(
           // Prevent deleting the last admin user
           // In this system, we consider users with stored credentials as admins
           const users = getAllUsers();
-          const targetUser = users.find(u => u.id === normalizedUserId);
+          const targetUser = users.find(u => String(u.id) === String(normalizedUserId));
           if (!targetUser) {
             return Response.json(
               { error: 'User not found or deletion failed' },
@@ -144,16 +165,18 @@ export async function handleAdminRoute(
             );
           }
 
-          const adminUsers = users.filter(u => u.hasCredentials);
+          // Use consistent String comparison for filtering admin users
+          const adminUsers = users.filter(u => u.hasCredentials && String(u.id) !== String(normalizedUserId));
           const isTargetAdmin = !!targetUser.hasCredentials;
-          if (isTargetAdmin && adminUsers.length <= 1) {
+          if (isTargetAdmin && adminUsers.length === 0) {
             return Response.json(
               { error: 'Cannot delete the last admin user' },
               { status: 400, headers }
             );
           }
 
-          const success = deleteUser(normalizedUserId);
+          // Pass the original targetUser.id to preserve its type
+          const success = deleteUser(targetUser.id);
           if (!success) {
             return Response.json(
               { error: 'User not found or deletion failed' },

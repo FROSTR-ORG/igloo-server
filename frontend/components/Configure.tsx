@@ -33,6 +33,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [originalShare, setOriginalShare] = useState("");
   const [originalGroupCredential, setOriginalGroupCredential] = useState("");
   const [isHeadlessMode, setIsHeadlessMode] = useState(false);
+  const [existingRelays, setExistingRelays] = useState<string[] | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [advancedSettings, setAdvancedSettings] = useState({
     RELAYS: '["wss://relay.primal.net"]',
@@ -77,7 +78,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
 
   // Function to load advanced settings from env
   const loadAdvancedSettings = async () => {
-    if (!isHeadlessMode) return; // Only load advanced settings in headless mode
+    // Load advanced settings in both headless and database modes
     
     try {
       setIsLoadingAdvanced(true);
@@ -87,8 +88,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
-        const newSettings = {
-          RELAYS: coerceEnvValueToString(envVars.RELAYS, '["wss://relay.primal.net"]'),
+        const newSettings: any = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
           RATE_LIMIT_ENABLED: coerceEnvValueToString(envVars.RATE_LIMIT_ENABLED, 'true'),
           RATE_LIMIT_WINDOW: coerceEnvValueToString(envVars.RATE_LIMIT_WINDOW, '900'),
@@ -100,6 +100,12 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
           INITIAL_CONNECTIVITY_DELAY: coerceEnvValueToString(envVars.INITIAL_CONNECTIVITY_DELAY, '5000'),
           ALLOWED_ORIGINS: coerceEnvValueToString(envVars.ALLOWED_ORIGINS, '')
         };
+        
+        // Only include RELAYS in headless mode (server-wide configuration)
+        // In database mode, relays are managed per-user through the Signer component
+        if (isHeadlessMode) {
+          newSettings.RELAYS = coerceEnvValueToString(envVars.RELAYS, '["wss://relay.primal.net"]');
+        }
         setAdvancedSettings(newSettings);
         setOriginalAdvancedSettings({...newSettings});
       } else {
@@ -129,7 +135,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         setIsHeadlessMode(headlessMode);
         
         // Load credentials based on mode
-        let savedShare, savedGroup, savedName;
+        let savedShare, savedGroup, savedName, savedRelays;
         
         if (headlessMode) {
           // Headless mode - fetch from environment
@@ -141,6 +147,14 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             savedShare = envVars.SHARE_CRED;
             savedGroup = envVars.GROUP_CRED;
             savedName = envVars.GROUP_NAME;
+            // Parse relays from environment
+            if (envVars.RELAYS) {
+              try {
+                savedRelays = typeof envVars.RELAYS === 'string' ? JSON.parse(envVars.RELAYS) : envVars.RELAYS;
+              } catch {
+                savedRelays = null;
+              }
+            }
           }
         } else {
           // Database mode - fetch from user credentials
@@ -152,12 +166,16 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             savedShare = credentials.share_cred;
             savedGroup = credentials.group_cred;
             savedName = credentials.group_name;
+            savedRelays = credentials.relays;
           }
         }
         
-        // Load advanced settings in headless mode
-        if (headlessMode) {
-          await loadAdvancedSettings();
+        // Load advanced settings in both modes
+        await loadAdvancedSettings();
+        
+        // Store existing relays (if any)
+        if (savedRelays && Array.isArray(savedRelays) && savedRelays.length > 0) {
+          setExistingRelays(savedRelays);
         }
         
         // Check if we have real credentials (not placeholders)
@@ -200,8 +218,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   // Reload advanced settings when window regains focus or when showAdvanced changes
   // This ensures relay changes from Signer.tsx are reflected here
   useEffect(() => {
-    // Only set up listeners and load if in headless mode with advanced section open
-    if (!isHeadlessMode || !showAdvanced) {
+    // Only set up listeners and load if advanced section is open
+    if (!showAdvanced) {
       return;
     }
 
@@ -218,7 +236,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     return () => {
       window.removeEventListener('focus', handleFocus);
     };
-  }, [isHeadlessMode, showAdvanced]);
+  }, [showAdvanced]);
 
   const handleNameChange = (value: string) => {
     setKeysetName(value);
@@ -272,8 +290,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     setAdvancedError(undefined);
     
     try {
-      // Validate JSON format for RELAYS
-      if (advancedSettings.RELAYS) {
+      // Validate JSON format for RELAYS (only in headless mode)
+      if (isHeadlessMode && advancedSettings.RELAYS) {
         try {
           const parsedRelays = JSON.parse(advancedSettings.RELAYS);
           if (!Array.isArray(parsedRelays)) {
@@ -470,6 +488,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         });
       } else {
         // Database mode - save to user credentials
+        // Preserve existing relays or use default if none exist
+        const relaysToSave = existingRelays || ["wss://relay.primal.net"];
+        
         await fetch('/api/user/credentials', {
           method: 'POST',
           headers: {
@@ -480,7 +501,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             share_cred: share,
             group_cred: groupCredential,
             group_name: keysetName,
-            relays: ["wss://relay.primal.net"]
+            relays: relaysToSave
           })
         });
       }
@@ -672,9 +693,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
               : "Configure Signer"}
         </Button>
         
-        {/* Advanced Settings Section - Only show in headless mode */}
-        {isHeadlessMode && (
-          <div className="mt-6 border-t border-gray-700/50 pt-6">
+        {/* Advanced Settings Section - Available in both headless and database modes */}
+        <div className="mt-6 border-t border-gray-700/50 pt-6">
             <Button
               variant="ghost"
               onClick={() => setShowAdvanced(!showAdvanced)}
@@ -692,32 +712,56 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
                 {isLoadingAdvanced && (
                   <div className="text-blue-300 text-sm">Loading settings...</div>
                 )}
-                {/* Relays Configuration */}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-blue-200 flex items-center gap-1">
-                    <span>Nostr Relays</span>
-                    <Tooltip
-                      trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
-                      content={
-                        <>
-                          <p className="mb-2 font-semibold">Nostr relay configuration:</p>
-                          <p className="mb-2">JSON array of relay URLs for FROSTR protocol communication. These relays are used for discovering and communicating with other FROSTR nodes.</p>
-                          <p className="mb-1">Example: ["wss://relay.primal.net", "wss://relay.damus.io"]</p>
-                          <p className="text-xs">Default: ["wss://relay.primal.net"]</p>
-                        </>
-                      }
-                      width="w-60"
+                {/* Relays Configuration - Only show in headless mode */}
+                {isHeadlessMode && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                      <span>Nostr Relays</span>
+                      <Tooltip
+                        trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                        content={
+                          <>
+                            <p className="mb-2 font-semibold">Nostr relay configuration:</p>
+                            <p className="mb-2">JSON array of relay URLs for FROSTR protocol communication. These relays are used for discovering and communicating with other FROSTR nodes.</p>
+                            <p className="mb-1">Example: ["wss://relay.primal.net", "wss://relay.damus.io"]</p>
+                            <p className="text-xs">Default: ["wss://relay.primal.net"]</p>
+                          </>
+                        }
+                        width="w-60"
+                      />
+                    </label>
+                    <Input
+                      type="text"
+                      placeholder='["wss://relay.primal.net"]'
+                      value={typeof advancedSettings.RELAYS === 'string' ? advancedSettings.RELAYS : JSON.stringify(advancedSettings.RELAYS)}
+                      onChange={(e) => setAdvancedSettings({...advancedSettings, RELAYS: e.target.value})}
+                      disabled={isLoadingAdvanced}
+                      className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500 font-mono text-sm"
                     />
-                  </label>
-                  <Input
-                    type="text"
-                    placeholder='["wss://relay.primal.net"]'
-                    value={typeof advancedSettings.RELAYS === 'string' ? advancedSettings.RELAYS : JSON.stringify(advancedSettings.RELAYS)}
-                    onChange={(e) => setAdvancedSettings({...advancedSettings, RELAYS: e.target.value})}
-                    disabled={isLoadingAdvanced}
-                    className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500 font-mono text-sm"
-                  />
-                </div>
+                  </div>
+                )}
+                
+                {/* Info message for database mode users */}
+                {!isHeadlessMode && (
+                  <div className="space-y-2">
+                    <div className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                      <span>Relay Configuration</span>
+                      <Tooltip
+                        trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                        content={
+                          <>
+                            <p className="mb-2 font-semibold">Database Mode Relay Management:</p>
+                            <p>In database mode, relays are managed per-user through the Signer tab. Each user can configure their own relay preferences.</p>
+                          </>
+                        }
+                        width="w-60"
+                      />
+                    </div>
+                    <div className="bg-blue-900/20 border border-blue-700/30 rounded-lg p-3 text-sm text-blue-300">
+                      In database mode, relays are configured per-user in the <strong>Signer</strong> tab.
+                    </div>
+                  </div>
+                )}
                 
                 {/* Session Timeout */}
                 <div className="space-y-2">
@@ -1013,7 +1057,6 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
               </div>
             )}
           </div>
-        )}
 
         {keysetGenerated.location && (
           <Alert 

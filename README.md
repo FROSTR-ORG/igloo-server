@@ -116,6 +116,7 @@ Features:
 - ✅ No database dependencies
 - ✅ Simpler deployment model
 - ✅ Compatible with existing automation
+- ❌ Frontend/UI disabled (API-only)
 
 ### Mode Selection Guide
 
@@ -310,7 +311,7 @@ EOF
 bun run start
 ```
 
-**Note**: In headless mode, credentials are read from environment variables and the web interface allows viewing but not modifying them.
+**Note**: In headless mode, credentials are read from environment variables and the frontend is disabled. Use API endpoints only.
 
 ### Docker Deployment
 

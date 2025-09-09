@@ -7,6 +7,7 @@ import {
   PeerStatus, 
   ServerBifrostNode 
 } from './routes/index.js';
+import { assertNoSessionSecretExposure } from './routes/utils.js';
 import { 
   createBroadcastEvent,
   createAddServerLog, 
@@ -75,6 +76,9 @@ let peerStatuses = new Map<string, PeerStatus>();
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
 
+// Fail fast if forbidden env keys are accidentally exposed via utils configuration
+assertNoSessionSecretExposure();
+
 // Initialize database if not in headless mode
 if (!CONST.HEADLESS) {
   // Attempt dynamic import of the database module with explicit error handling
@@ -115,7 +119,9 @@ if (!CONST.HEADLESS) {
     if (!dbModule) {
       throw new Error('Database module is not loaded');
     }
+    // isDatabaseInitialized now returns boolean
     const initialized = dbModule.isDatabaseInitialized();
+    
     if (!initialized) {
       if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
         console.error('❌ ADMIN_SECRET is required for initial setup (database uninitialized).');
@@ -126,7 +132,11 @@ if (!CONST.HEADLESS) {
     }
   } catch (err) {
     console.error('❌ Error checking database initialization state:', err instanceof Error ? err.message : String(err));
-    process.exit(1);
+    // Treat errors as "not initialized" to enforce onboarding
+    if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
+      console.error('   Database check failed - ADMIN_SECRET required for recovery.');
+      process.exit(1);
+    }
   }
 } else {
   console.log('⚙️  Headless mode enabled - using environment variables for configuration');
@@ -164,7 +174,7 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     // Clean up existing node
     if (node) {
       try {
-        cleanupBifrostNode(node as any);
+        cleanupBifrostNode(node);
       } catch (err) {
         addServerLog('warn', 'Failed to clean up previous node during restart', err);
       }
@@ -278,8 +288,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   // Clean up the old node to prevent memory leaks
   if (node) {
     try {
-      // Cast to any to handle type mismatch - igloo-core cleanup accepts broader types
-      cleanupBifrostNode(node as any);
+      cleanupBifrostNode(node);
     } catch (err) {
       addServerLog('warn', 'Failed to clean up previous node', err);
     }
@@ -404,7 +413,7 @@ serve({
           });
         }
         
-        const authResult = authenticate(authReq);
+        const authResult = await authenticate(authReq);
         if (!authResult.authenticated) {
           return new Response('Unauthorized', { 
             status: 401,

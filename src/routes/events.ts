@@ -2,7 +2,7 @@ import { RouteContext, RequestAuth } from './types.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
 import { getSecureCorsHeaders } from './utils.js';
 
-export function handleEventsRoute(req: Request, url: URL, _context: RouteContext, _auth?: RequestAuth | null): Response | null {
+export async function handleEventsRoute(req: Request, url: URL, _context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (url.pathname !== '/api/events') return null;
 
   // Get secure CORS headers based on request origin
@@ -24,11 +24,11 @@ export function handleEventsRoute(req: Request, url: URL, _context: RouteContext
   if (AUTH_CONFIG.ENABLED) {
     // Use provided auth if available, otherwise authenticate the request
     // Note: authenticate() always returns an AuthResult object, never null
-    const authToUse = _auth ?? authenticate(req);
+    const authToUse = _auth !== undefined ? _auth : await authenticate(req);
     
     // Explicit null check for extra safety (though authenticate never returns null)
     if (!authToUse || !authToUse.authenticated) {
-      return Response.json({ error: 'Unauthorized' }, { 
+      return Response.json({ error: 'Authentication required' }, { 
         status: 401,
         headers
       });

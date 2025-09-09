@@ -123,6 +123,7 @@ export interface SignerProps {
     name?: string;
     threshold?: number;
     totalShares?: number;
+    relays?: string[];
   };
   authHeaders?: Record<string, string>;
   /**

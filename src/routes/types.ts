@@ -1,5 +1,7 @@
 // Shared types for route handlers
 
+import type { Buffer } from 'node:buffer';
+
 /**
  * Shared type for user IDs across different auth methods.
  * 
@@ -56,22 +58,10 @@ export interface PingResult {
   [key: string]: any;
 }
 
-export interface ServerBifrostNode {
-  on: (
-    event: BifrostNodeEvent,
-    callback:
-      | ((...args: any[]) => void) // fallback for unknown events
-      | ((error: Error) => void) // 'error'
-      | (() => void) // 'closed'
-      | ((data: any) => void) // 'ready', 'message', etc.
-      | ((reason: string, msg: any) => void) // 'bounced'
-  ) => void;
-  req: {
-    ping: (pubkey: string) => Promise<PingResult>;
-    // Add other req methods if needed
-  };
-  // Add other properties/methods as needed
-}
+import type { BifrostNode } from '@frostr/bifrost';
+
+// Align server node type with upstream BifrostNode to avoid casts/mismatches
+export type ServerBifrostNode = BifrostNode;
 
 export interface AuthContext {
   userId?: UserId; // Support string (env auth), number (database user id), and bigint
@@ -90,7 +80,7 @@ export interface RequestAuth {
   // Secure getter functions that clear sensitive data after first access
   // These access secrets from ephemeral storage (WeakMap/closure) and clear after reading
   getPassword?(): string | undefined;
-  getDerivedKey?(): string | undefined;
+  getDerivedKey?(): Uint8Array | Buffer | undefined;
 }
 
 import type { ServerWebSocket } from 'bun';

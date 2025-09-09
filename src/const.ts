@@ -29,11 +29,21 @@ export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
 export const GROUP_CRED = process.env['GROUP_CRED']
 export const SHARE_CRED = process.env['SHARE_CRED']
 
-// Admin secret for initial onboarding
-export const ADMIN_SECRET = process.env['ADMIN_SECRET']
+// Admin secret for initial onboarding - treat empty/whitespace as absent
+export const ADMIN_SECRET = (() => {
+  const secret = process.env['ADMIN_SECRET'];
+  if (!secret) return undefined;
+  const trimmed = secret.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+})();
 
-// Headless mode - when true, uses env-based configuration instead of database
-export const HEADLESS = process.env['HEADLESS'] === 'true'
+// Headless mode - parse boolean flexibly (case-insensitive)
+export const HEADLESS = (() => {
+  const value = process.env['HEADLESS'];
+  if (!value) return false;
+  const normalized = value.toLowerCase().trim();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
 
 // Helper function to check if credentials are available
 export const hasCredentials = () => GROUP_CRED !== undefined && SHARE_CRED !== undefined

@@ -6,7 +6,7 @@ import {
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
-import { readEnvFile, getSecureCorsHeaders } from './utils.js';
+import { readEnvFile, getSecureCorsHeaders, binaryToHex } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
 
@@ -33,26 +33,12 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
       if (password) {
         secret = password;
       } else if (derivedKey != null) {
-        // derivedKey should be a hex string, optionally prefixed with "0x"
-        if (typeof derivedKey !== 'string') {
-          console.warn('Invalid derivedKey: expected string');
+        const hexString = binaryToHex(derivedKey);
+        if (!hexString) {
+          console.error('Failed to convert derivedKey to hex in getCredentials (peers)');
           return null;
         }
-        const hasPrefix = derivedKey.startsWith('0x') || derivedKey.startsWith('0X');
-        const normalizedNoPrefix = hasPrefix ? derivedKey.slice(2) : derivedKey;
-        if (normalizedNoPrefix.length === 0) {
-          console.warn('Invalid derivedKey: empty after removing optional 0x prefix');
-          return null;
-        }
-        if (!/^[0-9a-fA-F]+$/.test(normalizedNoPrefix)) {
-          console.warn('Invalid derivedKey: contains non-hex characters');
-          return null;
-        }
-        if (normalizedNoPrefix.length % 2 !== 0) {
-          console.warn('Invalid derivedKey: hex length must be even');
-          return null;
-        }
-        secret = normalizedNoPrefix.toLowerCase();
+        secret = hexString;
         isDerivedKey = true;
       }
       if (!secret) return null;

@@ -32,7 +32,7 @@ import {
   authenticate,
   checkRateLimit 
 } from './auth.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, binaryToHex } from './utils.js';
 import { HEADLESS } from '../const.js';
 
 // Unified router function
@@ -101,7 +101,7 @@ export async function handleRequest(
   if (url.pathname.startsWith('/api/docs')) {
     // Require authentication for docs in production
     if (AUTH_CONFIG.ENABLED && process.env.NODE_ENV === 'production') {
-      const authResult = authenticate(req);
+      const authResult = await authenticate(req);
       if (!authResult.authenticated) {
         return Response.json({ 
           error: 'Authentication required for API documentation in production',
@@ -168,7 +168,7 @@ export async function handleRequest(
 
   // Authentication check for API endpoints (skip public endpoints, status, and admin)
   if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint && !isStatusEndpoint && !isAdminEndpoint) {
-    const authResult = authenticate(req);
+    const authResult = await authenticate(req);
     
     if (authResult.rateLimited) {
       return Response.json({ 
@@ -198,13 +198,13 @@ export async function handleRequest(
       userId: authResult.userId,
       authenticated: true,
       password: authResult.password,
-      derivedKey: authResult.derivedKey
+      derivedKey: authResult.derivedKey ? binaryToHex(authResult.derivedKey) : undefined
     });
   } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
     // Special handling for /api/status: attempt authentication if headers are present
     // but don't require it (allow unauthenticated health checks)
     try {
-      const authResult = authenticate(req);
+      const authResult = await authenticate(req);
       
       // Only use auth info if authentication actually succeeded (not rate limited or failed)
       if (authResult.authenticated && !authResult.rateLimited) {
@@ -213,7 +213,7 @@ export async function handleRequest(
           userId: authResult.userId,
           authenticated: true,
           password: authResult.password,
-          derivedKey: authResult.derivedKey
+          derivedKey: authResult.derivedKey ? binaryToHex(authResult.derivedKey) : undefined
         });
       }
       // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)

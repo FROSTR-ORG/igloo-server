@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, openSync, fsyncSync, renameSync, unlinkSync, closeSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, openSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
@@ -44,6 +44,16 @@ function loadOrGenerateSessionSecret(): string | null {
     if (!existsSync(SESSION_SECRET_DIR)) {
       mkdirSync(SESSION_SECRET_DIR, { recursive: true });
     }
+    // Enforce strict permissions on the directory (0700)
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      // On Windows, chmod may be a no-op or limited; proceed best-effort
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
     
     // Check if secret already exists
     if (existsSync(SESSION_SECRET_FILE)) {
@@ -85,6 +95,16 @@ function loadOrGenerateSessionSecret(): string | null {
       // Atomically rename the temp file to the final destination
       renameSync(tempFilePath, SESSION_SECRET_FILE);
 
+      // Enforce strict permissions on the final secret file (0600)
+      try {
+        chmodSync(SESSION_SECRET_FILE, 0o600);
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+      }
+
       // Finally, fsync the directory to durably record the rename (best-effort on Windows)
       if (dirHandle !== undefined) {
         try {
@@ -114,6 +134,24 @@ function loadOrGenerateSessionSecret(): string | null {
       if (dirHandle !== undefined) closeSync(dirHandle);
     }
     
+    // Final assurance of correct permissions after write/rename
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
+    try {
+      chmodSync(SESSION_SECRET_FILE, 0o600);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+    }
+
     console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
     console.log('   Sessions will now persist across server restarts');
     
@@ -191,8 +229,8 @@ const DERIVED_KEY_ITERATIONS = 100000;
 const DERIVED_KEY_LENGTH = 32;
 const DERIVED_KEY_ALGORITHM = 'sha256';
 
-// Derive an ephemeral key from password and salt, returning as hex string
-function deriveKeyFromPassword(password: string, salt: Uint8Array | string): string {
+// Derive an ephemeral key from password and salt, returning as Uint8Array
+function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
   // Convert salt to Buffer if it's a hex string (for backward compatibility)
   const saltBuffer = typeof salt === 'string' ? Buffer.from(salt, 'hex') : salt;
   const key = pbkdf2Sync(
@@ -202,29 +240,29 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): str
     DERIVED_KEY_LENGTH,
     DERIVED_KEY_ALGORITHM
   );
-  // Return as hex string for consistency with database expectations
-  return Buffer.from(key).toString('hex');
+  // Return as Uint8Array for binary safety
+  return new Uint8Array(key);
 }
 
 // In-memory stores (consider Redis for production clustering)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 const sessionStore = new Map<string, { 
-  userId: string | number; // Support both string (env auth) and number (database user id)
+  userId: string | number | bigint; // Support string (env auth), number, and bigint (database user id)
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
-  derivedKey?: string; // Store derived key as hex string
+  derivedKey?: Uint8Array; // Store derived key as binary
   salt?: string; // Store salt as hex string for non-database users (env auth)
   // Note: for database users, salt comes from the database
 }>();
 
 export interface AuthResult {
   authenticated: boolean;
-  userId?: string | number; // Support both string and number IDs
+  userId?: string | number | bigint; // Support string, number, and bigint IDs
   error?: string;
   rateLimited?: boolean;
   password?: string; // Still returned for immediate use, but not stored
-  derivedKey?: string; // Derived key for decryption operations (hex string)
+  derivedKey?: Uint8Array; // Derived key for decryption operations (binary)
 }
 
 // Get client IP address from various headers
@@ -371,7 +409,7 @@ function extractSessionFromCookie(req: Request): string | null {
 
 // Create new session
 export function createSession(
-  userId: string | number, 
+  userId: string | number | bigint, 
   ipAddress: string, 
   password?: string,
   dbSalt?: string  // Optional database salt for database users
@@ -385,7 +423,7 @@ export function createSession(
   const now = Date.now();
   
   // Generate derived key if password is provided
-  let derivedKey: string | undefined;
+  let derivedKey: Uint8Array | undefined;
   let sessionSalt: string | undefined; // Salt to store for non-database users
   
   if (password) {
@@ -414,7 +452,7 @@ export function createSession(
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    derivedKey, // Store derived key as hex string
+    derivedKey, // Store derived key as binary
     salt: sessionSalt // Store salt for non-database users
   });
   
@@ -451,7 +489,7 @@ setInterval(() => {
 }, CLEANUP_INTERVAL);
 
 // Main authentication function
-export function authenticate(req: Request): AuthResult {
+export async function authenticate(req: Request): Promise<AuthResult> {
   // In headless mode or when auth is disabled, use traditional auth
   if (!AUTH_CONFIG.ENABLED || HEADLESS) {
     if (!AUTH_CONFIG.ENABLED) {
@@ -462,8 +500,17 @@ export function authenticate(req: Request): AuthResult {
     // In non-headless mode, check if database is initialized
     // If not initialized, allow access to onboarding routes only
     const isOnboardingRoute = req.url.includes('/api/onboarding');
-    if (!isDatabaseInitialized() && !isOnboardingRoute) {
-      return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+    try {
+      const initialized = isDatabaseInitialized();
+      if (!initialized && !isOnboardingRoute) {
+        return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+      }
+    } catch (err: any) {
+      console.error('[auth] Database initialization check failed:', err.message);
+      // Treat database errors as "not initialized" to enforce onboarding
+      if (!isOnboardingRoute) {
+        return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+      }
     }
   }
 
@@ -508,7 +555,7 @@ export async function handleLogin(req: Request): Promise<Response> {
     const { username, password, apiKey } = body;
 
     let authenticated = false;
-    let userId: string | number = '';
+    let userId: string | number | bigint = '';
     let userPassword: string | undefined; // Store for database users
 
     if (apiKey && AUTH_CONFIG.API_KEY) {
@@ -520,26 +567,57 @@ export async function handleLogin(req: Request): Promise<Response> {
     
     // Try database authentication first (unless in headless mode)
     let userSalt: string | undefined; // Store user's database salt
-    if (!authenticated && !HEADLESS && username && password && isDatabaseInitialized()) {
+    let dbInitialized = false;
+    if (!HEADLESS) {
+      try {
+        dbInitialized = isDatabaseInitialized();
+      } catch (err: any) {
+        console.error('[auth] Database initialization check failed during session validation:', err.message);
+        dbInitialized = false; // Treat errors as not initialized
+      }
+    }
+    if (!authenticated && !HEADLESS && username && password && dbInitialized) {
       try {
         const dbResult = await authenticateUser(username, password);
+        // authenticateUser returns a structured result, not throwing for auth failures
         if (dbResult && typeof dbResult === 'object' && dbResult.success === true && dbResult.user && dbResult.user.id != null) {
           authenticated = true;
           userId = dbResult.user.id;
           userPassword = password; // Store for later decryption needs
           userSalt = dbResult.user.salt; // Store user's salt for key derivation
         }
-      } catch (err) {
-        // Log specific error types for better debugging
-        if (err instanceof Error) {
-          console.error('Database authentication error:', err.message);
-          // Re-throw if it's a critical database error
-          if (err.message.includes('SQLITE_BUSY') || err.message.includes('SQLITE_LOCKED')) {
-            throw err;
-          }
-        } else {
-          console.error('Database authentication threw unexpected error:', err);
+        // If dbResult.success is false, it's an expected auth failure, not an error
+        // We simply leave authenticated=false and continue
+      } catch (err: any) {
+        // Only real database errors should reach here (authenticateUser re-throws DB errors)
+        // Check for specific SQLite error codes
+        if (err?.code === 'SQLITE_BUSY' || 
+            err?.code === 'SQLITE_LOCKED' || 
+            err?.code === 'SQLITE_IOERR' ||
+            err?.code === 'SQLITE_CORRUPT' ||
+            err?.code === 'SQLITE_FULL') {
+          // Critical database error - log and re-throw
+          console.error('[auth] Database error during login:', {
+            code: err.code,
+            message: err.message,
+            stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+          });
+          
+          // Return a generic error to the client (don't expose DB details)
+          return Response.json({ 
+            success: false, 
+            error: 'Database temporarily unavailable. Please try again.' 
+          }, { status: 503 }); // 503 Service Unavailable
         }
+        
+        // For unexpected errors, log but don't expose details
+        console.error('[auth] Unexpected error during database authentication:', {
+          type: typeof err,
+          message: err?.message || 'Unknown error'
+        });
+        
+        // Treat as auth failure (fail-closed approach for security)
+        // We leave authenticated=false and continue
       }
     }
     
@@ -619,7 +697,7 @@ export function handleLogout(req: Request): Response {
 // This function is not currently used but kept for reference
 export function requireAuth(handler: Function) {
   return async (req: Request, url: URL, context: any): Promise<Response> => {
-    const authResult = authenticate(req);
+    const authResult = await authenticate(req);
     
     if (authResult.rateLimited) {
       return Response.json({ 
@@ -665,7 +743,7 @@ export function requireAuth(handler: Function) {
         return value;
       },
       
-      getDerivedKey(): string | undefined {
+      getDerivedKey(): Uint8Array | undefined {
         const value = derivedKey;
         derivedKey = undefined; // Clear after access
         return value;

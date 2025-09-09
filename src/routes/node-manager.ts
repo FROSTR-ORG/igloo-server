@@ -64,9 +64,9 @@ export async function createAndStartNode(
         
         // Clear the node reference
         context.updateNode(null);
-        
-        // Cleanup the old node (cast to any to handle type mismatch)
-        cleanupBifrostNode(oldNode as any);
+
+        // Cleanup the old node with proper type handling
+        await Promise.resolve(cleanupBifrostNode(oldNode));
         
         context.addServerLog('info', 'Previous node disposed successfully');
       } catch (cleanupError) {
@@ -79,7 +79,7 @@ export async function createAndStartNode(
         const timer = setTimeout(() => {
           cleanupTimers.delete(timer);
           try {
-            cleanupBifrostNode(oldNode as any);
+            cleanupBifrostNode(oldNode);
             context.addServerLog('info', 'Async cleanup completed for old node');
           } catch (e) {
             context.addServerLog('error', 'Async cleanup failed', e);
@@ -89,9 +89,21 @@ export async function createAndStartNode(
       }
     }
 
-    const nodeRelays = getValidRelays(
-      credentials.relays ? JSON.stringify(credentials.relays) : undefined
-    );
+    // Convert relays to the format expected by getValidRelays
+    // credentials.relays is string[] | null from the database
+    // getValidRelays expects a string (comma-separated or JSON array string)
+    let relayString: string | undefined;
+    if (credentials.relays) {
+      if (Array.isArray(credentials.relays)) {
+        // Convert array to comma-separated string
+        relayString = credentials.relays.join(',');
+      } else if (typeof credentials.relays === 'string') {
+        // Already a string, use as-is
+        relayString = credentials.relays;
+      }
+    }
+    
+    const nodeRelays = getValidRelays(relayString);
     
     let newNode: ServerBifrostNode | null = null;
     
@@ -109,7 +121,7 @@ export async function createAndStartNode(
       });
       
       if (result.node) {
-        newNode = result.node as unknown as ServerBifrostNode;
+        newNode = result.node;
         context.updateNode(newNode);
         context.addServerLog('info', 'Node connected and ready');
         
@@ -131,7 +143,7 @@ export async function createAndStartNode(
         });
         
         if (basicNode) {
-          newNode = basicNode as unknown as ServerBifrostNode;
+          newNode = basicNode;
           context.updateNode(newNode);
           context.addServerLog('info', 'Node connected and ready (basic mode)');
         }

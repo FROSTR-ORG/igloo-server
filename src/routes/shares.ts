@@ -26,7 +26,7 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
   if (AUTH_CONFIG.ENABLED) {
     // Use provided auth if available, otherwise authenticate the request
     // Note: authenticate() always returns an AuthResult object, never null
-    const authToUse = _auth ?? authenticate(req);
+    const authToUse = _auth ?? await authenticate(req);
     
     // Explicit null check for extra safety (though authenticate never returns null)
     if (!authToUse || !authToUse.authenticated) {

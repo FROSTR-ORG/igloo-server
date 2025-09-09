@@ -555,6 +555,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     if (initialData?.name) {
       setSignerName(initialData.name);
     }
+    
+    // Load relays from initialData (database mode)
+    if (initialData?.relays && Array.isArray(initialData.relays) && initialData.relays.length > 0) {
+      setRelayUrls(initialData.relays);
+    } else if (initialData) {
+      // In database mode with no saved relays, set default
+      setRelayUrls([DEFAULT_RELAY]);
+    }
   }, [initialData]);
 
   const handleCopy = async (text: string, field: 'group' | 'share') => {
@@ -726,8 +734,31 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     }
   };
 
-  // Save relay URLs to server .env file
-  const saveRelaysToEnv = async (relays: string[]) => {
+  // Helper function to determine if we're in database mode
+  const isDatabaseMode = () => {
+    return !!initialData; // Database mode is when we have initialData passed from parent
+  };
+  
+  // Save relay URLs to user credentials (database mode)
+  const saveRelaysToUserCredentials = async (relays: string[]) => {
+    try {
+      await fetch('/api/user/relays', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          relays: relays
+        })
+      });
+    } catch (error) {
+      console.error('Error saving relays to user credentials:', error);
+    }
+  };
+  
+  // Save relay URLs to server .env file (headless mode)
+  const saveRelaysToServerEnv = async (relays: string[]) => {
     try {
       await fetch('/api/env', {
         method: 'POST',
@@ -741,6 +772,15 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       });
     } catch (error) {
       console.error('Error saving relays to env:', error);
+    }
+  };
+
+  // Save relay URLs (routes to appropriate endpoint based on mode)
+  const saveRelaysToEnv = async (relays: string[]) => {
+    if (isDatabaseMode()) {
+      await saveRelaysToUserCredentials(relays);
+    } else {
+      await saveRelaysToServerEnv(relays);
     }
   };
 

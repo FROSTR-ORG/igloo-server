@@ -4,7 +4,8 @@ import {
   writeEnvFile, 
   filterPublicEnvObject, 
   validateEnvKeys, 
-  getSecureCorsHeaders 
+  getSecureCorsHeaders,
+  binaryToHex
 } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
@@ -108,12 +109,22 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   
   const corsHeaders = getSecureCorsHeaders(req);
   
-  // In non-headless mode, env routes are restricted
-  if (!HEADLESS && req.method === 'POST') {
-    return Response.json(
-      { error: 'Environment modification not allowed in database mode. Use /api/user/credentials instead.' },
-      { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
-    );
+  // Authentication required for POST requests in both modes
+  if (req.method === 'POST') {
+    if (!auth || typeof auth !== 'object' || !auth.authenticated) {
+      return Response.json(
+        { error: 'Authentication required for environment modifications' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+    
+    // In database mode, require a valid database user (not API key/basic auth)
+    if (!HEADLESS && (typeof auth.userId !== 'number' || auth.userId <= 0)) {
+      return Response.json(
+        { error: 'Database user authentication required for environment modifications' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
   }
 
   // Validate auth parameter structure when needed in database mode
@@ -174,11 +185,11 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               } else {
                 // Try to get derived key (session auth) - only use secure getter
                 const derivedKey = auth.getDerivedKey?.();
-                if (derivedKey) {
-                  // derivedKey is already a hex string from auth-factory
-                  secret = derivedKey;
-                  isDerivedKey = true;
-                }
+                if (!derivedKey) return Response.json({}, { headers });
+                const hex = binaryToHex(derivedKey);
+                if (!hex) return Response.json({}, { headers });
+                secret = hex;
+                isDerivedKey = true;
               }
               
               if (!secret) return Response.json({}, { headers });

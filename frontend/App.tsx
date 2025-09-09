@@ -17,6 +17,7 @@ interface SignerData {
   name?: string;
   threshold?: number;
   totalShares?: number;
+  relays?: string[];
 }
 
 interface AuthState {
@@ -181,7 +182,7 @@ const App: React.FC = () => {
             SHARE_CRED: credentials.share_cred,
             GROUP_CRED: credentials.group_cred,
             GROUP_NAME: credentials.group_name,
-            RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : null
+            RELAYS: credentials.relays || null
           };
         } else {
           // Check for 401 Unauthorized
@@ -207,14 +208,33 @@ const App: React.FC = () => {
       const savedShare = envVars.SHARE_CRED;
       const savedGroup = envVars.GROUP_CRED;
       const savedName = envVars.GROUP_NAME;
+      const savedRelays = envVars.RELAYS;
       
       if (savedShare && savedGroup) {
         console.log('Found saved credentials, setting signer data');
+        
+        // Handle relays - they're already an array from the API in database mode
+        let relaysArray: string[] | undefined;
+        if (savedRelays) {
+          if (isHeadless) {
+            // In headless mode, RELAYS is a JSON string
+            try {
+              relaysArray = JSON.parse(savedRelays);
+            } catch (error) {
+              console.warn('Failed to parse saved relays:', error);
+            }
+          } else {
+            // In database mode, relays is already an array
+            relaysArray = savedRelays;
+          }
+        }
+        
         // If we have saved credentials, go directly to Signer
         setSignerData({
           share: savedShare,
           groupCredential: savedGroup,
-          name: savedName || 'Saved Share'
+          name: savedName || 'Saved Share',
+          relays: relaysArray
         });
       } else {
         console.log('No saved credentials found');

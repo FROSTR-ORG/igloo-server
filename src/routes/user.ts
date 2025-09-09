@@ -6,7 +6,7 @@ import {
   deleteUserCredentials,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, binaryToHex } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
@@ -24,26 +24,12 @@ function getAuthSecret(auth: RequestAuth): { secret: string; isDerivedKey: boole
   
   const derivedKey = auth.getDerivedKey?.();
   if (derivedKey) {
-    // derivedKey should be a hex string, optionally prefixed with "0x"
-    if (typeof derivedKey !== 'string') {
-      console.warn('Invalid derivedKey type in getAuthSecret; expected hex string');
+    const hexString = binaryToHex(derivedKey);
+    if (!hexString) {
+      console.error('Failed to convert derivedKey to hex in getAuthSecret');
       return null;
     }
-    const hasPrefix = derivedKey.startsWith('0x') || derivedKey.startsWith('0X');
-    const normalizedNoPrefix = hasPrefix ? derivedKey.slice(2) : derivedKey;
-    if (normalizedNoPrefix.length === 0) {
-      console.warn('Invalid derivedKey value in getAuthSecret: empty after removing optional 0x prefix');
-      return null;
-    }
-    if (!/^[0-9a-fA-F]+$/.test(normalizedNoPrefix)) {
-      console.warn('Invalid derivedKey value in getAuthSecret: contains non-hex characters');
-      return null;
-    }
-    if (normalizedNoPrefix.length % 2 !== 0) {
-      console.warn('Invalid derivedKey value in getAuthSecret: hex length must be even');
-      return null;
-    }
-    return { secret: normalizedNoPrefix.toLowerCase(), isDerivedKey: true };
+    return { secret: hexString, isDerivedKey: true };
   }
   
   return null;
@@ -63,10 +49,30 @@ export async function handleUserRoute(
   if (!url.pathname.startsWith('/api/user')) return null;
 
   const corsHeaders = getSecureCorsHeaders(req);
+  // Merge Vary header from CORS with Authorization/Cookie and deduplicate.
+  // We spread CORS headers first, then assign the merged Vary so it wins.
+  const varyFromCors = (corsHeaders as any)?.['Vary'] ?? (corsHeaders as any)?.['vary'];
+  const mergedVary = (() => {
+    const base: string[] = ['Authorization', 'Cookie'];
+    if (typeof varyFromCors === 'string' && varyFromCors.length > 0) {
+      const parts = varyFromCors
+        .split(',')
+        .map((p: string) => p.trim())
+        .filter(Boolean);
+      for (const part of parts) if (!base.includes(part)) base.push(part);
+    }
+    return base.join(', ');
+  })();
+  const { Vary: _ignoreVary, vary: _ignorevary, ...corsWithoutVary } = corsHeaders as Record<string, string>;
   const headers = {
     'Content-Type': 'application/json',
-    'Cache-Control': 'no-store',
-    ...corsHeaders,
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    ...corsWithoutVary,
+    'Vary': mergedVary,
   };
 
   if (req.method === 'OPTIONS') {

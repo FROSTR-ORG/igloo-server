@@ -14,6 +14,24 @@ export function bytesToHex(input: Uint8Array | ArrayBuffer): string {
   return hex.join('');
 }
 
+/**
+ * Converts binary data (Uint8Array or Buffer) to a lowercase hex string.
+ * Returns null and logs a warning if input is invalid or empty.
+ */
+export function binaryToHex(data: Uint8Array | Buffer): string | null {
+  if (!(data instanceof Uint8Array) && !Buffer.isBuffer(data)) {
+    console.warn('Invalid binary data: expected Uint8Array or Buffer');
+    return null;
+  }
+  const bytes = data instanceof Uint8Array ? data : new Uint8Array(data);
+  if (bytes.length === 0) {
+    console.warn('Invalid binary data: empty array');
+    return null;
+  }
+  const hex = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+  return hex.toLowerCase();
+}
+
 // Helper function to get valid relay URLs
 export function getValidRelays(envRelays?: string): string[] {
   // Use single default relay as requested
@@ -70,13 +88,25 @@ export function getValidRelays(envRelays?: string): string[] {
 const ENV_FILE_PATH = '.env';
 
 // Security: Whitelist of allowed environment variable keys (for write/validation)
+// IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
 const ALLOWED_ENV_KEYS = new Set([
   'SHARE_CRED',         // Share credential for signing
   'GROUP_CRED',         // Group credential for signing
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
-  'SESSION_SECRET'      // Session secret for cookie signing (kept for write/validation only)
+  // Advanced settings - server configuration
+  'SESSION_TIMEOUT',    // Session timeout in seconds
+  'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
+  'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
+  'RATE_LIMIT_MAX',     // Maximum requests per window
+  'NODE_RESTART_DELAY', // Initial delay before node restart attempts
+  'NODE_MAX_RETRIES',   // Maximum node restart attempts
+  'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
+  'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
+  'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'ALLOWED_ORIGINS'     // CORS allowed origins configuration
+  // SESSION_SECRET explicitly excluded - must never be exposed via API
 ]);
 
 // Public environment variable keys that can be exposed through GET endpoints
@@ -84,14 +114,50 @@ const ALLOWED_ENV_KEYS = new Set([
 const PUBLIC_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
-  'CREDENTIALS_SAVED_AT' // Timestamp when credentials were last saved
+  'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  // Advanced settings - safe to expose for configuration UI
+  'SESSION_TIMEOUT',    // Session timeout in seconds
+  'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
+  'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
+  'RATE_LIMIT_MAX',     // Maximum requests per window
+  'NODE_RESTART_DELAY', // Initial delay before node restart attempts
+  'NODE_MAX_RETRIES',   // Maximum node restart attempts
+  'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
+  'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
+  'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'ALLOWED_ORIGINS'     // CORS allowed origins configuration
   // SESSION_SECRET, SHARE_CRED, GROUP_CRED explicitly excluded from public exposure
 ]);
 
+// Security hardening: forbid sensitive keys from ever being allowed or public
+const FORBIDDEN_ENV_KEYS = new Set(['SESSION_SECRET']);
+
+/**
+ * Asserts that no forbidden sensitive keys (e.g., SESSION_SECRET) are present
+ * in either the allowed or public environment key sets. This runs at module
+ * initialization to fail fast during startup if future edits accidentally
+ * include forbidden keys. Also exported for explicit startup checks/tests.
+ */
+export function assertNoSessionSecretExposure(): true {
+  for (const forbidden of FORBIDDEN_ENV_KEYS) {
+    if (ALLOWED_ENV_KEYS.has(forbidden) || PUBLIC_ENV_KEYS.has(forbidden)) {
+      throw new Error(
+        `SECURITY VIOLATION: Forbidden env key "${forbidden}" must never be included in ALLOWED_ENV_KEYS or PUBLIC_ENV_KEYS.`
+      );
+    }
+  }
+  return true;
+}
+
+// Execute the assertion at module initialization time
+assertNoSessionSecretExposure();
+
 // Validate environment variable keys against whitelist
 export function validateEnvKeys(keys: string[]): { validKeys: string[]; invalidKeys: string[] } {
-  const validKeys = keys.filter(key => ALLOWED_ENV_KEYS.has(key));
-  const invalidKeys = keys.filter(key => !ALLOWED_ENV_KEYS.has(key));
+  // Always reject forbidden keys, even if a future change mistakenly whitelists them
+  const sanitizedKeys = keys.filter(key => !FORBIDDEN_ENV_KEYS.has(key));
+  const validKeys = sanitizedKeys.filter(key => ALLOWED_ENV_KEYS.has(key));
+  const invalidKeys = keys.filter(key => !validKeys.includes(key));
   return { validKeys, invalidKeys };
 }
 
@@ -104,6 +170,11 @@ export function filterEnvObject(env: Record<string, string>): {
   const rejectedKeys: string[] = [];
   
   for (const [key, value] of Object.entries(env)) {
+    // Explicitly reject forbidden keys
+    if (FORBIDDEN_ENV_KEYS.has(key)) {
+      rejectedKeys.push(key);
+      continue;
+    }
     if (ALLOWED_ENV_KEYS.has(key)) {
       filteredEnv[key] = value;
     } else {
@@ -119,6 +190,10 @@ export function filterPublicEnvObject(env: Record<string, string>): Record<strin
   const publicEnv: Record<string, string> = {};
   
   for (const [key, value] of Object.entries(env)) {
+    if (FORBIDDEN_ENV_KEYS.has(key)) {
+      // Never expose forbidden keys, even if present in env
+      continue;
+    }
     if (PUBLIC_ENV_KEYS.has(key)) {
       publicEnv[key] = value;
     }
@@ -182,10 +257,12 @@ export async function readPublicEnvFile(): Promise<Record<string, string>> {
 function getEnvVarsFromProcess(): Record<string, string> {
   const envVars: Record<string, string> = {};
   
-  // Only include public environment variables (excludes SESSION_SECRET)
-  for (const key of PUBLIC_ENV_KEYS) {
+  // Include all allowed keys from process.env (but never forbidden),
+  // so HEADLESS deployments can inject secrets without a .env file.
+  for (const key of ALLOWED_ENV_KEYS) {
+    if (FORBIDDEN_ENV_KEYS.has(key)) continue;
     const value = process.env[key];
-    if (value) {
+    if (value !== undefined) {
       envVars[key] = value;
     }
   }

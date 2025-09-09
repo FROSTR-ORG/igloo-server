@@ -28,8 +28,8 @@ const createUserTable = () => {
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      salt TEXT NOT NULL,
+      password_hash TEXT NOT NULL,  -- Argon2id hash with embedded salt for authentication
+      salt TEXT NOT NULL,            -- Separate salt for PBKDF2 encryption key derivation (not for password)
       group_cred_encrypted TEXT,
       share_cred_encrypted TEXT,
       relays TEXT,
@@ -82,8 +82,10 @@ const KEY_LENGTH = 32; // 256 bits
 const PBKDF2_ITERATIONS = 200000; // Optimized for security and performance
 
 // Derive a key from password and salt using PBKDF2
-const deriveKey = (password: string, salt: string): Buffer => {
-  return pbkdf2Sync(password, salt, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256');
+const deriveKey = (password: string, saltHex: string): Buffer => {
+  // Convert hex-encoded salt to Buffer
+  const saltBuffer = Buffer.from(saltHex, 'hex');
+  return pbkdf2Sync(password, saltBuffer, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256');
 };
 
 // Encrypt text using AES-256-GCM (AEAD)
@@ -152,10 +154,10 @@ const decrypt = (ciphertext: string, key: string): string => {
 
 // User management functions
 export interface User {
-  id: number;
+  id: number | bigint;
   username: string;
-  password_hash: string;
-  salt: string;
+  password_hash: string;        // Argon2id hash with embedded salt for authentication
+  salt: string;                 // Encryption salt for PBKDF2 key derivation (NOT the password salt)
   group_cred_encrypted: string | null;
   share_cred_encrypted: string | null;
   relays: string | null;
@@ -172,7 +174,7 @@ export interface UserCredentials {
 }
 
 export interface AdminUserListItem {
-  id: number;
+  id: number | bigint;
   username: string;
   createdAt: string;
   hasCredentials: boolean;
@@ -193,13 +195,18 @@ export const createUser = async (
     // Hash password using Bun's built-in password API (defaults to Argon2id)
     const passwordHash = await BunPassword.hash(password, { algorithm: 'argon2id' });
     
-    // Insert user (salt is embedded in the hash for Argon2id/bcrypt)
+    // Insert user with dual-salt design:
+    // - password_hash: Contains Argon2id hash with embedded salt for authentication
+    // - salt: Separate salt for PBKDF2 encryption key derivation (stored plaintext by design)
     const stmt = db.query(`
       INSERT INTO users (username, password_hash, salt)
       VALUES (?, ?, ?)
     `);
     
-    // Generate a random salt for PBKDF2 key derivation (separate from Argon2id's internal salt)
+    // Generate encryption salt for PBKDF2 key derivation
+    // SECURITY NOTE: This salt is intentionally separate from Argon2id's embedded salt.
+    // Using different salts for authentication vs encryption is a security best practice.
+    // This salt must be stored in plaintext to enable credential decryption.
     const salt = randomBytes(32).toString('hex');
     stmt.run(username, passwordHash, salt);
     
@@ -228,6 +235,7 @@ export const authenticateUser = async (
     const user = db.query('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
     
     if (!user) {
+      // This is an expected auth failure, not an error
       return { success: false, error: 'Invalid credentials' };
     }
     
@@ -235,18 +243,34 @@ export const authenticateUser = async (
     const isValid = await BunPassword.verify(password, user.password_hash);
     
     if (!isValid) {
+      // This is an expected auth failure, not an error
       return { success: false, error: 'Invalid credentials' };
     }
     
     return { success: true, user };
-  } catch (error) {
-    console.error('Error authenticating user:', error);
+  } catch (error: any) {
+    // Check for actual database errors
+    if (error?.code === 'SQLITE_BUSY' || 
+        error?.code === 'SQLITE_LOCKED' || 
+        error?.code === 'SQLITE_IOERR' ||
+        error?.code === 'SQLITE_CORRUPT' ||
+        error?.code === 'SQLITE_FULL') {
+      // This is a real database error, re-throw it
+      console.error('Database error during authentication:', { 
+        code: error.code, 
+        message: error.message 
+      });
+      throw error;
+    }
+    
+    // For other errors (e.g., bcrypt errors), treat as auth failure
+    console.error('Unexpected error during authentication (treating as auth failure)');
     return { success: false, error: 'Authentication failed' };
   }
 };
 
 // Get user by ID
-export const getUserById = (userId: number): User | null => {
+export const getUserById = (userId: number | bigint): User | null => {
   try {
     const user = db.query('SELECT * FROM users WHERE id = ?').get(userId) as User | undefined;
     return user || null;
@@ -269,7 +293,7 @@ export const getUserByUsername = (username: string): User | null => {
 
 // Update user credentials (encrypted)
 export const updateUserCredentials = (
-  userId: number,
+  userId: number | bigint,
   credentials: Partial<UserCredentials>,
   passwordOrKey: string, // User's password or derived key for encryption
   isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
@@ -334,7 +358,7 @@ export const updateUserCredentials = (
 
 // Get decrypted user credentials
 export const getUserCredentials = (
-  userId: number,
+  userId: number | bigint,
   passwordOrKey: string, // User's password or derived key for decryption
   isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
 ): UserCredentials | null => {
@@ -377,7 +401,7 @@ export const getUserCredentials = (
 };
 
 // Check if a user has stored credentials (without needing password)
-export const userHasStoredCredentials = (userId: number): boolean => {
+export const userHasStoredCredentials = (userId: number | bigint): boolean => {
   try {
     const user = getUserById(userId);
     if (!user) return false;
@@ -406,7 +430,7 @@ export const anyUserHasStoredCredentials = (): boolean => {
 };
 
 // Delete user credentials
-export const deleteUserCredentials = (userId: number): boolean => {
+export const deleteUserCredentials = (userId: number | bigint): boolean => {
   try {
     const stmt = db.query(`
       UPDATE users 
@@ -456,10 +480,10 @@ export const getAllUsers = (): AdminUserListItem[] => {
 
 /**
  * Delete a user from the database
- * @param userId - The ID of the user to delete
+ * @param userId - The ID of the user to delete (supports both number and bigint)
  * @returns true if the user was deleted, false otherwise
  */
-export const deleteUser = (userId: number): boolean => {
+export const deleteUser = (userId: number | bigint): boolean => {
   try {
     const stmt = db.prepare('DELETE FROM users WHERE id = ?');
     stmt.run(userId);

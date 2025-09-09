@@ -1,7 +1,7 @@
 import type { RequestAuth } from './types.js';
 
 // WeakMap for storing sensitive data that won't be enumerable or serializable
-const secretStorage = new WeakMap<RequestAuth, { password?: string; derivedKey?: string }>();
+const secretStorage = new WeakMap<RequestAuth, { password?: string; derivedKey?: Uint8Array }>();
 
 /**
  * Creates a RequestAuth object with secure ephemeral storage for sensitive data.
@@ -12,7 +12,7 @@ export function createRequestAuth(params: {
   userId?: string | number | bigint;
   authenticated: boolean;
   password?: string;
-  derivedKey?: string;
+  derivedKey?: string | null; // Accept hex string; preserve null from converters
 }): RequestAuth {
   const auth: RequestAuth = {
     userId: params.userId,
@@ -21,14 +21,23 @@ export function createRequestAuth(params: {
 
   // Store secrets in WeakMap if provided
   if (params.password || params.derivedKey) {
-    const secrets: { password?: string; derivedKey?: string } = {};
+    const secrets: { password?: string; derivedKey?: Uint8Array } = {};
     
     if (params.password) {
       secrets.password = params.password;
     }
     
     if (params.derivedKey) {
-      secrets.derivedKey = params.derivedKey;
+      // Convert validated hex string to Uint8Array for binary storage
+      const trimmed = params.derivedKey.trim();
+      const hexKey = trimmed.replace(/^0x/i, '');
+      if (hexKey.length === 0) throw new Error('Invalid derivedKey: empty hex string');
+      if (hexKey.length !== 64) throw new Error('Invalid derivedKey: expected 64 hex characters for 32-byte key');
+      if (hexKey.length % 2 !== 0) throw new Error('Invalid derivedKey: hex length must be even');
+      if (!/^[0-9a-fA-F]+$/.test(hexKey)) throw new Error('Invalid derivedKey: non-hex characters present');
+
+      const buffer = Buffer.from(hexKey, 'hex');
+      secrets.derivedKey = new Uint8Array(buffer);
     }
     
     secretStorage.set(auth, secrets);
@@ -60,7 +69,7 @@ export function createRequestAuth(params: {
         enumerable: false,
         configurable: false,
         writable: false,
-        value: (): string | undefined => {
+        value: (): Uint8Array | undefined => {
           const secrets = secretStorage.get(auth);
           if (secrets?.derivedKey !== undefined) {
             const derivedKey = secrets.derivedKey;

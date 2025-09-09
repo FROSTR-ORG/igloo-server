@@ -1,5 +1,15 @@
 # Igloo Server Environment Variables Reference
 
+## ⚠️ CRITICAL SECURITY NOTE
+
+**SESSION_SECRET must NEVER be exposed via any API endpoint**. It is strictly server-only and is explicitly excluded from:
+- All API read operations (GET endpoints)
+- All API write operations (POST/PUT/DELETE endpoints)
+- The ALLOWED_ENV_KEYS whitelist
+- The PUBLIC_ENV_KEYS set
+
+This secret is automatically generated and stored in a secure file with restricted permissions (0600). Any attempt to expose SESSION_SECRET via API would compromise the entire session security model.
+
 ## Overview
 
 Igloo Server operates in two distinct modes with different environment variable usage patterns. This document provides a comprehensive reference for all environment variables and their behavior across both operation modes.
@@ -54,7 +64,7 @@ Igloo Server operates in two distinct modes with different environment variable 
 | `API_KEY` | API authentication key | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
 | `BASIC_AUTH_USER` | Basic auth username | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
 | `BASIC_AUTH_PASS` | Basic auth password | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
-| `SESSION_SECRET` | Session signing key | Auto-generated in `data/.session-secret` | Auto-generated in `{DB_PATH}/.session-secret` | Auto-generated | Different file locations |
+| `SESSION_SECRET` | Session signing key (⚠️ NEVER exposed via API) | Auto-generated in `data/.session-secret` | Auto-generated in `{DB_PATH}/.session-secret` | Auto-generated | Server-only, excluded from all API operations |
 | `SESSION_TIMEOUT` | Session expiration (seconds) | Same behavior | Same behavior | `3600` | `src/routes/auth.ts:104` |
 
 ### Rate Limiting
@@ -145,12 +155,16 @@ function getSessionSecretDir(): string {
 
 ### 4. API Endpoint Access Control
 
+**CRITICAL SECURITY NOTE**: `SESSION_SECRET` must NEVER be exposed via any API endpoint. It is strictly server-only and excluded from all API read/write operations.
+
 **Environment Variables API** (`src/routes/utils.ts`):
 ```typescript
 // Allowed for modification via /api/env endpoints
+// SESSION_SECRET is explicitly EXCLUDED - it's server-only
 const ALLOWED_ENV_KEYS = new Set([
   'SHARE_CRED', 'GROUP_CRED', 'RELAYS', 'GROUP_NAME',
-  'CREDENTIALS_SAVED_AT', 'SESSION_SECRET'
+  'CREDENTIALS_SAVED_AT'
+  // SESSION_SECRET must NEVER be included here
 ]);
 
 // Exposed via GET endpoints (security filtered)

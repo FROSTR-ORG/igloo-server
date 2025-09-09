@@ -17,6 +17,7 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
   
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-store', // Prevent caching of sensitive recovery operations
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
@@ -31,8 +32,7 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
   // Key recovery is a sensitive operation that requires authentication
   if (AUTH_CONFIG.ENABLED) {
     // Use provided auth if available, otherwise authenticate the request
-    const authCandidate = _auth ?? authenticate(req);
-    const authToUse: RequestAuth | null = authCandidate ?? null;
+    const authToUse: RequestAuth | null = _auth !== undefined ? _auth : await authenticate(req);
     
     if (!authToUse || !authToUse.authenticated) {
       context.addServerLog('warn', `Unauthorized key recovery attempt from ${req.headers.get('x-forwarded-for') || 'unknown'}`);

@@ -68,7 +68,7 @@ wscat -c ws://localhost:8002/api/events
 
 ### Core Components
 
-1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests. Uses dynamic imports for the database module so HEADLESS builds don’t include DB code.
+1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests. Uses dynamic imports for the database module (though DB code is still bundled due to static imports elsewhere, initialization is skipped in HEADLESS mode).
 2. **Bifrost Node**: Core logic in `src/node/manager.ts` handles the FROSTR signing node with health monitoring and auto-restart. The routes in `src/routes/node-manager.ts` expose this functionality via API endpoints.
 3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
 4. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status, user, onboarding
@@ -82,7 +82,7 @@ wscat -c ws://localhost:8002/api/events
 - **Exponential Backoff**: Progressive retry delays for connection failures
 - **Session Management**: Secure cookie-based sessions with configurable auth methods
 - **Static File Caching**: Different strategies for dev (no cache) vs production (aggressive cache)
-- **Auth Factory Pattern**: Secure ephemeral storage using WeakMaps (`src/routes/auth-factory.ts:1-80`)
+- **Auth Factory Pattern**: Secure ephemeral storage using WeakMaps (`src/routes/auth-factory.ts`)
   - Prevents secret leakage through spread/JSON/structuredClone operations
   - Auto-clears sensitive data after first access
   - Non-enumerable getter functions for password and derivedKey
@@ -90,7 +90,7 @@ wscat -c ws://localhost:8002/api/events
 ### Node Restart System
 
 **Main Restart**: Handles manual restarts with exponential backoff
-- Configuration validated in `src/server.ts:21-52`
+- Configuration validated in `src/server.ts`
 - Environment variables with safe defaults:
   - `NODE_RESTART_DELAY`: Initial delay (default: 30000ms, max: 1 hour)
   - `NODE_MAX_RETRIES`: Max attempts (default: 5, max: 100)
@@ -99,12 +99,12 @@ wscat -c ws://localhost:8002/api/events
 
 ### Connectivity Monitoring & Idle Handling
 
-- **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds (`src/node/manager.ts:34-36`)
+- **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds (`src/node/manager.ts`)
 - **Simple monitoring**: Single 60-second check interval for relay connectivity
 - **Auto-recovery**: Recreates node after 3 consecutive connectivity failures
 - **Null node handling**: Treats null nodes as failures to ensure recovery mechanisms activate
 - **Self-ping detection**: Filters self-pings by comparing normalized pubkeys
-- **Race-condition safe**: Uses `withTimeout` helper (`src/node/manager.ts:46-61`) to prevent stray timer callbacks
+- **Race-condition safe**: Uses `withTimeout` helper to prevent stray timer callbacks
 - **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
@@ -141,11 +141,12 @@ Key files:
 - **Direct credential storage** in `GROUP_CRED` and `SHARE_CRED`
 - **Backward compatible** with existing deployments
 - **Node starts at server startup** if credentials present
+- **Database code bundling**: Note that database modules are still included in the built bundle even when HEADLESS=true. Static imports in route files and the dynamic import in server.ts cause database code to be bundled, but database initialization is skipped at runtime when HEADLESS=true (modules are present but not executed).
 
 Environment variables:
-- `ADMIN_SECRET` - Required for initial database mode setup
+- `ADMIN_SECRET` - Required for initial database mode setup (runtime initialization skipped in headless)
 - `HEADLESS` - Controls operation mode (default: false)
-- `DB_PATH` - Database storage location (default: ./data)
+- `DB_PATH` - Database storage location (default: ./data, unused in headless mode at runtime)
 - `GROUP_CRED` - FROSTR group credential (headless mode only)
 - `SHARE_CRED` - Your secret share (headless mode only)
 
@@ -197,6 +198,7 @@ Environment variables:
    - Database users have persistent salts for consistent key derivation
    - Environment auth users receive ephemeral session-specific salts
    - Timing-safe authentication prevents timing attacks
+   - SESSION_SECRET must NEVER be exposed via API endpoints
 
 ## Release Workflow
 
@@ -216,7 +218,7 @@ bun run release:major
 ```
 
 ### Release Process Steps
-1. **Pre-checks** (`scripts/release.sh:1-122`):
+1. **Pre-checks** (`scripts/release.sh`):
    - Must be on `dev` branch
    - Working directory must be clean
    - Port 8002 must be available
@@ -234,8 +236,8 @@ bun run release:major
    - Actions create GitHub release with changelog
 
 ### Error Recovery
-- Server cleanup handled by trap (`scripts/release.sh:47-53`)
-- Rollback procedure documented in `llm/workflows/RELEASE_PROCESS.md:337-351`
+- Server cleanup handled by trap in release script
+- Rollback procedure documented in `llm/workflows/RELEASE_PROCESS.md`
 
 ## Troubleshooting Common Issues
 
@@ -259,6 +261,22 @@ bun run release:major
 - **Solution**: `lsof -i :8002` to find process, then `kill <PID>`
 - **Problem**: Server health check fails
 - **Solution**: Check credentials are valid, verify build completed
+
+## Environment Variable Whitelisting
+
+**Critical Security**: `SESSION_SECRET` must NEVER be exposed via API endpoints. It's excluded from:
+- `ALLOWED_ENV_KEYS` (`src/routes/utils.ts`) - Can't be modified via API
+- `PUBLIC_ENV_KEYS` (`src/routes/utils.ts`) - Can't be read via API
+- Auto-generated and stored in `data/.session-secret` if not provided
+
+**API-Modifiable Variables** (`ALLOWED_ENV_KEYS`):
+- `SHARE_CRED`, `GROUP_CRED` (headless mode only)
+- `RELAYS`, `GROUP_NAME`
+- `CREDENTIALS_SAVED_AT`
+
+**Publicly Readable Variables** (`PUBLIC_ENV_KEYS`):
+- `RELAYS`, `GROUP_NAME`, `CREDENTIALS_SAVED_AT`
+- Excludes all sensitive credentials
 
 ## Dependencies
 
