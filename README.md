@@ -716,7 +716,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | **Mode Selection** | | | |
 | `HEADLESS` | Enable headless mode (env-based config) | `false` | ❌ |
 | **Database Mode** | | | |
-| `ADMIN_SECRET` | Admin secret for initial setup | - | ✅ (First setup) |
+| `ADMIN_SECRET` | Admin secret for initial setup | - | Optional (enforced if set) |
 | `DB_PATH` | Database storage location | `./data` | ❌ |
 | **Headless Mode** | | | |
 | `GROUP_CRED` | FROSTR group credential | - | ✅ (Headless) |

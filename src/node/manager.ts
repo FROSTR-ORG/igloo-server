@@ -965,7 +965,17 @@ export async function createNodeWithCredentials(
           // Perform initial connectivity check and await completion to avoid startup races
           if (addServerLog) {
             try {
-              const initialDelay = parseInt(process.env.INITIAL_CONNECTIVITY_DELAY || '5000', 10);
+              // Validate INITIAL_CONNECTIVITY_DELAY environment variable
+              let initialDelay = 5000; // Safe default
+              const envValue = process.env.INITIAL_CONNECTIVITY_DELAY;
+              if (envValue) {
+                const parsed = parseInt(envValue, 10);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                  initialDelay = parsed;
+                } else {
+                  addServerLog('warning', `Invalid INITIAL_CONNECTIVITY_DELAY value: "${envValue}". Using default: ${initialDelay}ms`);
+                }
+              }
               await new Promise(resolve => setTimeout(resolve, initialDelay));
               const isConnected = await checkRelayConnectivity(node, addServerLog);
               addServerLog('info', `Initial connectivity check: ${isConnected ? 'PASSED' : 'FAILED'}`);

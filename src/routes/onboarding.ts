@@ -61,6 +61,52 @@ async function addUniformDelay(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, UNIFORM_DELAY_MS));
 }
 
+/**
+ * Extracts client IP from request headers.
+ * Checks x-forwarded-for, x-real-ip, then falls back to 'unknown'.
+ */
+function getClientIp(req: Request): string {
+  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
+         req.headers.get('x-real-ip') || 
+         'unknown';
+}
+
+/**
+ * Checks if the request should be rate limited based on client IP.
+ * Uses the adminLimiter Map to track attempts per IP.
+ * @param context - RouteContext (included for consistency, uses local state)
+ * @param req - The incoming request
+ * @returns true if the request should be rate limited, false otherwise
+ */
+async function checkPerIpRateLimit(context: RouteContext, req: Request): Promise<boolean> {
+  const clientIp = getClientIp(req);
+  const now = Date.now();
+  
+  // Prune expired entries proactively
+  removeExpiredAdminLimiterEntries(now);
+
+  let limiterEntry = adminLimiter.get(clientIp);
+  
+  if (limiterEntry) {
+    if (now >= limiterEntry.resetAt) {
+      // Window expired on access: delete the stale entry, then treat as first attempt
+      adminLimiter.delete(clientIp);
+      limiterEntry = undefined;
+    } else if (limiterEntry.count >= MAX_ATTEMPTS_PER_WINDOW) {
+      // Rate limit exceeded
+      return true;
+    } else {
+      // Still within the window, increment count
+      limiterEntry.count++;
+      return false;
+    }
+  }
+  
+  // First attempt from this IP or expired entry was deleted
+  adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+  return false;
+}
+
 // Uniform error response for all authentication failures
 const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
 
@@ -264,39 +310,12 @@ export async function handleOnboardingRoute(
           await addUniformDelay();
           
           // Apply rate limiting for admin validation
-          const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
-                          req.headers.get('x-real-ip') || 
-                          'unknown';
-          
-          const now = Date.now();
-          // Prune expired entries proactively
-          removeExpiredAdminLimiterEntries(now);
-
-          let limiterEntry = adminLimiter.get(clientIp);
-          
-          if (limiterEntry) {
-            if (now >= limiterEntry.resetAt) {
-              // Window expired on access: delete the stale entry, then treat as first attempt
-              adminLimiter.delete(clientIp);
-              limiterEntry = undefined;
-            } else if (limiterEntry.count >= MAX_ATTEMPTS_PER_WINDOW) {
-              // Rate limit exceeded
-              return Response.json(
-                UNIFORM_AUTH_ERROR,
-                { status: 401, headers }
-              );
-            } else {
-              // Still within the window, increment count
-              limiterEntry.count++;
-            }
-          } else {
-            // First attempt from this IP
-            adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-          }
-
-          // If we deleted due to expiry above, initialize a fresh window now
-          if (!limiterEntry) {
-            adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+          const rateLimited = await checkPerIpRateLimit(_context, req);
+          if (rateLimited) {
+            return Response.json(
+              UNIFORM_AUTH_ERROR,
+              { status: 401, headers }
+            );
           }
           
           // Check if already initialized
@@ -345,16 +364,14 @@ export async function handleOnboardingRoute(
           // Add uniform delay to all responses
           await addUniformDelay();
           
-          // TODO: Add rate limiting here once perIpLimiter is available in RouteContext
-          // This would prevent brute force attacks on admin secret validation
-          // Example implementation:
-          // if (context.perIpLimiter) {
-          //   const clientIp = context.clientIp || 'unknown';
-          //   const limited = await context.perIpLimiter.check(clientIp);
-          //   if (limited) {
-          //     return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
-          //   }
-          // }
+          // Apply rate limiting for setup endpoint
+          const rateLimited = await checkPerIpRateLimit(_context, req);
+          if (rateLimited) {
+            return Response.json(
+              UNIFORM_AUTH_ERROR,
+              { status: 401, headers }
+            );
+          }
           
           // Check if already initialized
           let initialized = false;

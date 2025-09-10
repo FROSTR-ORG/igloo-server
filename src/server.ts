@@ -118,6 +118,7 @@ if (!CONST.HEADLESS) {
   // After initial setup, admin operations are protected by user authentication
   // The ADMIN_SECRET is intentionally not required for normal operations to prevent
   // it from being stored in production environments after setup
+  const isSecretInvalid = !CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'REQUIRED_ADMIN_SECRET_NOT_SET';
   try {
     if (!dbModule) {
       throw new Error('Database module is not loaded');
@@ -126,18 +127,20 @@ if (!CONST.HEADLESS) {
     const initialized = dbModule.isDatabaseInitialized();
     
     if (!initialized) {
-      if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
-        console.error('❌ ADMIN_SECRET is required for initial setup (database uninitialized).');
-        console.error('   Generate a secure secret with: openssl rand -hex 32');
-        console.error('   Then, set it in your .env file or as an environment variable.');
+      if (isSecretInvalid) {
+        console.error('❌ ADMIN_SECRET is not set or is invalid for initial setup.');
+        console.error('   A secure ADMIN_SECRET is required when the database is uninitialized.');
+        console.error('   1. Generate a secure secret: openssl rand -hex 32');
+        console.error('   2. Set it in your .env file or as an environment variable.');
         process.exit(1);
       }
     }
   } catch (err) {
     console.error('❌ Error checking database initialization state:', err instanceof Error ? err.message : String(err));
     // Treat errors as "not initialized" to enforce onboarding
-    if (!CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'your-secure-admin-secret-here') {
-      console.error('   Database check failed - ADMIN_SECRET required for recovery.');
+    if (isSecretInvalid) {
+      console.error('   Database check failed, and ADMIN_SECRET is not set or is invalid.');
+      console.error('   A secure ADMIN_SECRET is required for recovery or initial setup.');
       process.exit(1);
     }
   }

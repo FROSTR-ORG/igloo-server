@@ -213,20 +213,40 @@ const App: React.FC = () => {
       if (savedShare && savedGroup) {
         console.log('Found saved credentials, setting signer data');
         
-        // Handle relays - they're already an array from the API in database mode
-        let relaysArray: string[] | undefined;
-        if (savedRelays) {
-          if (isHeadless) {
-            // In headless mode, RELAYS is a JSON string
-            try {
-              relaysArray = JSON.parse(savedRelays);
-            } catch (error) {
-              console.warn('Failed to parse saved relays:', error);
+        // Handle relays defensively - can be null, undefined, string, array, or other types
+        let relaysArray: string[] = [];
+        
+        if (savedRelays == null) {
+          // null or undefined - use empty array
+          relaysArray = [];
+        } else if (typeof savedRelays === 'string') {
+          // String - attempt to parse as JSON
+          try {
+            const parsed = JSON.parse(savedRelays);
+            if (Array.isArray(parsed)) {
+              // Validate array contents - filter to only string elements
+              relaysArray = parsed.filter(item => typeof item === 'string');
+              if (relaysArray.length !== parsed.length) {
+                console.warn('Some relay entries were not strings and were filtered out');
+              }
+            } else {
+              console.warn('Parsed relays is not an array, using empty array instead:', typeof parsed);
+              relaysArray = [];
             }
-          } else {
-            // In database mode, relays is already an array
-            relaysArray = savedRelays;
+          } catch (error) {
+            console.warn('Failed to parse relay string as JSON, using empty array:', error);
+            relaysArray = [];
           }
+        } else if (Array.isArray(savedRelays)) {
+          // Already an array - validate contents
+          relaysArray = savedRelays.filter(item => typeof item === 'string');
+          if (relaysArray.length !== savedRelays.length) {
+            console.warn('Some relay entries were not strings and were filtered out');
+          }
+        } else {
+          // Any other type - log warning and use empty array
+          console.warn('Unexpected relay type, using empty array. Type:', typeof savedRelays, 'Value:', savedRelays);
+          relaysArray = [];
         }
         
         // If we have saved credentials, go directly to Signer
@@ -234,7 +254,7 @@ const App: React.FC = () => {
           share: savedShare,
           groupCredential: savedGroup,
           name: savedName || 'Saved Share',
-          relays: relaysArray
+          relays: relaysArray.length > 0 ? relaysArray : undefined
         });
       } else {
         console.log('No saved credentials found');
