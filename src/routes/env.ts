@@ -4,8 +4,7 @@ import {
   writeEnvFile, 
   filterPublicEnvObject, 
   validateEnvKeys, 
-  getSecureCorsHeaders,
-  binaryToHex
+  getSecureCorsHeaders
 } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
@@ -174,7 +173,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             // Database mode - return empty or user's credentials if available
             if (auth?.authenticated && typeof auth.userId === 'number') {
               // Use secure getters to access sensitive data
-              let secret: string | null = null;
+              let secret: string | Uint8Array | null = null;
               let isDerivedKey = false;
               
               // Try to get password first (direct auth) - only use secure getter
@@ -186,9 +185,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 // Try to get derived key (session auth) - only use secure getter
                 const derivedKey = auth.getDerivedKey?.();
                 if (!derivedKey) return Response.json({}, { headers });
-                const hex = binaryToHex(derivedKey);
-                if (!hex) return Response.json({}, { headers });
-                secret = hex;
+                // Keep binary; database layer will accept binary and convert as needed
+                secret = derivedKey;
                 isDerivedKey = true;
               }
               

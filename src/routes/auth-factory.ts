@@ -1,7 +1,7 @@
 import type { RequestAuth } from './types.js';
 
 // WeakMap for storing sensitive data that won't be enumerable or serializable
-const secretStorage = new WeakMap<RequestAuth, { password?: string; derivedKey?: Uint8Array }>();
+const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array }>();
 
 /**
  * Creates a RequestAuth object with secure ephemeral storage for sensitive data.
@@ -11,8 +11,7 @@ const secretStorage = new WeakMap<RequestAuth, { password?: string; derivedKey?:
 export function createRequestAuth(params: {
   userId?: string | number | bigint;
   authenticated: boolean;
-  password?: string;
-  derivedKey?: string | null; // Accept hex string; preserve null from converters
+  derivedKey?: Uint8Array | Buffer | string | null; // Accept binary or hex string derived key
 }): RequestAuth {
   const auth: RequestAuth = {
     userId: params.userId,
@@ -20,48 +19,32 @@ export function createRequestAuth(params: {
   };
 
   // Store secrets in WeakMap if provided
-  if (params.password || params.derivedKey) {
-    const secrets: { password?: string; derivedKey?: Uint8Array } = {};
-    
-    if (params.password) {
-      secrets.password = params.password;
-    }
+  if (params.derivedKey) {
+    const secrets: { derivedKey?: Uint8Array } = {};
     
     if (params.derivedKey) {
-      // Convert validated hex string to Uint8Array for binary storage
-      const trimmed = params.derivedKey.trim();
-      const hexKey = trimmed.replace(/^0x/i, '');
-      if (hexKey.length === 0) throw new Error('Invalid derivedKey: empty hex string');
-      if (hexKey.length !== 64) throw new Error('Invalid derivedKey: expected 64 hex characters for 32-byte key');
-      if (hexKey.length % 2 !== 0) throw new Error('Invalid derivedKey: hex length must be even');
-      if (!/^[0-9a-fA-F]+$/.test(hexKey)) throw new Error('Invalid derivedKey: non-hex characters present');
-
-      const buffer = Buffer.from(hexKey, 'hex');
-      secrets.derivedKey = new Uint8Array(buffer);
+      const input = params.derivedKey as Uint8Array | Buffer | string;
+      let bytes: Uint8Array;
+      if (typeof input === 'string') {
+        const trimmed = input.trim();
+        const hexKey = trimmed.replace(/^0x/i, '');
+        if (hexKey.length === 0) throw new Error('Invalid derivedKey: empty hex string');
+        if (hexKey.length % 2 !== 0) throw new Error('Invalid derivedKey: hex length must be even');
+        if (!/^[0-9a-fA-F]+$/.test(hexKey)) throw new Error('Invalid derivedKey: non-hex characters present');
+        // Expect 32-byte key (64 hex chars)
+        if (hexKey.length !== 64) throw new Error('Invalid derivedKey: expected 64 hex characters for 32-byte key');
+        const buffer = Buffer.from(hexKey, 'hex');
+        bytes = new Uint8Array(buffer);
+      } else {
+        // Normalize to Uint8Array and defensively copy
+        const normalized = input instanceof Uint8Array ? input : new Uint8Array(input);
+        if (normalized.length === 0) throw new Error('Invalid derivedKey: empty binary data');
+        bytes = new Uint8Array(normalized);
+      }
+      secrets.derivedKey = bytes;
     }
     
     secretStorage.set(auth, secrets);
-    
-    // Add secure getter for password that clears after access
-    if (params.password) {
-      Object.defineProperty(auth, 'getPassword', {
-        enumerable: false,
-        configurable: false,
-        writable: false,
-        value: (): string | undefined => {
-          const secrets = secretStorage.get(auth);
-          if (secrets?.password !== undefined) {
-            const password = secrets.password;
-            delete secrets.password;
-            if (!secrets.password && !secrets.derivedKey) {
-              secretStorage.delete(auth);
-            }
-            return password;
-          }
-          return undefined;
-        },
-      });
-    }
     
     // Add secure getter for derivedKey that clears after access
     if (params.derivedKey) {
@@ -74,9 +57,8 @@ export function createRequestAuth(params: {
           if (secrets?.derivedKey !== undefined) {
             const derivedKey = secrets.derivedKey;
             delete secrets.derivedKey;
-            if (!secrets.password && !secrets.derivedKey) {
-              secretStorage.delete(auth);
-            }
+            // Clean up the WeakMap entry since no secrets remain
+            secretStorage.delete(auth);
             return derivedKey;
           }
           return undefined;

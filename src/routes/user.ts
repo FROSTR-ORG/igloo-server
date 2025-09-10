@@ -6,7 +6,7 @@ import {
   deleteUserCredentials,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, binaryToHex } from './utils.js';
+import { getSecureCorsHeaders } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
@@ -15,7 +15,7 @@ import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
  * Returns a string secret for encryption/decryption and whether it's a derived key.
  * Uses secure getters to access sensitive data that clears after first access.
  */
-function getAuthSecret(auth: RequestAuth): { secret: string; isDerivedKey: boolean } | null {
+function getAuthSecret(auth: RequestAuth): { secret: string | Uint8Array; isDerivedKey: boolean } | null {
   // Only use secure getters - no fallback to direct access
   const password = auth.getPassword?.();
   if (typeof password === 'string' && password.length > 0) {
@@ -23,14 +23,7 @@ function getAuthSecret(auth: RequestAuth): { secret: string; isDerivedKey: boole
   }
   
   const derivedKey = auth.getDerivedKey?.();
-  if (derivedKey) {
-    const hexString = binaryToHex(derivedKey);
-    if (!hexString) {
-      console.error('Failed to convert derivedKey to hex in getAuthSecret');
-      return null;
-    }
-    return { secret: hexString, isDerivedKey: true };
-  }
+  if (derivedKey) return { secret: derivedKey, isDerivedKey: true };
   
   return null;
 }

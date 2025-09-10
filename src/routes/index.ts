@@ -32,7 +32,7 @@ import {
   authenticate,
   checkRateLimit 
 } from './auth.js';
-import { getSecureCorsHeaders, binaryToHex } from './utils.js';
+import { getSecureCorsHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
 
 // Unified router function
@@ -197,8 +197,7 @@ export async function handleRequest(
     authInfo = createRequestAuth({
       userId: authResult.userId,
       authenticated: true,
-      password: authResult.password,
-      derivedKey: authResult.derivedKey ? binaryToHex(authResult.derivedKey) : undefined
+      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
     });
   } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
     // Special handling for /api/status: attempt authentication if headers are present
@@ -212,8 +211,7 @@ export async function handleRequest(
         authInfo = createRequestAuth({
           userId: authResult.userId,
           authenticated: true,
-          password: authResult.password,
-          derivedKey: authResult.derivedKey ? binaryToHex(authResult.derivedKey) : undefined
+          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
         });
       }
       // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)

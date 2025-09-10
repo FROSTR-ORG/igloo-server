@@ -6,7 +6,7 @@ import {
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
-import { readEnvFile, getSecureCorsHeaders, binaryToHex } from './utils.js';
+import { readEnvFile, getSecureCorsHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
 
@@ -28,17 +28,13 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
     const derivedKey = auth?.getDerivedKey?.();
     
     if (auth?.authenticated && typeof auth.userId === 'number' && (password || derivedKey)) {
-      let secret: string | null = null;
+      let secret: string | Uint8Array | null = null;
       let isDerivedKey = false;
       if (password) {
         secret = password;
       } else if (derivedKey != null) {
-        const hexString = binaryToHex(derivedKey);
-        if (!hexString) {
-          console.error('Failed to convert derivedKey to hex in getCredentials (peers)');
-          return null;
-        }
-        secret = hexString;
+        // Keep binary and let DB layer convert/validate
+        secret = derivedKey;
         isDerivedKey = true;
       }
       if (!secret) return null;

@@ -295,20 +295,28 @@ export const getUserByUsername = (username: string): User | null => {
 export const updateUserCredentials = (
   userId: number | bigint,
   credentials: Partial<UserCredentials>,
-  passwordOrKey: string, // User's password or derived key for encryption
-  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
+  passwordOrKey: string | Uint8Array | Buffer, // User's password or derived key for encryption
+  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key (accepts hex string or binary)
 ): boolean => {
   try {
     const user = getUserById(userId);
     if (!user) return false;
     
     // Get encryption key - either derive from password or use provided derived key
-    if (isDerivedKey && !passwordOrKey.match(/^[0-9a-f]{64}$/i)) {
-      throw new Error('Invalid derived key format');
+    let key: string;
+    if (isDerivedKey) {
+      if (typeof passwordOrKey === 'string') {
+        if (!passwordOrKey.match(/^[0-9a-f]{64}$/i)) throw new Error('Invalid derived key format');
+        key = passwordOrKey.toLowerCase();
+      } else {
+        const bytes = passwordOrKey instanceof Uint8Array ? passwordOrKey : new Uint8Array(passwordOrKey);
+        if (bytes.length !== 32) throw new Error('Invalid derived key length: expected 32 bytes');
+        key = Buffer.from(bytes).toString('hex');
+      }
+    } else {
+      if (typeof passwordOrKey !== 'string') throw new Error('Password must be a string');
+      key = deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     }
-    const key = isDerivedKey 
-      ? passwordOrKey // Already a derived key from session (hex string)
-      : deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     
     // Prepare update fields
     const updates: string[] = [];
@@ -359,20 +367,28 @@ export const updateUserCredentials = (
 // Get decrypted user credentials
 export const getUserCredentials = (
   userId: number | bigint,
-  passwordOrKey: string, // User's password or derived key for decryption
-  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key
+  passwordOrKey: string | Uint8Array | Buffer, // User's password or derived key for decryption
+  isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key (accepts hex string or binary)
 ): UserCredentials | null => {
   try {
     const user = getUserById(userId);
     if (!user) return null;
     
     // Get decryption key - either derive from password or use provided derived key
-    if (isDerivedKey && !passwordOrKey.match(/^[0-9a-f]{64}$/i)) {
-      throw new Error('Invalid derived key format');
+    let key: string;
+    if (isDerivedKey) {
+      if (typeof passwordOrKey === 'string') {
+        if (!passwordOrKey.match(/^[0-9a-f]{64}$/i)) throw new Error('Invalid derived key format');
+        key = passwordOrKey.toLowerCase();
+      } else {
+        const bytes = passwordOrKey instanceof Uint8Array ? passwordOrKey : new Uint8Array(passwordOrKey);
+        if (bytes.length !== 32) throw new Error('Invalid derived key length: expected 32 bytes');
+        key = Buffer.from(bytes).toString('hex');
+      }
+    } else {
+      if (typeof passwordOrKey !== 'string') throw new Error('Password must be a string');
+      key = deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     }
-    const key = isDerivedKey 
-      ? passwordOrKey // Already a derived key from session (hex string)
-      : deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
     
     // Decrypt credentials
     const groupCred = user.group_cred_encrypted ? decrypt(user.group_cred_encrypted, key) : null;

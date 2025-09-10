@@ -261,7 +261,6 @@ export interface AuthResult {
   userId?: string | number | bigint; // Support string, number, and bigint IDs
   error?: string;
   rateLimited?: boolean;
-  password?: string; // Still returned for immediate use, but not stored
   derivedKey?: Uint8Array; // Derived key for decryption operations (binary)
 }
 
@@ -727,7 +726,6 @@ export function requireAuth(handler: Function) {
     // Note: Auth should be passed as explicit parameter, not mutating context
     // Create auth info to pass to handler
     // Store sensitive values that will be cleared after first access
-    let password = authResult.password;
     let derivedKey = authResult.derivedKey;
     
     const authInfo = {
@@ -736,13 +734,7 @@ export function requireAuth(handler: Function) {
       // Removed direct storage of sensitive data to prevent exposure
       // Use secure getter functions instead
       
-      // Secure getter functions that clear sensitive data after first access
-      getPassword(): string | undefined {
-        const value = password;
-        password = undefined; // Clear after access
-        return value;
-      },
-      
+      // Secure getter function that clears sensitive data after first access
       getDerivedKey(): Uint8Array | undefined {
         const value = derivedKey;
         derivedKey = undefined; // Clear after access

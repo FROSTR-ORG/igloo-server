@@ -295,8 +295,8 @@ accordion-up: height content-height to 0 (200ms ease-out)
 ### Custom Utility Classes
 
 ```css
-/* Igloo-specific utility classes */
-@layer utilities {
+/* Igloo-specific utility classes (defined in frontend/styles.css) */
+@layer components {
   .igloo-card {
     @apply bg-gray-800/50 border border-blue-900/30 rounded-lg;
   }
