@@ -8,7 +8,6 @@ import {
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
 import { readEnvFile, getSecureCorsHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
-import { getUserCredentials } from '../db/database.js';
 
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
@@ -28,6 +27,9 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
     const derivedKey = auth?.getDerivedKey?.();
     
     if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint') && (password || derivedKey)) {
+      // Dynamic import to avoid bundling DB code in headless builds
+      const { getUserCredentials } = await import('../db/database.js');
+      
       let secret: string | Uint8Array | null = null;
       let isDerivedKey = false;
       if (password) {

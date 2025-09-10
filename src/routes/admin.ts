@@ -15,7 +15,7 @@ interface DeleteUserRequest {
 /**
  * Convert various `userId` input types into a normalized number or bigint.
  * Only accepts positive integers: number, numeric string (e.g. "1", "42"), and bigint (e.g. 1n).
- * Returns number for positive safe integers, or null if invalid.
+ * Returns number for safe integers, bigint for larger values, or null if invalid.
  */
 function normalizeUserId(input: unknown): number | bigint | null {
   if (typeof input === 'number') {
@@ -28,21 +28,24 @@ function normalizeUserId(input: unknown): number | bigint | null {
     // Check if it's a valid positive integer string (no negative sign allowed)
     if (!/^\d+$/.test(trimmed)) return null;
     
-    const parsed = Number(trimmed);
-    // Require finite, safe integer, and positive (> 0)
-    if (Number.isFinite(parsed) && Number.isSafeInteger(parsed) && parsed > 0) {
-      return parsed;
+    // Try to parse as BigInt first to handle large numbers
+    try {
+      const asBigInt = BigInt(trimmed);
+      if (asBigInt <= 0n) return null;
+      
+      // Return as number if within safe range, otherwise keep as bigint
+      if (asBigInt <= BigInt(Number.MAX_SAFE_INTEGER)) {
+        return Number(asBigInt);
+      }
+      return asBigInt;
+    } catch {
+      return null;
     }
-    return null;
   }
 
   if (typeof input === 'bigint') {
-    // Require positive and within safe integer range
-    if (input > 0n && input <= BigInt(Number.MAX_SAFE_INTEGER)) {
-      // Coerce to number since it's within safe range
-      return Number(input);
-    }
-    return null;
+    // Accept any positive bigint
+    return input > 0n ? input : null;
   }
 
   return null;
