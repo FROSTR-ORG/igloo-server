@@ -374,14 +374,6 @@ export async function handleUserRoute(
         }
 
         if (req.method === 'POST' || req.method === 'PUT') {
-          const authSecret = getAuthSecret(auth);
-          if (!authSecret) {
-            return Response.json(
-              { error: 'Password or derived key required for encryption. Please login again.' },
-              { status: 401, headers }
-            );
-          }
-
           let body: any;
           try {
             body = await req.json();
@@ -417,11 +409,13 @@ export async function handleUserRoute(
             );
           }
 
+          // Relays are stored as plain JSON, so no auth secret needed for relay-only updates
+          // Pass empty string and false to indicate no encryption needed
           const success = updateUserCredentials(
             userId,
             { relays },
-            authSecret.secret,
-            authSecret.isDerivedKey
+            '',  // No password/key needed for unencrypted fields
+            false // Not a derived key
           );
           
           if (!success) {

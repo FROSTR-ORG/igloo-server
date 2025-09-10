@@ -312,20 +312,29 @@ export const updateUserCredentials = (
     const user = getUserById(userId);
     if (!user) return false;
     
-    // Get encryption key - either derive from password or use provided derived key
-    let key: string;
-    if (isDerivedKey) {
-      if (typeof passwordOrKey === 'string') {
-        if (!passwordOrKey.match(/^[0-9a-f]{64}$/i)) throw new Error('Invalid derived key format');
-        key = passwordOrKey.toLowerCase();
-      } else {
-        const bytes = passwordOrKey instanceof Uint8Array ? passwordOrKey : new Uint8Array(passwordOrKey);
-        if (bytes.length !== 32) throw new Error('Invalid derived key length: expected 32 bytes');
-        key = Buffer.from(bytes).toString('hex');
+    // Check if we need encryption (for encrypted fields)
+    const needsEncryption = credentials.group_cred !== undefined || credentials.share_cred !== undefined;
+    
+    // Get encryption key only if needed for encrypted fields
+    let key: string = '';
+    if (needsEncryption) {
+      if (!passwordOrKey || (typeof passwordOrKey === 'string' && passwordOrKey.length === 0)) {
+        throw new Error('Password or key required for updating encrypted credentials');
       }
-    } else {
-      if (typeof passwordOrKey !== 'string') throw new Error('Password must be a string');
-      key = deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
+      
+      if (isDerivedKey) {
+        if (typeof passwordOrKey === 'string') {
+          if (!passwordOrKey.match(/^[0-9a-f]{64}$/i)) throw new Error('Invalid derived key format');
+          key = passwordOrKey.toLowerCase();
+        } else {
+          const bytes = passwordOrKey instanceof Uint8Array ? passwordOrKey : new Uint8Array(passwordOrKey);
+          if (bytes.length !== 32) throw new Error('Invalid derived key length: expected 32 bytes');
+          key = Buffer.from(bytes).toString('hex');
+        }
+      } else {
+        if (typeof passwordOrKey !== 'string') throw new Error('Password must be a string');
+        key = deriveKey(passwordOrKey, user.salt).toString('hex'); // Derive from password
+      }
     }
     
     // Prepare update fields

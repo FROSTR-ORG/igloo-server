@@ -29,11 +29,13 @@ export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
 export const GROUP_CRED = process.env['GROUP_CRED']
 export const SHARE_CRED = process.env['SHARE_CRED']
 
-// Admin secret for initial onboarding - treat empty/whitespace as absent
+// Admin secret for initial onboarding - treat empty/whitespace and sentinel value as absent
 export const ADMIN_SECRET = (() => {
   const secret = process.env['ADMIN_SECRET'];
   if (!secret) return undefined;
   const trimmed = secret.trim();
+  // Treat the env.example sentinel value as unset
+  if (trimmed === 'REQUIRED_ADMIN_SECRET_NOT_SET') return undefined;
   return trimmed.length > 0 ? trimmed : undefined;
 })();
 

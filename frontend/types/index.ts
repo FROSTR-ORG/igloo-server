@@ -127,6 +127,12 @@ export interface SignerProps {
   };
   authHeaders?: Record<string, string>;
   /**
+   * Explicitly specify if running in headless mode (env-based config).
+   * When true, saves to /api/env. When false, saves to user database.
+   * If not specified, inferred from initialData presence (for backward compatibility).
+   */
+  isHeadlessMode?: boolean;
+  /**
    * Callback invoked when the `Signer` component is mounted and ready for interaction.
    * Consumers can safely call methods on the forwarded ref (e.g., `checkStatus`).
    */

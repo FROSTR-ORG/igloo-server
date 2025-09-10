@@ -454,6 +454,7 @@ const App: React.FC = () => {
                 initialData={signerData} 
                 ref={signerRef}
                 authHeaders={getAuthHeaders()}
+                isHeadlessMode={authState.headlessMode ?? false}
                 onReady={() => signerRef.current?.checkStatus()}
               />
             </TabsContent>

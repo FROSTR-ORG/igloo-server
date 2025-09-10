@@ -73,7 +73,7 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
   }
 };
 
-const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {}, onReady }, ref) => {
+const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {}, isHeadlessMode, onReady }, ref) => {
   const [isSignerRunning, setIsSignerRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [signerSecret, setSignerSecret] = useState("");
@@ -422,11 +422,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   // Fetch initial data from server .env file (only in headless mode)
   useEffect(() => {
     const fetchEnvData = async () => {
-      // Skip fetching from /api/env if we have initialData (database mode)
-      // This prevents overwriting valid credentials with undefined values
-      if (initialData) {
-        setIsLoading(false);
-        return;
+      // Skip fetching from /api/env if we're in database mode with real credentials
+      // Check using the isDatabaseMode helper which now properly detects the mode
+      if (isDatabaseMode()) {
+        // Only skip if we have actual credentials, not empty placeholders
+        if (initialData && initialData.share && initialData.groupCredential) {
+          setIsLoading(false);
+          return;
+        }
       }
       
       try {
@@ -496,7 +499,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
 
     fetchEnvData();
-  }, [initialData, authHeaders]);
+  }, [initialData, authHeaders, isHeadlessMode]);
 
   // Validate initial data (when props are provided in database mode)
   useEffect(() => {
@@ -736,7 +739,12 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
 
   // Helper function to determine if we're in database mode
   const isDatabaseMode = () => {
-    return !!initialData; // Database mode is when we have initialData passed from parent
+    // Use explicit flag if provided, otherwise fall back to presence of real initial data
+    if (isHeadlessMode !== undefined) {
+      return !isHeadlessMode; // Database mode is the opposite of headless mode
+    }
+    // Backward compatibility: only consider it database mode if we have actual credentials
+    return !!(initialData && initialData.share && initialData.groupCredential);
   };
   
   // Save relay URLs to user credentials (database mode)
