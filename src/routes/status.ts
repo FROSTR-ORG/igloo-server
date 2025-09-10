@@ -43,7 +43,7 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         // This prevents information leakage about whether ANY user has credentials
         if (auth?.authenticated && auth.userId != null) {
           try {
-            let parsedUserId: number | null = null;
+            let parsedUserId: number | bigint | null = null;
 
             // Conversion step: handle string, number, and bigint explicitly
             try {
@@ -52,13 +52,17 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
               } else if (typeof auth.userId === 'string') {
                 const trimmed = auth.userId.trim();
                 if (!/^\d+$/.test(trimmed)) throw new Error('Non-numeric userId string');
-                const value = parseInt(trimmed, 10);
-                if (!Number.isFinite(value)) throw new Error('Parsed userId is not finite');
-                parsedUserId = value;
+                try {
+                  const asBigInt = BigInt(trimmed);
+                  if (asBigInt <= 0n) throw new Error('userId must be positive');
+                  // Convert to number only if within safe range
+                  parsedUserId = asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : asBigInt;
+                } catch {
+                  throw new Error('Failed to parse userId string');
+                }
               } else if (typeof auth.userId === 'bigint') {
                 if (auth.userId <= 0n) throw new Error('bigint userId must be positive');
-                if (auth.userId > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('bigint userId exceeds MAX_SAFE_INTEGER');
-                parsedUserId = Number(auth.userId);
+                parsedUserId = auth.userId;  // Keep as bigint
               } else {
                 throw new Error(`Unsupported userId type: ${typeof auth.userId}`);
               }
@@ -70,13 +74,12 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
 
             // Validation step: only proceed if conversion succeeded
             if (parsedUserId != null) {
-              const isValid = Number.isFinite(parsedUserId)
-                && Number.isSafeInteger(parsedUserId)
-                && parsedUserId > 0
-                && parsedUserId <= Number.MAX_SAFE_INTEGER;
+              const isValid = typeof parsedUserId === 'bigint' 
+                ? parsedUserId > 0n
+                : (Number.isFinite(parsedUserId) && Number.isSafeInteger(parsedUserId) && parsedUserId > 0);
 
               if (!isValid) {
-                console.error('User ID validation error in status endpoint: not a positive safe integer within bounds');
+                console.error('User ID validation error in status endpoint: not a positive integer');
                 hasCredentials = false;
               } else {
                 // Lazy-load DB only in non-headless, authenticated path

@@ -177,7 +177,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             return Response.json(publicEnv, { headers });
           } else {
             // Database mode - return empty or user's credentials if available
-            if (auth?.authenticated && typeof auth.userId === 'number') {
+            if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint')) {
               // Use secure getters to access sensitive data
               let secret: string | Uint8Array | null = null;
               let isDerivedKey = false;
@@ -228,6 +228,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         }
         
         if (req.method === 'POST') {
+          if (HEADLESS) {
+            return Response.json(
+              { error: 'Environment modifications are not allowed in headless mode' },
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
           const body = await req.json();
           const env = await readEnvFile();
           
@@ -285,6 +291,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
       case '/api/env/delete':
         if (req.method === 'POST') {
+          if (HEADLESS) {
+            return Response.json(
+              { error: 'Environment modifications are not allowed in headless mode' },
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            );
+          }
           const body = await req.json();
           const { keys } = body;
           

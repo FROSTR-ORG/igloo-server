@@ -47,6 +47,10 @@ const createUserTable = () => {
 // Initialize database tables
 createUserTable();
 
+// Dummy hash for timing attack mitigation (Argon2id hash of 'dummy')
+// This is used to perform a constant-time verification when user is not found
+const TIMING_SAFE_DUMMY_HASH = '$argon2id$v=19$m=65536,t=3,p=1$2JaKMgrWFzQ8TqnYPmqM8r8I8B3zgc5mz0IFadteOTw$XrSyLD/x6h8N+jnve8Sr0hODpCEUVmQ+qqyfGGXz+JI';
+
 // Close database connection (for graceful shutdown)
 export const closeDatabase = async (): Promise<void> => {
   db.close();
@@ -189,11 +193,7 @@ export const createUser = async (
 ): Promise<{ success: boolean; error?: string; userId?: number }> => {
   try {
     // Hash password using Bun's built-in password API with configured Argon2id parameters
-    const passwordHash = await BunPassword.hash(password, { 
-      algorithm: PASSWORD_HASH_CONFIG.ALGORITHM,
-      timeCost: PASSWORD_HASH_CONFIG.TIME_COST,
-      memoryCost: PASSWORD_HASH_CONFIG.MEMORY_KB
-    });
+    const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication
@@ -235,6 +235,13 @@ export const authenticateUser = async (
     const user = db.query('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
     
     if (!user) {
+      // Perform dummy verification to prevent timing attacks
+      // This ensures the "user not found" path takes similar time as "wrong password" path
+      try {
+        await BunPassword.verify(password, TIMING_SAFE_DUMMY_HASH);
+      } catch {
+        // Ignore dummy verification errors
+      }
       // This is an expected auth failure, not an error
       return { success: false, error: 'Invalid credentials' };
     }

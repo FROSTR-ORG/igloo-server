@@ -8,6 +8,54 @@ import { VALIDATION } from '../config/crypto.js';
 // Fixed delay to prevent timing attacks (milliseconds)
 const UNIFORM_DELAY_MS = 150;
 
+// Define route-to-methods mapping for proper 404/405 handling
+const ROUTE_METHODS: Record<string, string[]> = {
+  '/api/onboarding/status': ['GET'],
+  '/api/onboarding/validate-admin': ['POST'],
+  '/api/onboarding/setup': ['POST']
+};
+
+// Simple rate limiter for admin validation endpoints
+const adminLimiter = new Map<string, { count: number; resetAt: number }>();
+const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
+const MAX_ATTEMPTS_PER_WINDOW = 5;
+
+// Periodic cleanup to bound memory for adminLimiter
+const ADMIN_LIMITER_CLEANUP_INTERVAL_MS = 120000; // 2 minutes
+let adminLimiterCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+/**
+ * Removes expired entries from the admin limiter Map.
+ * Deletes any entry where resetAt is in the past.
+ * @param now - Epoch ms used for comparison; defaults to current time
+ */
+function removeExpiredAdminLimiterEntries(now: number = Date.now()): void {
+  for (const [ip, entry] of adminLimiter) {
+    if (entry.resetAt <= now) adminLimiter.delete(ip);
+  }
+}
+
+/**
+ * Starts periodic cleanup of expired admin limiter entries.
+ * Stores the timer so it can be cleared on shutdown.
+ */
+function startAdminLimiterCleanup(): void {
+  if (adminLimiterCleanupTimer) return;
+  adminLimiterCleanupTimer = setInterval(() => removeExpiredAdminLimiterEntries(), ADMIN_LIMITER_CLEANUP_INTERVAL_MS);
+}
+
+/**
+ * Stops the periodic cleanup interval for admin limiter entries.
+ */
+export function stopAdminLimiterCleanup(): void {
+  if (!adminLimiterCleanupTimer) return;
+  clearInterval(adminLimiterCleanupTimer);
+  adminLimiterCleanupTimer = null;
+}
+
+// Initialize cleanup when onboarding routes are active
+if (!HEADLESS) startAdminLimiterCleanup();
+
 // Helper function to add uniform delay to responses
 async function addUniformDelay(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, UNIFORM_DELAY_MS));
@@ -167,6 +215,10 @@ export async function handleOnboardingRoute(
   const corsHeaders = getSecureCorsHeaders(req);
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-store',
+    'Pragma': 'no-cache',
+    'Expires': '0',
+    'Vary': 'Authorization',
     ...corsHeaders,
   };
 
@@ -210,6 +262,42 @@ export async function handleOnboardingRoute(
         if (req.method === 'POST') {
           // Add uniform delay to all responses
           await addUniformDelay();
+          
+          // Apply rate limiting for admin validation
+          const clientIp = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
+                          req.headers.get('x-real-ip') || 
+                          'unknown';
+          
+          const now = Date.now();
+          // Prune expired entries proactively
+          removeExpiredAdminLimiterEntries(now);
+
+          let limiterEntry = adminLimiter.get(clientIp);
+          
+          if (limiterEntry) {
+            if (now >= limiterEntry.resetAt) {
+              // Window expired on access: delete the stale entry, then treat as first attempt
+              adminLimiter.delete(clientIp);
+              limiterEntry = undefined;
+            } else if (limiterEntry.count >= MAX_ATTEMPTS_PER_WINDOW) {
+              // Rate limit exceeded
+              return Response.json(
+                UNIFORM_AUTH_ERROR,
+                { status: 401, headers }
+              );
+            } else {
+              // Still within the window, increment count
+              limiterEntry.count++;
+            }
+          } else {
+            // First attempt from this IP
+            adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+          }
+
+          // If we deleted due to expiry above, initialize a fresh window now
+          if (!limiterEntry) {
+            adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+          }
           
           // Check if already initialized
           let initialized = false;
@@ -256,6 +344,17 @@ export async function handleOnboardingRoute(
         if (req.method === 'POST') {
           // Add uniform delay to all responses
           await addUniformDelay();
+          
+          // TODO: Add rate limiting here once perIpLimiter is available in RouteContext
+          // This would prevent brute force attacks on admin secret validation
+          // Example implementation:
+          // if (context.perIpLimiter) {
+          //   const clientIp = context.clientIp || 'unknown';
+          //   const limited = await context.perIpLimiter.check(clientIp);
+          //   if (limited) {
+          //     return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+          //   }
+          // }
           
           // Check if already initialized
           let initialized = false;
@@ -366,9 +465,26 @@ export async function handleOnboardingRoute(
         break;
     }
 
+    // Check if the route exists
+    const allowedMethods = ROUTE_METHODS[url.pathname];
+    if (!allowedMethods) {
+      // Route doesn't exist
+      return Response.json(
+        { error: 'Not found' },
+        { status: 404, headers }
+      );
+    }
+
+    // Route exists but method not allowed
     return Response.json(
       { error: 'Method not allowed' },
-      { status: 405, headers }
+      { 
+        status: 405, 
+        headers: {
+          ...headers,
+          'Allow': allowedMethods.join(', ')
+        }
+      }
     );
   } catch (error) {
     console.error('Onboarding API Error:', error);

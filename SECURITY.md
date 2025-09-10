@@ -89,7 +89,7 @@ Starting with this version, Igloo Server **automatically generates and persists*
 
 #### Database Security Features
 - **Password Hashing**: Argon2id via Bun.password (secure default)
-- **Credential Encryption**: AES-256-GCM with PBKDF2 key derivation
+- **Credential Encryption**: AES-256-GCM with PBKDF2 key derivation (200,000 iterations, see `src/config/crypto.ts`)
 - **Database Location**: Configurable via DB_PATH (default: ./data)
 - **Per-user isolation**: Each user has encrypted credentials
 - **Persistent Salts**: Database users have persistent salts for consistent key derivation
@@ -431,7 +431,7 @@ cp data/igloo.db data/igloo-backup-$(date +%Y%m%d).db
 # Backup with modern AEAD encryption (AES-256-GCM - recommended)
 # Note: Use OpenSSL 1.1.0+ for GCM support
 tar -czf - data/igloo.db | \
-  openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -salt -md sha256 -out backup.tar.gz.enc
+  openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -salt -md sha256 -out backup.tar.gz.enc
 
 # Alternative: Using age encryption (simpler and more secure)
 # Install: https://github.com/FiloSottile/age
@@ -446,7 +446,7 @@ tar -czf - data/igloo.db | \
   -o backup.tar.gz.gpg
 
 # Restore from encrypted backup (OpenSSL)
-openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -d -in backup.tar.gz.enc | \
+openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -d -in backup.tar.gz.enc | \
   tar -xzf - 
 
 # Restore from encrypted backup (age)
@@ -489,7 +489,7 @@ if command -v age &> /dev/null; then
 # Fallback to OpenSSL with AEAD
 elif command -v openssl &> /dev/null; then
     tar -czf - "${DB_FILE}" | \
-        openssl enc -aes-256-gcm -pbkdf2 -iter 100000 -salt -md sha256 \
+        openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -salt -md sha256 \
         -out "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
     echo "Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
     

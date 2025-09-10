@@ -2,8 +2,6 @@ import { createConnectedNode, createAndConnectNode, cleanupBifrostNode } from '@
 import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { getValidRelays } from './utils.js';
 
-// Track cleanup timers for proper shutdown cleanup
-const cleanupTimers: Set<NodeJS.Timeout> = new Set();
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
@@ -55,38 +53,10 @@ export async function createAndStartNode(
     if (context.node) {
       context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
       
-      const oldNode = context.node;
+      // updateNode handles all cleanup: cleanupBifrostNode, cleanupMonitoring, and resetHealthMonitoring
+      context.updateNode(null);
       
-      try {
-        // Stop monitoring for the old node
-        const { cleanupMonitoring } = await import('../node/manager.js');
-        cleanupMonitoring();
-        
-        // Clear the node reference
-        context.updateNode(null);
-
-        // Cleanup the old node with proper type handling
-        await Promise.resolve(cleanupBifrostNode(oldNode));
-        
-        context.addServerLog('info', 'Previous node disposed successfully');
-      } catch (cleanupError) {
-        context.addServerLog('error', 'Error during node cleanup, scheduling async cleanup', cleanupError);
-
-        // Simple fallback: clear the reference and schedule async cleanup
-        context.updateNode(null);
-        
-        // Schedule async cleanup without blocking
-        const timer = setTimeout(() => {
-          cleanupTimers.delete(timer);
-          try {
-            cleanupBifrostNode(oldNode);
-            context.addServerLog('info', 'Async cleanup completed for old node');
-          } catch (e) {
-            context.addServerLog('error', 'Async cleanup failed', e);
-          }
-        }, 0);
-        cleanupTimers.add(timer);
-      }
+      context.addServerLog('info', 'Previous node disposed successfully');
     }
 
     // Convert relays to the format expected by getValidRelays
@@ -157,10 +127,8 @@ export async function createAndStartNode(
 /**
  * Clears all pending cleanup timers
  * Should be called on server shutdown
+ * Note: Currently no timers are used since cleanup is handled by updateNode
  */
 export function clearCleanupTimers(): void {
-  for (const timer of cleanupTimers) {
-    clearTimeout(timer);
-  }
-  cleanupTimers.clear();
+  // No timers to clear - cleanup is handled synchronously by updateNode
 }

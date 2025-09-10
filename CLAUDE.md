@@ -124,7 +124,7 @@ The server supports two operation modes controlled by the `HEADLESS` environment
 - **Multi-user support** with individual accounts
 - **Credential security**: 
   - Password hashing: Argon2id via Bun.password (for user authentication)
-  - Credential encryption: AES-256-GCM with PBKDF2 key derivation (for storing FROSTR credentials)
+  - Credential encryption: AES-256-GCM with PBKDF2 key derivation (200,000 iterations, see `src/config/crypto.ts`) (for storing FROSTR credentials)
 - **Onboarding flow** with `ADMIN_SECRET` for initial setup
 - **Session management** for web UI authentication
 - **Auto-start node** on login or credential save

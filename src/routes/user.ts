@@ -87,8 +87,11 @@ export async function handleUserRoute(
     );
   }
 
-  // Database users have numeric IDs
-  const userId = typeof auth.userId === 'number' ? auth.userId : null;
+  // Database users have numeric IDs (number or bigint)
+  let userId: number | bigint | null = null;
+  if (typeof auth.userId === 'number' || typeof auth.userId === 'bigint') {
+    userId = auth.userId;
+  }
   
   // Require a valid database user
   // Note: Environment auth users (API Key/Basic Auth) have string userIds and
@@ -115,7 +118,7 @@ export async function handleUserRoute(
           // Return user profile (without sensitive data)
           return Response.json(
             {
-              id: user.id,
+              id: typeof user.id === 'bigint' ? user.id.toString() : user.id,
               username: user.username,
               createdAt: user.created_at,
               hasCredentials: !!(user.group_cred_encrypted && user.share_cred_encrypted),

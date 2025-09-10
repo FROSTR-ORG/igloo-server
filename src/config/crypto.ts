@@ -25,12 +25,9 @@ export const SALT_CONFIG = {
 
 // Password Hashing Configuration (Argon2id via Bun.password)
 export const PASSWORD_HASH_CONFIG = {
-  ALGORITHM: 'argon2id' as const,
-  TIME_COST: 3,            // Iterations
-  MEMORY_KB: 65536,        // 64MB memory cost
-  PARALLELISM: 4,          // Degree of parallelism
-  HASH_LENGTH: 32,         // 256-bit hash
-  SALT_LENGTH: 16,         // 128-bit salt
+  algorithm: 'argon2id' as const,
+  memoryCost: 65536,       // 64MB memory cost in KB
+  timeCost: 3,             // Iterations
 } as const;
 
 // Validation Constants

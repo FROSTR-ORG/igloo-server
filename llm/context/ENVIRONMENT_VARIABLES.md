@@ -116,8 +116,8 @@ process.env.SHARE_CRED = "bfshare1qqsqp..."
 **Database Mode:**
 ```typescript
 // Encrypted storage with two-layer security:
-// 1. User authentication: Argon2id password hashing (via Bun.password)
-// 2. Credential encryption: AES-256-GCM with PBKDF2 key derivation
+// 1. User authentication: Password hashing uses Argon2id via Bun.password (while still verifying legacy bcrypt hashes).
+// 2. Credential encryption: Derives a 32-byte key using PBKDF2 with SHA-256 (see `PBKDF2_CONFIG.ITERATIONS` in `src/config/crypto.ts`) before applying AES-256-GCM.
 // User's plaintext password (not the Argon2id hash) is used to derive the encryption key
 // Credentials never stored in plain text
 ```
@@ -159,18 +159,46 @@ function getSessionSecretDir(): string {
 
 **Environment Variables API** (`src/routes/utils.ts`):
 ```typescript
-// Allowed for modification via /api/env endpoints
-// SESSION_SECRET is explicitly EXCLUDED - it's server-only
+// Security: Whitelist of allowed environment variable keys (for write/validation)
+// IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
 const ALLOWED_ENV_KEYS = new Set([
-  'SHARE_CRED', 'GROUP_CRED', 'RELAYS', 'GROUP_NAME',
-  'CREDENTIALS_SAVED_AT'
-  // SESSION_SECRET must NEVER be included here
+  'SHARE_CRED',         // Share credential for signing
+  'GROUP_CRED',         // Group credential for signing
+  'RELAYS',             // Relay URLs configuration
+  'GROUP_NAME',         // Display name for the signing group
+  'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  // Advanced settings - server configuration
+  'SESSION_TIMEOUT',    // Session timeout in seconds
+  'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
+  'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
+  'RATE_LIMIT_MAX',     // Maximum requests per window
+  'NODE_RESTART_DELAY', // Initial delay before node restart attempts
+  'NODE_MAX_RETRIES',   // Maximum node restart attempts
+  'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
+  'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
+  'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'ALLOWED_ORIGINS'     // CORS allowed origins configuration
+  // SESSION_SECRET explicitly excluded - must never be exposed via API
 ]);
 
-// Exposed via GET endpoints (security filtered)
+// Public environment variable keys that can be exposed through GET endpoints
+// Only include non-sensitive keys. Do NOT include signing credentials.
 const PUBLIC_ENV_KEYS = new Set([
-  'RELAYS', 'GROUP_NAME', 'CREDENTIALS_SAVED_AT'
-  // Explicitly excludes: SESSION_SECRET, SHARE_CRED, GROUP_CRED
+  'RELAYS',             // Relay URLs configuration
+  'GROUP_NAME',         // Display name for the signing group
+  'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  // Advanced settings - safe to expose for configuration UI
+  'SESSION_TIMEOUT',    // Session timeout in seconds
+  'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
+  'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
+  'RATE_LIMIT_MAX',     // Maximum requests per window
+  'NODE_RESTART_DELAY', // Initial delay before node restart attempts
+  'NODE_MAX_RETRIES',   // Maximum node restart attempts
+  'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
+  'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
+  'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'ALLOWED_ORIGINS'     // CORS allowed origins configuration
+  // SESSION_SECRET, SHARE_CRED, GROUP_CRED explicitly excluded from public exposure
 ]);
 ```
 
