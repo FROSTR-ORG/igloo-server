@@ -118,11 +118,15 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     }
     
     // In database mode, require a valid database user (not API key/basic auth)
-    if (!HEADLESS && (typeof auth.userId !== 'number' || auth.userId <= 0)) {
-      return Response.json(
-        { error: 'Database user authentication required for environment modifications' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
-      );
+    if (!HEADLESS) {
+      const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) || 
+                         (typeof auth.userId === 'bigint' && auth.userId > 0n);
+      if (!validUserId) {
+        return Response.json(
+          { error: 'Database user authentication required for environment modifications' },
+          { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        );
+      }
     }
   }
 
@@ -142,7 +146,9 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
       );
     }
     
-    if (typeof auth.userId !== 'number' || auth.userId <= 0) {
+    const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) || 
+                       (typeof auth.userId === 'bigint' && auth.userId > 0n);
+    if (!validUserId) {
       return Response.json(
         { error: 'Invalid user authentication' },
         { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }

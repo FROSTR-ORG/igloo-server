@@ -188,8 +188,12 @@ export const createUser = async (
   password: string
 ): Promise<{ success: boolean; error?: string; userId?: number }> => {
   try {
-    // Hash password using Bun's built-in password API (defaults to Argon2id)
-    const passwordHash = await BunPassword.hash(password, { algorithm: PASSWORD_HASH_CONFIG.ALGORITHM });
+    // Hash password using Bun's built-in password API with configured Argon2id parameters
+    const passwordHash = await BunPassword.hash(password, { 
+      algorithm: PASSWORD_HASH_CONFIG.ALGORITHM,
+      timeCost: PASSWORD_HASH_CONFIG.TIME_COST,
+      memoryCost: PASSWORD_HASH_CONFIG.MEMORY_KB
+    });
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication

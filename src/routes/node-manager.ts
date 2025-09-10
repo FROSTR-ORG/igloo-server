@@ -93,14 +93,9 @@ export async function createAndStartNode(
     // credentials.relays is string[] | null from the database
     // getValidRelays expects a string (comma-separated or JSON array string)
     let relayString: string | undefined;
-    if (credentials.relays) {
-      if (Array.isArray(credentials.relays)) {
-        // Convert array to comma-separated string
-        relayString = credentials.relays.join(',');
-      } else if (typeof credentials.relays === 'string') {
-        // Already a string, use as-is
-        relayString = credentials.relays;
-      }
+    if (credentials.relays && Array.isArray(credentials.relays)) {
+      // Convert array to comma-separated string
+      relayString = credentials.relays.join(',');
     }
     
     const nodeRelays = getValidRelays(relayString);

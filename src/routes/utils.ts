@@ -130,10 +130,10 @@ const PUBLIC_ENV_KEYS = new Set([
 ]);
 
 // Security hardening: forbid sensitive keys from ever being allowed or public
-const FORBIDDEN_ENV_KEYS = new Set(['SESSION_SECRET']);
+const FORBIDDEN_ENV_KEYS = new Set(['SESSION_SECRET', 'ADMIN_SECRET']);
 
 /**
- * Asserts that no forbidden sensitive keys (e.g., SESSION_SECRET) are present
+ * Asserts that no forbidden sensitive keys (e.g., SESSION_SECRET, ADMIN_SECRET) are present
  * in either the allowed or public environment key sets. This runs at module
  * initialization to fail fast during startup if future edits accidentally
  * include forbidden keys. Also exported for explicit startup checks/tests.

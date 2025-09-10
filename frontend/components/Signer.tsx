@@ -88,7 +88,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   const [serverStatus, setServerStatus] = useState<{
     serverRunning: boolean;
     nodeActive: boolean;
-    hasCredentials: boolean;
+    hasCredentials: boolean | null;
     relayCount: number;
     timestamp: string;
   } | null>(null);
@@ -200,7 +200,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       
       // Update signer running state based on server node status
       const wasRunning = isSignerRunning;
-      const nowRunning = status.nodeActive && status.hasCredentials;
+      const nowRunning = status.nodeActive && status.hasCredentials === true;
       
       if (wasRunning !== nowRunning) {
         setIsSignerRunning(nowRunning);
@@ -1040,9 +1040,10 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           {!isSignerRunning && isShareValid && isGroupValid && (
             <div className="mt-4 p-3 bg-blue-900/30 rounded-lg">
               <div className="text-blue-300 text-sm">
-                <strong>Server-Managed Signer:</strong> The signer runs automatically on the server when credentials are configured. 
-                {!serverStatus?.hasCredentials && " Save your credentials to start the signer."}
-                {serverStatus?.hasCredentials && !serverStatus?.nodeActive && " Server is starting the signer node..."}
+                <strong>Server-Managed Signer:</strong> The signer runs automatically on the server when credentials are configured.
+                {serverStatus?.hasCredentials === false && " Save your credentials to start the signer."}
+                {serverStatus?.hasCredentials === true && !serverStatus?.nodeActive && " Server is starting the signer node..."}
+                {serverStatus?.hasCredentials === null && " Please authenticate to view signer status."}
               </div>
             </div>
           )}

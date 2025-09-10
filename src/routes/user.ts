@@ -11,6 +11,13 @@ import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
 
+// Define route-to-methods mapping for proper 404/405 handling
+const ROUTE_METHODS: Record<string, string[]> = {
+  '/api/user/profile': ['GET'],
+  '/api/user/credentials': ['GET', 'POST', 'PUT', 'DELETE'],
+  '/api/user/relays': ['GET', 'POST', 'PUT']
+};
+
 /**
  * Returns a string secret for encryption/decryption and whether it's a derived key.
  * Uses secure getters to access sensitive data that clears after first access.
@@ -143,8 +150,8 @@ export async function handleUserRoute(
           }
           if (!credentials) {
             return Response.json(
-              { error: 'Password or derived key required for decryption. Please login again.' },
-              { status: 401, headers }
+              { error: 'No credentials found' },
+              { status: 404, headers }
             );
           }
 
@@ -429,9 +436,26 @@ export async function handleUserRoute(
         break;
     }
 
+    // Check if the route exists
+    const allowedMethods = ROUTE_METHODS[url.pathname];
+    if (!allowedMethods) {
+      // Route doesn't exist
+      return Response.json(
+        { error: 'Not found' },
+        { status: 404, headers }
+      );
+    }
+
+    // Route exists but method not allowed
     return Response.json(
       { error: 'Method not allowed' },
-      { status: 405, headers }
+      { 
+        status: 405, 
+        headers: {
+          ...headers,
+          'Allow': allowedMethods.join(', ')
+        }
+      }
     );
   } catch (error) {
     console.error('User API Error:', error);

@@ -3,6 +3,7 @@ import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { RouteContext } from './types.js';
+import { VALIDATION } from '../config/crypto.js';
 
 // Fixed delay to prevent timing attacks (milliseconds)
 const UNIFORM_DELAY_MS = 150;
@@ -14,6 +15,9 @@ async function addUniformDelay(): Promise<void> {
 
 // Uniform error response for all authentication failures
 const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
+
+// Uniform error response for setup/creation failures
+const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 
 // Password validation regex - requires at least one of each:
 // - Uppercase letter
@@ -104,8 +108,8 @@ function hasSequentialOrRepeated(str: string): boolean {
  * @returns An error message if invalid, null if valid
  */
 function validatePasswordStrength(password: string, username?: string): string | null {
-  if (!password || password.length < 8) {
-    return 'Password must be at least 8 characters long';
+  if (!password || password.length < VALIDATION.MIN_PASSWORD_LENGTH || password.length > VALIDATION.MAX_PASSWORD_LENGTH) {
+    return `Password must be between ${VALIDATION.MIN_PASSWORD_LENGTH} and ${VALIDATION.MAX_PASSWORD_LENGTH} characters`;
   }
 
   if (!PASSWORD_REGEX.test(password)) {
@@ -167,7 +171,13 @@ export async function handleOnboardingRoute(
   };
 
   if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 200, headers });
+    const optionsHeaders = {
+      ...headers,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': 'Authorization, Content-Type',
+      'Vary': 'Origin',
+    };
+    return new Response(null, { status: 200, headers: optionsHeaders });
   }
 
   try {
@@ -330,10 +340,17 @@ export async function handleOnboardingRoute(
           const result = await createUser(username, password);
 
           if (!result.success) {
-            // Use uniform error response even for creation failures
+            // Check for duplicate username
+            if (result.error === 'Username already exists') {
+              return Response.json(
+                { error: 'Username already taken' },
+                { status: 409, headers }
+              );
+            }
+            // Use setup error for other creation failures
             return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
+              UNIFORM_SETUP_ERROR,
+              { status: 500, headers }
             );
           }
 

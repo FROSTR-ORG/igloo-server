@@ -26,15 +26,21 @@ export const SALT_CONFIG = {
 // Password Hashing Configuration (Argon2id via Bun.password)
 export const PASSWORD_HASH_CONFIG = {
   ALGORITHM: 'argon2id' as const,
+  TIME_COST: 3,            // Iterations
+  MEMORY_KB: 65536,        // 64MB memory cost
+  PARALLELISM: 4,          // Degree of parallelism
+  HASH_LENGTH: 32,         // 256-bit hash
+  SALT_LENGTH: 16,         // 128-bit salt
 } as const;
 
 // Validation Constants
 export const VALIDATION = {
   MIN_PASSWORD_LENGTH: 8,
+  MAX_PASSWORD_LENGTH: 128,   // Prevent DoS from extremely long passwords
   MAX_USERNAME_LENGTH: 50,
   MIN_USERNAME_LENGTH: 3,
-  // Regex for password validation: min 8 chars, uppercase, lowercase, digit, special char
-  PASSWORD_REGEX: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/,
+  // Regex for password validation: uppercase, lowercase, digit, special char (length checked separately)
+  PASSWORD_REGEX: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]+$/,
 } as const;
 
 // Export type-safe config objects
@@ -46,11 +52,14 @@ export type ValidationConfig = typeof VALIDATION;
 
 /**
  * Validates a password against length and pattern requirements.
- * The regex now includes the minimum length constraint, making this a single check.
+ * Checks both min/max length constraints and character class requirements.
  *
  * @param pwd - Password string to validate
  * @returns True if the password meets all requirements (length and pattern)
  */
 export function isPasswordValid(pwd: string): boolean {
+  if (pwd.length < VALIDATION.MIN_PASSWORD_LENGTH || pwd.length > VALIDATION.MAX_PASSWORD_LENGTH) {
+    return false;
+  }
   return VALIDATION.PASSWORD_REGEX.test(pwd);
 }
