@@ -117,9 +117,9 @@ const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 // - Uppercase letter
 // - Lowercase letter
 // - Digit
-// - Special character
+// - Special character (at least one of @$!%*?&, but allows any special chars)
 // Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]*$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])\S*$/;
 
 // Common weak passwords that should be rejected
 const COMMON_PASSWORDS = new Set([
@@ -208,7 +208,7 @@ function validatePasswordStrength(password: string, username?: string): string |
   }
 
   if (!PASSWORD_REGEX.test(password)) {
-    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (@$!%*?&)';
+    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (must include at least one of @$!%*?&)';
   }
 
   // Check against common passwords (case-insensitive)
