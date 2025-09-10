@@ -1,7 +1,5 @@
 // Shared types for route handlers
 
-import type { Buffer } from 'node:buffer';
-
 /**
  * Shared type for user IDs across different auth methods.
  * 
@@ -80,7 +78,7 @@ export interface RequestAuth {
   // Secure getter functions that clear sensitive data after first access
   // These access secrets from ephemeral storage (WeakMap/closure) and clear after reading
   getPassword?(): string | undefined;
-  getDerivedKey?(): Uint8Array | Buffer | undefined;
+  getDerivedKey?(): Uint8Array | undefined;
 }
 
 import type { ServerWebSocket } from 'bun';
@@ -96,6 +94,8 @@ export interface RouteContext {
   addServerLog: (type: string, message: string, data?: any) => void;
   broadcastEvent: (event: { type: string; message: string; data?: any; timestamp: string; id: string }) => void;
   auth?: AuthContext;
+  requestId?: string;
+  clientIp?: string;
 }
 
 // Privileged context for trusted/authenticated routes that need node management

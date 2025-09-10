@@ -3,6 +3,7 @@ import { password as BunPassword } from 'bun';
 import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import path from 'path';
 import { existsSync, mkdirSync } from 'fs';
+import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '../config/crypto.js';
 
 // Database configuration
 const defaultDbDir = path.join(process.cwd(), 'data');
@@ -74,18 +75,13 @@ process.on('SIGTERM', async () => {
   // Let the process terminate naturally after cleanup
 });
 
-// Encryption utilities
-const ALGORITHM = 'aes-256-gcm';
-const IV_LENGTH = 12; // 96 bits for GCM
-const TAG_LENGTH = 16; // 128 bits
-const KEY_LENGTH = 32; // 256 bits
-const PBKDF2_ITERATIONS = 200000; // Optimized for security and performance
+// Use centralized crypto constants (AES_CONFIG.IV_LENGTH recommended: 12 bytes for GCM)
 
 // Derive a key from password and salt using PBKDF2
 const deriveKey = (password: string, saltHex: string): Buffer => {
   // Convert hex-encoded salt to Buffer
   const saltBuffer = Buffer.from(saltHex, 'hex');
-  return pbkdf2Sync(password, saltBuffer, PBKDF2_ITERATIONS, KEY_LENGTH, 'sha256');
+  return pbkdf2Sync(password, saltBuffer, PBKDF2_CONFIG.ITERATIONS, PBKDF2_CONFIG.KEY_LENGTH, PBKDF2_CONFIG.ALGORITHM);
 };
 
 // Encrypt text using AES-256-GCM (AEAD)
@@ -94,13 +90,13 @@ const encrypt = (text: string, key: string): string => {
   
   try {
     // Generate random IV
-    const iv = randomBytes(IV_LENGTH);
+    const iv = randomBytes(AES_CONFIG.IV_LENGTH);
     
     // Derive encryption key from the provided key string and user's salt
     const keyBuffer = Buffer.from(key, 'hex');
     
     // Create cipher
-    const cipher = createCipheriv(ALGORITHM, keyBuffer, iv);
+    const cipher = createCipheriv(AES_CONFIG.ALGORITHM, keyBuffer, iv);
     
     // Encrypt the text
     const encrypted = Buffer.concat([
@@ -129,15 +125,15 @@ const decrypt = (ciphertext: string, key: string): string => {
     const combined = Buffer.from(ciphertext, 'base64');
     
     // Extract components
-    const iv = combined.subarray(0, IV_LENGTH);
-    const authTag = combined.subarray(IV_LENGTH, IV_LENGTH + TAG_LENGTH);
-    const encrypted = combined.subarray(IV_LENGTH + TAG_LENGTH);
+    const iv = combined.subarray(0, AES_CONFIG.IV_LENGTH);
+    const authTag = combined.subarray(AES_CONFIG.IV_LENGTH, AES_CONFIG.IV_LENGTH + AES_CONFIG.TAG_LENGTH);
+    const encrypted = combined.subarray(AES_CONFIG.IV_LENGTH + AES_CONFIG.TAG_LENGTH);
     
     // Derive decryption key
     const keyBuffer = Buffer.from(key, 'hex');
     
     // Create decipher
-    const decipher = createDecipheriv(ALGORITHM, keyBuffer, iv);
+    const decipher = createDecipheriv(AES_CONFIG.ALGORITHM, keyBuffer, iv);
     decipher.setAuthTag(authTag);
     
     // Decrypt
@@ -193,7 +189,7 @@ export const createUser = async (
 ): Promise<{ success: boolean; error?: string; userId?: number }> => {
   try {
     // Hash password using Bun's built-in password API (defaults to Argon2id)
-    const passwordHash = await BunPassword.hash(password, { algorithm: 'argon2id' });
+    const passwordHash = await BunPassword.hash(password, { algorithm: PASSWORD_HASH_CONFIG.ALGORITHM });
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication
@@ -207,7 +203,7 @@ export const createUser = async (
     // SECURITY NOTE: This salt is intentionally separate from Argon2id's embedded salt.
     // Using different salts for authentication vs encryption is a security best practice.
     // This salt must be stored in plaintext to enable credential decryption.
-    const salt = randomBytes(32).toString('hex');
+    const salt = randomBytes(SALT_CONFIG.LENGTH).toString('hex');
     stmt.run(username, passwordHash, salt);
     
     // Get the last inserted ID

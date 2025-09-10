@@ -1,4 +1,5 @@
 import { serve, type ServerWebSocket } from 'bun';
+import { randomUUID } from 'crypto';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
@@ -83,22 +84,22 @@ assertNoSessionSecretExposure();
 if (!CONST.HEADLESS) {
   // Attempt dynamic import of the database module with explicit error handling
   const validationErrors: string[] = [];
+  let importedModule: any = null;
   try {
-    dbModule = await import('./db/database.js');
+    importedModule = await import('./db/database.js');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     console.error('❌ Failed to import database module:', message);
     validationErrors.push(`dynamic import error: ${message}`);
-    dbModule = null;
   }
   
-  if (!dbModule) {
+  if (!importedModule) {
     validationErrors.push('module failed to load');
   } else {
-    if (typeof dbModule.isDatabaseInitialized !== 'function') {
+    if (typeof importedModule.isDatabaseInitialized !== 'function') {
       validationErrors.push('isDatabaseInitialized export missing or not a function');
     }
-    if (typeof dbModule.closeDatabase !== 'function') {
+    if (typeof importedModule.closeDatabase !== 'function') {
       validationErrors.push('closeDatabase export missing or not a function');
     }
   }
@@ -108,6 +109,8 @@ if (!CONST.HEADLESS) {
     for (const issue of validationErrors) console.error(`   - ${issue}`);
     process.exit(1);
   }
+
+  dbModule = importedModule as unknown as DatabaseModule;
 
   console.log('🗄️  Database mode enabled - using SQLite for user management');
 
@@ -381,6 +384,8 @@ serve({
   websocket: websocketHandler,
   fetch: async (req, server) => {
     const url = new URL(req.url);
+    const requestId = randomUUID();
+    const clientIp = server.requestIP(req)?.address;
     
     // Handle WebSocket upgrade for event stream
     if (url.pathname === '/api/events' && req.headers.get('upgrade') === 'websocket') {
@@ -467,7 +472,9 @@ serve({
       peerStatuses,
       eventStreams,
       addServerLog,
-      broadcastEvent
+      broadcastEvent,
+      requestId,
+      clientIp
     };
 
     // Create privileged context with updateNode for trusted routes  

@@ -31,7 +31,7 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
     // Explicit null check for extra safety (though authenticate never returns null)
     if (!authToUse || !authToUse.authenticated) {
       // Log failed authentication attempt for audit
-      context.addServerLog('warn', `Unauthorized access attempt to shares endpoint from ${req.headers.get('x-forwarded-for') || 'unknown'}`);
+      context.addServerLog('warn', 'Unauthorized access attempt to shares endpoint', { clientIp: context.clientIp, requestId: context.requestId });
       
       return Response.json(
         { error: 'Authentication required' }, 

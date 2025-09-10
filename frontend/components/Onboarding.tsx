@@ -83,10 +83,31 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         body: JSON.stringify({}),
       });
 
-      const data = await response.json();
+      // Handle rate limiting first
+      if (response.status === 429) {
+        const retryAfter = response.headers.get('Retry-After');
+        throw new Error(`Rate limit exceeded. Please try again${retryAfter ? ` in ${retryAfter} seconds` : ' later'}.`);
+      }
+
+      // Handle 204 No Content as success
+      if (response.status === 204) {
+        setStep('setup');
+        return;
+      }
+
+      // Try to parse JSON response, but handle non-JSON gracefully
+      let data: any = {};
+      try {
+        data = await response.json();
+      } catch (jsonError) {
+        // If response is not JSON, that's okay - we'll use status text
+        if (!response.ok) {
+          throw new Error(`Validation failed: ${response.statusText || response.status}`);
+        }
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || 'Failed to validate admin secret');
+        throw new Error(data.error || `Failed to validate admin secret: ${response.statusText || response.status}`);
       }
 
       // Move to setup step
@@ -99,29 +120,33 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   };
 
   const createUser = async () => {
+    // Trim username and password for consistent validation and submission
+    const trimmedUsername = username.trim();
+    const trimmedPassword = password.trim();
+
     // Validate inputs
-    if (!username.trim() || !password.trim()) {
+    if (!trimmedUsername || !trimmedPassword) {
       setError('Username and password are required');
       return;
     }
 
-    if (username.length < 3 || username.length > 50) {
+    if (trimmedUsername.length < 3 || trimmedUsername.length > 50) {
       setError('Username must be between 3 and 50 characters');
       return;
     }
 
-    if (password.length < 8) {
+    if (trimmedPassword.length < 8) {
       setError('Password must be at least 8 characters long');
       return;
     }
 
     // Enforce same password rules as server (uppercase, lowercase, digit, special)
-    if (!PASSWORD_REGEX.test(password)) {
+    if (!PASSWORD_REGEX.test(trimmedPassword)) {
       setError('Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character');
       return;
     }
 
-    if (password !== confirmPassword) {
+    if (trimmedPassword !== confirmPassword.trim()) {
       setError('Passwords do not match');
       return;
     }
@@ -137,8 +162,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
           'Authorization': `Bearer ${adminSecret}`,
         },
         body: JSON.stringify({
-          username,
-          password,
+          username: trimmedUsername,
+          password: trimmedPassword,
         }),
       });
 

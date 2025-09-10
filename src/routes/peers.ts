@@ -27,7 +27,7 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
     const password = auth?.getPassword?.();
     const derivedKey = auth?.getDerivedKey?.();
     
-    if (auth?.authenticated && typeof auth.userId === 'number' && (password || derivedKey)) {
+    if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint') && (password || derivedKey)) {
       let secret: string | Uint8Array | null = null;
       let isDerivedKey = false;
       if (password) {

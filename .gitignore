@@ -48,6 +48,23 @@ static/styles.css
 data/
 *.db
 igloo.db
+*.db-wal
+*.db-shm
+igloo.db-wal
+igloo.db-shm
+
+# Session secrets and sensitive config
+*session*secret*
+*session-secret*
+*session_secret*
+*SESSION*SECRET*
+*sessionsecret*
+*secret*session*
+.secret*
+.session*
+secrets.*
+.secrets.*
+*secrets*
 
 # macOS
 .DS_Store

@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, openSync,
 import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
+import { PBKDF2_CONFIG } from '../config/crypto.js';
 
 // Session secret persistence configuration
 // Properly handle DB_PATH whether it's a file or directory
@@ -224,10 +225,7 @@ export const AUTH_CONFIG = {
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100'), // 100 requests per window
 };
 
-// Key derivation for secure password handling
-const DERIVED_KEY_ITERATIONS = 100000;
-const DERIVED_KEY_LENGTH = 32;
-const DERIVED_KEY_ALGORITHM = 'sha256';
+// Use centralized crypto constants for consistency
 
 // Derive an ephemeral key from password and salt, returning as Uint8Array
 function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
@@ -236,9 +234,9 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uin
   const key = pbkdf2Sync(
     password,
     saltBuffer,
-    DERIVED_KEY_ITERATIONS,
-    DERIVED_KEY_LENGTH,
-    DERIVED_KEY_ALGORITHM
+    PBKDF2_CONFIG.ITERATIONS,
+    PBKDF2_CONFIG.KEY_LENGTH,
+    PBKDF2_CONFIG.ALGORITHM
   );
   // Return as Uint8Array for binary safety
   return new Uint8Array(key);

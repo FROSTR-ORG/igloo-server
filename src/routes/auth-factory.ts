@@ -11,7 +11,7 @@ const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array }>();
 export function createRequestAuth(params: {
   userId?: string | number | bigint;
   authenticated: boolean;
-  derivedKey?: Uint8Array | Buffer | string | null; // Accept binary or hex string derived key
+  derivedKey?: Uint8Array | string | null; // Accept binary or hex string derived key
 }): RequestAuth {
   const auth: RequestAuth = {
     userId: params.userId,
@@ -23,7 +23,7 @@ export function createRequestAuth(params: {
     const secrets: { derivedKey?: Uint8Array } = {};
     
     if (params.derivedKey) {
-      const input = params.derivedKey as Uint8Array | Buffer | string;
+      const input = params.derivedKey as Uint8Array | string;
       let bytes: Uint8Array;
       if (typeof input === 'string') {
         const trimmed = input.trim();
@@ -33,11 +33,16 @@ export function createRequestAuth(params: {
         if (!/^[0-9a-fA-F]+$/.test(hexKey)) throw new Error('Invalid derivedKey: non-hex characters present');
         // Expect 32-byte key (64 hex chars)
         if (hexKey.length !== 64) throw new Error('Invalid derivedKey: expected 64 hex characters for 32-byte key');
-        const buffer = Buffer.from(hexKey, 'hex');
-        bytes = new Uint8Array(buffer);
+        
+        // Convert hex to Uint8Array without Buffer
+        const byteLength = hexKey.length / 2;
+        bytes = new Uint8Array(byteLength);
+        for (let i = 0; i < byteLength; i++) {
+          bytes[i] = parseInt(hexKey.substring(i * 2, i * 2 + 2), 16);
+        }
       } else {
         // Normalize to Uint8Array and defensively copy
-        const normalized = input instanceof Uint8Array ? input : new Uint8Array(input);
+        const normalized = new Uint8Array(input);
         if (normalized.length === 0) throw new Error('Invalid derivedKey: empty binary data');
         bytes = new Uint8Array(normalized);
       }
