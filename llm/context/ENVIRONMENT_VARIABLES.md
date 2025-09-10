@@ -249,27 +249,41 @@ const parseRestartConfig = () => {
 
 ### 2. Auto-Generation Patterns
 
-SESSION_SECRET auto-generation (`src/routes/auth.ts:48-72`):
+SESSION_SECRET auto-generation (`src/routes/auth.ts:44-136`):
 ```typescript
-function validateSessionSecret(): string | null {
-  let sessionSecret = process.env.SESSION_SECRET;
-  
-  if (!sessionSecret) {
-    const sessionSecretFile = path.join(getSessionSecretDir(), '.session-secret');
-    
-    try {
-      // Try to load existing secret
-      sessionSecret = fs.readFileSync(sessionSecretFile, 'utf8').trim();
-    } catch {
-      // Generate new secret if file doesn't exist
-      sessionSecret = crypto.randomBytes(32).toString('hex');
-      fs.writeFileSync(sessionSecretFile, sessionSecret, { mode: 0o600 });
-    }
-    
-    process.env.SESSION_SECRET = sessionSecret;
+function getOrCreateSessionSecret(): string {
+  // Ensure directory exists with secure permissions
+  if (!existsSync(SESSION_SECRET_DIR)) {
+    mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
+  } else {
+    chmodSync(SESSION_SECRET_DIR, 0o700);
   }
   
-  return sessionSecret;
+  // Check if secret already exists
+  if (existsSync(SESSION_SECRET_FILE)) {
+    const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
+    if (secret && secret.length >= 32) {
+      return secret;
+    }
+  }
+  
+  // Generate new secret (32 bytes = 64 hex characters)
+  const newSecret = randomBytes(32).toString('hex');
+  
+  // Atomically write the new secret
+  const tempFilePath = path.join(SESSION_SECRET_DIR, '.session-secret.tmp');
+  
+  // Write to temp file with secure permissions
+  writeFileSync(tempFilePath, newSecret, { encoding: 'utf8', mode: 0o600 });
+  
+  // Atomically rename to final location
+  renameSync(tempFilePath, SESSION_SECRET_FILE);
+  
+  // Enforce file permissions
+  chmodSync(SESSION_SECRET_FILE, 0o600);
+  
+  process.env.SESSION_SECRET = newSecret;
+  return newSecret;
 }
 ```
 

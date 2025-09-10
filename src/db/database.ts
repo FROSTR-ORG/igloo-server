@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { password as BunPassword } from 'bun';
 import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import path from 'path';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, chmodSync } from 'fs';
 import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '../config/crypto.js';
 
 // Database configuration
@@ -12,9 +12,12 @@ const isEnvPathFile = !!envPath && (envPath.endsWith('.db') || path.extname(envP
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
 
-// Ensure data directory exists
+// Ensure data directory exists with secure permissions
 if (!existsSync(DB_DIR)) {
-  mkdirSync(DB_DIR, { recursive: true });
+  mkdirSync(DB_DIR, { recursive: true, mode: 0o700 });
+} else {
+  // Enforce secure permissions on existing directory
+  chmodSync(DB_DIR, 0o700);
 }
 
 // Initialize database

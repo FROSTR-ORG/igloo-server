@@ -118,7 +118,8 @@ const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 // - Lowercase letter
 // - Digit
 // - Special character
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+// Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]*$/;
 
 // Common weak passwords that should be rejected
 const COMMON_PASSWORDS = new Set([
@@ -287,8 +288,11 @@ export async function handleOnboardingRoute(
           try {
             initialized = isDatabaseInitialized();
           } catch (err: any) {
-            console.error('[onboarding] Database initialization check failed:', err.message);
-            initialized = false; // Treat errors as not initialized
+            console.error('[onboarding] Database initialization check failed:', err);
+            return Response.json(
+              { error: 'Database initialization check failed' },
+              { status: 500, headers }
+            );
           }
           
           const hasAdminSecret = !!ADMIN_SECRET;
@@ -323,8 +327,11 @@ export async function handleOnboardingRoute(
           try {
             initialized = isDatabaseInitialized();
           } catch (err: any) {
-            console.error('[onboarding] Database initialization check failed:', err.message);
-            initialized = false; // Treat errors as not initialized
+            console.error('[onboarding] Database initialization check failed in validate-admin:', err);
+            return Response.json(
+              { error: 'Database initialization check failed' },
+              { status: 500, headers }
+            );
           }
           
           if (initialized) {
@@ -378,8 +385,11 @@ export async function handleOnboardingRoute(
           try {
             initialized = isDatabaseInitialized();
           } catch (err: any) {
-            console.error('[onboarding] Database initialization check failed:', err.message);
-            initialized = false; // Treat errors as not initialized
+            console.error('[onboarding] Database initialization check failed in setup:', err);
+            return Response.json(
+              { error: 'Database initialization check failed' },
+              { status: 500, headers }
+            );
           }
           
           if (initialized) {

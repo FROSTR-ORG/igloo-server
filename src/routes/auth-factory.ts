@@ -57,11 +57,22 @@ export function createRequestAuth(params: {
       value: (): Uint8Array | undefined => {
         const secrets = secretStorage.get(auth);
         if (secrets?.derivedKey !== undefined) {
-          const derivedKey = secrets.derivedKey;
+          const originalKey = secrets.derivedKey;
+          
+          // Create a copy to return
+          const keyCopy = new Uint8Array(originalKey);
+          
+          // Zeroize the original key in memory before deletion
+          for (let i = 0; i < originalKey.length; i++) {
+            originalKey[i] = 0;
+          }
+          
+          // Remove from secrets and clean up WeakMap
           delete secrets.derivedKey;
-          // Clean up the WeakMap entry since no secrets remain
           secretStorage.delete(auth);
-          return derivedKey;
+          
+          // Return the copy (original is now zeroized)
+          return keyCopy;
         }
         return undefined;
       },
