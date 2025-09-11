@@ -24,7 +24,7 @@ export async function handleEventsRoute(req: Request, url: URL, _context: RouteC
   if (AUTH_CONFIG.ENABLED) {
     // Use provided auth if available, otherwise authenticate the request
     // Note: authenticate() always returns an AuthResult object, never null
-    const authToUse = _auth !== undefined ? _auth : await authenticate(req);
+    const authToUse = _auth ?? await authenticate(req);
     
     // Explicit null check for extra safety (though authenticate never returns null)
     if (!authToUse || !authToUse.authenticated) {

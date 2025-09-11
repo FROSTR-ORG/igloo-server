@@ -1,5 +1,5 @@
 import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync, openSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
@@ -41,9 +41,9 @@ const SESSION_SECRET_FILE = path.join(SESSION_SECRET_DIR, '.session-secret');
 // Load or generate a persistent SESSION_SECRET
 function loadOrGenerateSessionSecret(): string | null {
   try {
-    // Ensure data directory exists
+    // Ensure data directory exists with strict permissions
     if (!existsSync(SESSION_SECRET_DIR)) {
-      mkdirSync(SESSION_SECRET_DIR, { recursive: true });
+      mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
     }
     // Enforce strict permissions on the directory (0700)
     try {
@@ -70,17 +70,19 @@ function loadOrGenerateSessionSecret(): string | null {
     // Generate new secret (32 bytes = 64 hex characters)
     const newSecret = randomBytes(32).toString('hex');
     
-    // Atomically write the new secret
-    const tempFilePath = path.join(SESSION_SECRET_DIR, '.session-secret.tmp');
+    // Atomically write the new secret with unique temp file
+    const tempFileName = `.session-secret.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
+    const tempFilePath = path.join(SESSION_SECRET_DIR, tempFileName);
     let tempFileHandle: number | undefined;
     let dirHandle: number | undefined;
 
     try {
-      // Write to a temporary file
-      writeFileSync(tempFilePath, newSecret, { encoding: 'utf8', mode: 0o600 });
+      // Open temp file with exclusive flag to prevent races
+      tempFileHandle = openSync(tempFilePath, 'wx', 0o600);
+      // Write the secret to the temp file
+      writeSync(tempFileHandle, newSecret, 0, 'utf8');
 
-      // Open handles for fsync
-      tempFileHandle = openSync(tempFilePath, 'r+');
+      // Open directory handle for fsync
       try {
         dirHandle = openSync(SESSION_SECRET_DIR, 'r');
       } catch (e) {
@@ -263,7 +265,7 @@ const sessionStore = new Map<string, {
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
-  derivedKey?: Uint8Array; // Store derived key as binary
+  derivedKey?: Uint8Array; // Store derived key as binary (will be moved to ephemeral storage per request)
   salt?: string; // Store salt as hex string for non-database users (env auth)
   // Note: for database users, salt comes from the database
 }>();
@@ -273,7 +275,7 @@ export interface AuthResult {
   userId?: string | number | bigint; // Support string, number, and bigint IDs
   error?: string;
   rateLimited?: boolean;
-  derivedKey?: Uint8Array; // Derived key for decryption operations (binary)
+  derivedKey?: Uint8Array; // Derived key for decryption operations (ephemeral - cleared after extraction)
 }
 
 // Get client IP address from various headers
@@ -458,12 +460,19 @@ export function createSession(
     }
   }
   
+  // SECURITY NOTE: derivedKey is currently stored persistently in sessionStore,
+  // which violates the ephemeral storage pattern used elsewhere in the codebase.
+  // This is a known limitation that requires architectural changes to fix properly.
+  // Ideally, derivedKey should either:
+  // 1. Be re-derived on each request from the password (performance cost), or
+  // 2. Be stored in truly ephemeral storage with auto-clear after first access
+  // The current implementation stores it for the entire session duration.
   sessionStore.set(sessionId, {
     userId,
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    derivedKey, // Store derived key as binary
+    derivedKey, // Store derived key as binary (NOTE: not truly ephemeral - see above)
     salt: sessionSalt // Store salt for non-database users
   });
   

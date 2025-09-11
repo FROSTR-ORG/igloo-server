@@ -3,7 +3,7 @@
   "version": "0.1.7",
   "scripts": {
     "start": "bun run src/server.ts",
-    "start:headless": "[ \"$HEADLESS\" = \"true\" ] && echo 'Headless mode: skipping frontend build' || bun run build:conditional && bun run start",
+    "start:headless": "if [ \"$HEADLESS\" = \"true\" ]; then echo 'Headless mode: skipping frontend build'; else bun run build; fi && bun run start",
     "build:css": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --watch",
     "build:css:prod": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --minify",
     "build:js": "esbuild frontend/index.tsx --bundle --outfile=static/app.js --jsx=automatic",

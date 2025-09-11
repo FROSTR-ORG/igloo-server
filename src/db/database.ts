@@ -21,8 +21,12 @@ if (!existsSync(DB_DIR)) {
 }
 
 // Initialize database
-// Note: Bun's SQLite doesn't support safeIntegers option like better-sqlite3
-// IDs remain safe as AUTOINCREMENT unlikely to exceed Number.MAX_SAFE_INTEGER (2^53-1)
+// SECURITY NOTE: Bun's SQLite implementation doesn't support the safeIntegers option
+// that's available in better-sqlite3. This means INTEGER values exceeding JavaScript's
+// Number.MAX_SAFE_INTEGER (2^53-1 = 9,007,199,254,740,991) may lose precision.
+// For our use case with AUTOINCREMENT IDs, this is unlikely to be an issue as we'd need
+// over 9 quadrillion users. If precision is critical for large integers in the future,
+// consider using TEXT columns or implementing custom BigInt serialization.
 const db = new Database(DB_FILE);
 
 // Enable foreign keys
