@@ -59,10 +59,12 @@ function loadOrGenerateSessionSecret(): string | null {
     // Check if secret already exists
     if (existsSync(SESSION_SECRET_FILE)) {
       const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
-      if (secret && secret.length >= 32) {
+      // Validate format: must be exactly 64 hex characters (32 bytes)
+      if (/^[0-9a-f]{64}$/i.test(secret)) {
         console.log('🔑 SESSION_SECRET loaded from secure storage');
         return secret;
       }
+      console.warn('⚠️  Existing SESSION_SECRET is invalid format, generating new one');
     }
     
     // Generate new secret (32 bytes = 64 hex characters)
@@ -187,18 +189,30 @@ function validateSessionSecret(): string | null {
     sessionSecret = generatedSecret;
     process.env.SESSION_SECRET = generatedSecret;
   } else {
-    // Using provided SESSION_SECRET from environment
-    console.log('🔐 SESSION_SECRET configured via environment variable');
-  }
-  
-  // Validate length
-  if (sessionSecret && sessionSecret.length < 32) {
-    const message = 'SESSION_SECRET should be at least 32 characters long for security';
-    if (isProduction) {
+    // Validate provided SESSION_SECRET from environment
+    // Must be exactly 64 hex characters (32 bytes)
+    if (!/^[0-9a-f]{64}$/i.test(sessionSecret)) {
+      const message = 'SESSION_SECRET must be a 64-character hex string (32 bytes)';
       console.error(`❌ SECURITY ERROR: ${message}`);
-      process.exit(1);
+      
+      // In production, exit immediately for security
+      if (isProduction) {
+        process.exit(1);
+      }
+      
+      // In development, attempt to auto-generate a valid secret
+      console.warn('⚠️  Attempting to auto-generate a valid SESSION_SECRET...');
+      const generatedSecret = loadOrGenerateSessionSecret();
+      
+      if (!generatedSecret) {
+        console.error('❌ Failed to auto-generate SESSION_SECRET. Sessions will be disabled.');
+        return null;
+      }
+      
+      sessionSecret = generatedSecret;
+      process.env.SESSION_SECRET = generatedSecret;
     } else {
-      console.warn(`⚠️  WARNING: ${message}`);
+      console.log('🔐 SESSION_SECRET configured via environment variable');
     }
   }
   

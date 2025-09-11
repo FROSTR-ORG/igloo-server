@@ -25,9 +25,20 @@ export const RELAYS: string[] = (() => {
 export const HOST_NAME = process.env['HOST_NAME'] ?? 'localhost'
 export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
 
-// Raw credential strings for igloo-core functions - optional to allow server to start without them
-export const GROUP_CRED = process.env['GROUP_CRED']
-export const SHARE_CRED = process.env['SHARE_CRED']
+// Raw credential strings for igloo-core functions - treat empty/whitespace as absent
+export const GROUP_CRED = (() => {
+  const cred = process.env['GROUP_CRED'];
+  if (!cred) return undefined;
+  const trimmed = cred.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+})();
+
+export const SHARE_CRED = (() => {
+  const cred = process.env['SHARE_CRED'];
+  if (!cred) return undefined;
+  const trimmed = cred.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+})();
 
 // Admin secret for initial onboarding - treat empty/whitespace and sentinel value as absent
 export const ADMIN_SECRET = (() => {
@@ -39,11 +50,13 @@ export const ADMIN_SECRET = (() => {
   return trimmed.length > 0 ? trimmed : undefined;
 })();
 
-// Headless mode - parse boolean flexibly (case-insensitive)
+// Headless mode - parse boolean flexibly, treat empty/whitespace as false
 export const HEADLESS = (() => {
   const value = process.env['HEADLESS'];
   if (!value) return false;
-  const normalized = value.toLowerCase().trim();
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const normalized = trimmed.toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
 })();
 

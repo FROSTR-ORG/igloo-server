@@ -6,8 +6,9 @@ import {
   validateEnvKeys, 
   getSecureCorsHeaders
 } from './utils.js';
-import { HEADLESS } from '../const.js';
+import { HEADLESS, ADMIN_SECRET } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
+import { validateAdminSecret } from './onboarding.js';
 import { createAndStartNode } from './node-manager.js';
 
 // Add a lock to prevent concurrent node updates
@@ -108,7 +109,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   
   const corsHeaders = getSecureCorsHeaders(req);
   
-  // Authentication required for POST requests in both modes
+  // Authentication and admin privileges required for POST requests in both modes
   if (req.method === 'POST') {
     if (!auth || typeof auth !== 'object' || !auth.authenticated) {
       return Response.json(
@@ -117,15 +118,23 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
       );
     }
     
-    // In database mode, require a valid database user (not API key/basic auth)
+    // In database mode, require admin privileges
     if (!HEADLESS) {
-      const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) || 
-                         (typeof auth.userId === 'bigint' && auth.userId > 0n);
-      if (!validUserId) {
-        return Response.json(
-          { error: 'Database user authentication required for environment modifications' },
-          { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
-        );
+      // Check for ADMIN_SECRET in Authorization header
+      const adminSecret = req.headers.get('X-Admin-Secret') || 
+                         req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+      
+      const isAdmin = await validateAdminSecret(adminSecret);
+      if (!isAdmin) {
+        // Also allow the first user (admin user) to modify environment
+        const validUserId = (typeof auth.userId === 'number' && auth.userId === 1) || 
+                           (typeof auth.userId === 'bigint' && auth.userId === 1n);
+        if (!validUserId) {
+          return Response.json(
+            { error: 'Admin privileges required for environment modifications' },
+            { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+          );
+        }
       }
     }
   }
@@ -297,6 +306,24 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
             );
           }
+          
+          // Require admin privileges in database mode
+          const adminSecret = req.headers.get('X-Admin-Secret') || 
+                             req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+          
+          const isAdmin = await validateAdminSecret(adminSecret);
+          if (!isAdmin) {
+            // Also allow the first user (admin user) to delete environment vars
+            const validUserId = (auth && ((typeof auth.userId === 'number' && auth.userId === 1) || 
+                               (typeof auth.userId === 'bigint' && auth.userId === 1n)));
+            if (!validUserId) {
+              return Response.json(
+                { error: 'Admin privileges required for deleting environment variables' },
+                { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+              );
+            }
+          }
+          
           const body = await req.json();
           const { keys } = body;
           
