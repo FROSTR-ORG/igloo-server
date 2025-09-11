@@ -23,34 +23,48 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
     };
   } else {
     // Database mode - get from authenticated user's stored credentials
-    const password = auth?.getPassword?.();
-    const derivedKey = auth?.getDerivedKey?.();
+    if (!auth?.authenticated || (typeof auth.userId !== 'number' && typeof auth.userId !== 'bigint')) {
+      return null;
+    }
     
-    if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint') && (password || derivedKey)) {
-      // Dynamic import to avoid bundling DB code in headless builds
-      const { getUserCredentials } = await import('../db/database.js');
-      
-      let secret: string | Uint8Array | null = null;
-      let isDerivedKey = false;
+    // Get authentication secret - avoid double-consuming ephemeral getters
+    let secret: string | Uint8Array | null = null;
+    let isDerivedKey = false;
+    
+    // Try password first (if getter exists and returns a value)
+    if (auth.getPassword) {
+      const password = auth.getPassword();
       if (password) {
         secret = password;
-      } else if (derivedKey != null) {
-        // Keep binary and let DB layer convert/validate
+        isDerivedKey = false;
+      }
+    }
+    
+    // Only try derivedKey if password wasn't available
+    if (!secret && auth.getDerivedKey) {
+      const derivedKey = auth.getDerivedKey();
+      if (derivedKey) {
         secret = derivedKey;
         isDerivedKey = true;
       }
-      if (!secret) return null;
-      let credentials;
-      try {
-        credentials = getUserCredentials(
-          auth.userId,
-          secret,
-          isDerivedKey
-        );
-      } catch (error) {
-        console.error('Failed to retrieve user credentials for peers:', error);
-        return null;
-      }
+    }
+    
+    // No authentication secret available
+    if (!secret) {
+      return null;
+    }
+    
+    try {
+      // Dynamic import to avoid bundling DB code in headless builds
+      const { getUserCredentials } = await import('../db/database.js');
+      
+      // Await the call to support both sync and async implementations
+      const credentials = await getUserCredentials(
+        auth.userId,
+        secret,
+        isDerivedKey
+      );
+      
       if (credentials) {
         // Convert nulls to undefined for consistency with expected type
         return {
@@ -59,8 +73,10 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
         };
       }
       return null;
+    } catch (error) {
+      console.error('Failed to retrieve user credentials for peers:', error);
+      return null;
     }
-    return null;
   }
 }
 

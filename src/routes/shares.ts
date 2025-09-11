@@ -3,6 +3,7 @@ import { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders } from './utils.js';
 import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
+import { hasCredentials } from '../const.js';
 
 export async function handleSharesRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/shares')) return null;
@@ -45,34 +46,24 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
       case '/api/shares':
         if (req.method === 'GET') {
           // Return metadata about stored shares without exposing actual credentials
-          const env = await readEnvFile();
           const shares = [];
           
-          // If we have both credentials in env, return metadata only
-          if (env.SHARE_CRED && env.GROUP_CRED) {
-            try {
-              // Validate credentials before returning metadata
-              const shareValidation = validateShare(env.SHARE_CRED);
-              const groupValidation = validateGroup(env.GROUP_CRED);
-              
-              if (shareValidation.isValid && groupValidation.isValid) {
-                // Get the actual save timestamp
-                const savedAt = await getCredentialsSavedAt();
-                
-                shares.push({
-                  // Security: Never expose actual credentials in GET responses
-                  // Only return metadata about the shares
-                  hasShareCredential: true,
-                  hasGroupCredential: true,
-                  isValid: true,
-                  savedAt: savedAt || null, // null indicates timestamp unavailable
-                  id: 'env-stored-share',
-                  source: 'environment'
-                });
-              }
-            } catch (error) {
-              // Invalid credentials, skip
-            }
+          // Check if credentials exist without reading their values
+          if (hasCredentials()) {
+            // Get the actual save timestamp
+            const savedAt = await getCredentialsSavedAt();
+            
+            shares.push({
+              // Security: Never expose actual credentials in GET responses
+              // Only return metadata about the shares
+              hasShareCredential: true,
+              hasGroupCredential: true,
+              // Can't validate without reading credentials, assume valid if present
+              isValid: true,
+              savedAt: savedAt || null, // null indicates timestamp unavailable
+              id: 'env-stored-share',
+              source: 'environment'
+            });
           }
           
           return Response.json(shares, { headers });

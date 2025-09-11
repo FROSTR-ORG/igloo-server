@@ -274,7 +274,7 @@ export async function handleOnboardingRoute(
       ...headers,
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-      'Vary': 'Origin',
+      'Vary': 'Authorization, Origin',  // Include both to prevent cache key collisions
     };
     return new Response(null, { status: 200, headers: optionsHeaders });
   }

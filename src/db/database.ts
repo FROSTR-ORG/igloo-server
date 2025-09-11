@@ -21,6 +21,8 @@ if (!existsSync(DB_DIR)) {
 }
 
 // Initialize database
+// Note: Bun's SQLite doesn't support safeIntegers option like better-sqlite3
+// IDs remain safe as AUTOINCREMENT unlikely to exceed Number.MAX_SAFE_INTEGER (2^53-1)
 const db = new Database(DB_FILE);
 
 // Enable foreign keys
@@ -102,6 +104,14 @@ const encrypt = (text: string, key: string): string => {
     // Derive encryption key from the provided key string and user's salt
     const keyBuffer = Buffer.from(key, 'hex');
     
+    // Validate key length for AES-256-GCM
+    if (keyBuffer.length !== AES_CONFIG.KEY_LENGTH) {
+      throw new Error(
+        `Invalid encryption key length: expected ${AES_CONFIG.KEY_LENGTH} bytes for ${AES_CONFIG.ALGORITHM}, ` +
+        `got ${keyBuffer.length} bytes`
+      );
+    }
+    
     // Create cipher
     const cipher = createCipheriv(AES_CONFIG.ALGORITHM, keyBuffer, iv);
     
@@ -138,6 +148,14 @@ const decrypt = (ciphertext: string, key: string): string => {
     
     // Derive decryption key
     const keyBuffer = Buffer.from(key, 'hex');
+    
+    // Validate key length for AES-256-GCM
+    if (keyBuffer.length !== AES_CONFIG.KEY_LENGTH) {
+      throw new Error(
+        `Invalid decryption key length: expected ${AES_CONFIG.KEY_LENGTH} bytes for ${AES_CONFIG.ALGORITHM}, ` +
+        `got ${keyBuffer.length} bytes`
+      );
+    }
     
     // Create decipher
     const decipher = createDecipheriv(AES_CONFIG.ALGORITHM, keyBuffer, iv);
@@ -193,7 +211,7 @@ export const isDatabaseInitialized = (): boolean => {
 export const createUser = async (
   username: string, 
   password: string
-): Promise<{ success: boolean; error?: string; userId?: number }> => {
+): Promise<{ success: boolean; error?: string; userId?: number | bigint }> => {
   try {
     // Hash password using Bun's built-in password API with configured Argon2id parameters
     const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
@@ -213,8 +231,8 @@ export const createUser = async (
     const salt = randomBytes(SALT_CONFIG.LENGTH).toString('hex');
     stmt.run(username, passwordHash, salt);
     
-    // Get the last inserted ID
-    const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number };
+    // Get the last inserted ID (returns number or bigint based on size)
+    const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
     
     return {
       success: true,
