@@ -6,7 +6,7 @@ import {
   validateShare
 } from '@frostr/igloo-core';
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
 
 export async function handleRecoveryRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
@@ -15,10 +15,13 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store', // Prevent caching of sensitive recovery operations
     ...corsHeaders,
+    'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };

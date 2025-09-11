@@ -4,9 +4,10 @@ import {
   writeEnvFile, 
   filterPublicEnvObject, 
   validateEnvKeys, 
-  getSecureCorsHeaders
+  getSecureCorsHeaders,
+  mergeVaryHeaders
 } from './utils.js';
-import { HEADLESS, ADMIN_SECRET } from '../const.js';
+import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
 import { createAndStartNode } from './node-manager.js';
@@ -109,12 +110,14 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   // Authentication and admin privileges required for POST requests in both modes
   if (req.method === 'POST') {
     if (!auth || typeof auth !== 'object' || !auth.authenticated) {
       return Response.json(
         { error: 'Authentication required for environment modifications' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
       );
     }
     
@@ -132,7 +135,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         if (!validUserId) {
           return Response.json(
             { error: 'Admin privileges required for environment modifications' },
-            { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+            { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
           );
         }
       }
@@ -144,14 +147,14 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     if (!auth || typeof auth !== 'object') {
       return Response.json(
         { error: 'Authentication required' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
       );
     }
     
     if (!auth.authenticated) {
       return Response.json(
         { error: 'Invalid authentication' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
       );
     }
     
@@ -160,7 +163,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     if (!validUserId) {
       return Response.json(
         { error: 'Invalid user authentication' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
       );
     }
   }
@@ -168,6 +171,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
+    'Vary': mergedVary,
   };
 
   if (req.method === 'OPTIONS') {
@@ -240,7 +244,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           if (HEADLESS) {
             return Response.json(
               { error: 'Environment modifications are not allowed in headless mode' },
-              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
             );
           }
           const body = await req.json();
@@ -303,7 +307,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           if (HEADLESS) {
             return Response.json(
               { error: 'Environment modifications are not allowed in headless mode' },
-              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
             );
           }
           
@@ -319,7 +323,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             if (!validUserId) {
               return Response.json(
                 { error: 'Admin privileges required for deleting environment variables' },
-                { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+                { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
               );
             }
           }

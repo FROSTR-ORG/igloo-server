@@ -1,6 +1,6 @@
 import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
 import { hasCredentials } from '../const.js';
@@ -11,11 +11,14 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   // Allow CORS preflight without authentication

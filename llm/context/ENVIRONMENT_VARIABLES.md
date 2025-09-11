@@ -117,9 +117,18 @@ process.env.SHARE_CRED = "bfshare1qqsqp..."
 ```typescript
 // Encrypted storage with two-layer security:
 // 1. User authentication: Password hashing uses Argon2id via Bun.password (while still verifying legacy bcrypt hashes).
-// 2. Credential encryption: Derives a 32-byte key using PBKDF2 with SHA-256 (see `PBKDF2_CONFIG.ITERATIONS` in `src/config/crypto.ts`) before applying AES-256-GCM.
+// 2. Credential encryption: Key derivation and encryption details:
+//    - Algorithm: PBKDF2-HMAC-SHA256
+//    - Iterations: 200000 (PBKDF2_CONFIG.ITERATIONS)
+//    - Key Length: 32 bytes (256 bits, PBKDF2_CONFIG.KEY_LENGTH)
+//    - Salt: 32 bytes (256 bits, hex-encoded as 64 chars, SALT_CONFIG.LENGTH)
+//    - Encryption: AES-256-GCM with the derived key
+// 3. Salt handling:
+//    - Database users: Persistent per-user salt stored in database (randomBytes(SALT_CONFIG.LENGTH))
+//    - Non-database users: Ephemeral 32-byte session-specific salts
 // User's plaintext password (not the Argon2id hash) is used to derive the encryption key
 // Credentials never stored in plain text
+// See: src/config/crypto.ts, src/db/database.ts, src/routes/auth.ts
 ```
 
 ### 2. User Authentication Models

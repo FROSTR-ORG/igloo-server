@@ -1,5 +1,5 @@
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, readPublicEnvFile, getValidRelays } from './utils.js';
+import { getSecureCorsHeaders, readPublicEnvFile, getValidRelays, mergeVaryHeaders } from './utils.js';
 import { getNodeHealth } from '../node/manager.js';
 import { HEADLESS, hasCredentials } from '../const.js';
 
@@ -9,9 +9,12 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
+    'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
   };

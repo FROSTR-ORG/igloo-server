@@ -73,7 +73,7 @@ Before initiating a release, ensure:
 
 - **Branch**: You MUST be on the `dev` branch
 - **Working Directory**: Must be clean (no uncommitted changes)
-- **Dependencies**: Bun/Node.js installed and working
+- **Dependencies**: Bun runtime installed and working (required); Node.js and npm installed (required for version bump via `npm version` command)
 - **Port 8002**: Must be available for server testing
 
 ### 2. Release Script Execution (`scripts/release.sh`)

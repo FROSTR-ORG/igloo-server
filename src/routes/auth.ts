@@ -245,8 +245,28 @@ export const AUTH_CONFIG = {
 
 // Derive an ephemeral key from password and salt, returning as Uint8Array
 function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
-  // Convert salt to Buffer if it's a hex string (for backward compatibility)
-  const saltBuffer = typeof salt === 'string' ? Buffer.from(salt, 'hex') : salt;
+  let saltBuffer: Buffer;
+  
+  if (typeof salt === 'string') {
+    // Strict validation for hex salt strings
+    const EXPECTED_HEX_LENGTH = 64; // 32 bytes = 64 hex chars (SALT_CONFIG.LENGTH * 2)
+    if (salt.length !== EXPECTED_HEX_LENGTH) {
+      throw new Error(
+        `Invalid salt length: expected 32 bytes (${EXPECTED_HEX_LENGTH} hex chars), got ${salt.length} chars`
+      );
+    }
+    if (!/^[0-9a-fA-F]+$/.test(salt)) {
+      throw new Error('Invalid salt format: must be hexadecimal string');
+    }
+    saltBuffer = Buffer.from(salt, 'hex');
+  } else {
+    // For Uint8Array, validate length
+    if (salt.length !== 32) {
+      throw new Error(`Invalid salt length: expected 32 bytes, got ${salt.length} bytes`);
+    }
+    saltBuffer = Buffer.from(salt);
+  }
+  
   const key = pbkdf2Sync(
     password,
     saltBuffer,

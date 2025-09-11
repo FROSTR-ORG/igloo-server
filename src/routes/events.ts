@@ -1,6 +1,6 @@
 import { RouteContext, RequestAuth } from './types.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 
 export async function handleEventsRoute(req: Request, url: URL, _context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (url.pathname !== '/api/events') return null;
@@ -8,11 +8,14 @@ export async function handleEventsRoute(req: Request, url: URL, _context: RouteC
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   // Allow CORS preflight without authentication

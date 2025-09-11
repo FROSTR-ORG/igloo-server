@@ -32,7 +32,7 @@ import {
   authenticate,
   checkRateLimit 
 } from './auth.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
 
 // Unified router function
@@ -47,12 +47,15 @@ export async function handleRequest(
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   // Set CORS headers for all API endpoints
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   // Handle preflight OPTIONS request for all API endpoints

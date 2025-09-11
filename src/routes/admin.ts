@@ -1,5 +1,5 @@
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { RouteContext } from './types.js';
 import { getAllUsers, deleteUser, isDatabaseInitialized } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
@@ -68,12 +68,16 @@ export async function handleAdminRoute(
   if (!url.pathname.startsWith('/api/admin')) return null;
 
   const corsHeaders = getSecureCorsHeaders(req);
+  
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   if (req.method === 'OPTIONS') {

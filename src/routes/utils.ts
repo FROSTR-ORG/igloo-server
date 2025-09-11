@@ -414,15 +414,22 @@ export function getSecureCorsHeaders(req: Request): Record<string, string> {
       .map(origin => origin.trim())
       .filter(origin => origin.length > 0);
 
-    // Check if request origin is in allowed list
-    if (allowedOrigins.includes(requestOrigin) || allowedOrigins.includes('*')) {
+    // Wildcard vs specific-origin reflection
+    const allowsAll = allowedOrigins.includes('*');
+    if (allowsAll) {
+      // Wildcard response: identical for all origins; do not set Vary
+      headers['Access-Control-Allow-Origin'] = '*';
+    } else if (allowedOrigins.includes(requestOrigin)) {
+      // Reflect specific origin and vary accordingly to protect caches
       headers['Access-Control-Allow-Origin'] = requestOrigin;
+      headers['Vary'] = 'Origin';
     }
     // If origin is not allowed, don't set the header (CORS will block the request)
   } else if (!allowedOriginsEnv) {
     // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
     // In production, ALLOWED_ORIGINS should always be configured
     headers['Access-Control-Allow-Origin'] = '*';
+    // Wildcard doesn't need Vary: Origin since response is the same for all origins
     if (process.env.NODE_ENV === 'production') {
       console.warn('SECURITY WARNING: ALLOWED_ORIGINS not configured in production. Using wildcard (*) for CORS.');
     }
@@ -430,3 +437,25 @@ export function getSecureCorsHeaders(req: Request): Record<string, string> {
 
   return headers;
 } 
+
+/**
+ * Build a consolidated Vary header value for API responses.
+ * Starts with Authorization, Cookie, and X-API-Key, then merges any values
+ * present in the provided CORS headers' Vary entry, deduplicating and
+ * preserving insertion order. Returns a comma-separated string.
+ *
+ * @param corsHeaders - Headers returned by getSecureCorsHeaders(req)
+ * @returns Comma-separated Vary header string
+ */
+export function mergeVaryHeaders(corsHeaders: Record<string, string>): string {
+  const base: string[] = ['Authorization', 'Cookie', 'X-API-Key', 'X-Session-ID'];
+  const varyFromCors = corsHeaders['Vary'];
+  if (varyFromCors) {
+    const parts = varyFromCors
+      .split(',')
+      .map(p => p.trim())
+      .filter(Boolean);
+    for (const part of parts) if (!base.includes(part)) base.push(part);
+  }
+  return base.join(', ');
+}

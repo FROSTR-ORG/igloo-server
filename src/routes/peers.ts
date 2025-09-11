@@ -6,7 +6,7 @@ import {
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
-import { readEnvFile, getSecureCorsHeaders } from './utils.js';
+import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { HEADLESS } from '../const.js';
 
 // Constants - use igloo-core default
@@ -86,11 +86,14 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
   
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   try {

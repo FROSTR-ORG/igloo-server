@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useMemo } from "react"
 import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
@@ -299,6 +299,12 @@ const App: React.FC = () => {
     return headers;
   };
 
+  // Memoize auth headers to prevent unnecessary re-renders in child components
+  // Only recreate when authentication state changes
+  const memoizedAuthHeaders = useMemo(() => {
+    return getAuthHeaders();
+  }, [authState.sessionId, authState.apiKey, authState.basicAuth]);
+
   const handleOnboardingComplete = () => {
     // After onboarding, reset state to show login
     setAuthState({
@@ -453,7 +459,7 @@ const App: React.FC = () => {
               <Signer 
                 initialData={signerData} 
                 ref={signerRef}
-                authHeaders={getAuthHeaders()}
+                authHeaders={memoizedAuthHeaders}
                 isHeadlessMode={authState.headlessMode ?? false}
                 onReady={() => signerRef.current?.checkStatus()}
               />
@@ -465,7 +471,7 @@ const App: React.FC = () => {
                 initialGroupCredential={signerData?.groupCredential}
                 defaultThreshold={signerData?.threshold}
                 defaultTotalShares={signerData?.totalShares}
-                authHeaders={getAuthHeaders()}
+                authHeaders={memoizedAuthHeaders}
               />
             </TabsContent>
           </Tabs>
