@@ -1,6 +1,7 @@
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { 
   readEnvFile, 
+  readPublicEnvFile,
   writeEnvFile, 
   filterPublicEnvObject, 
   validateEnvKeys, 
@@ -123,9 +124,14 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     
     // In database mode, require admin privileges
     if (!HEADLESS) {
-      // Check for ADMIN_SECRET in Authorization header
-      const adminSecret = req.headers.get('X-Admin-Secret') || 
-                         req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+      // Check for ADMIN_SECRET in X-Admin-Secret header or Bearer token in Authorization
+      let adminSecret = req.headers.get('X-Admin-Secret');
+      if (!adminSecret) {
+        const authHeader = req.headers.get('Authorization');
+        if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+          adminSecret = authHeader.substring(7).trim();
+        }
+      }
       
       const isAdmin = await validateAdminSecret(adminSecret);
       if (!isAdmin) {
@@ -185,8 +191,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           // In headless mode, return env vars
           // In database mode, try to return user credentials in env format for compatibility
           if (HEADLESS) {
-            const env = await readEnvFile();
-            const publicEnv = filterPublicEnvObject(env);
+            const publicEnv = await readPublicEnvFile();
             return Response.json(publicEnv, { headers });
           } else {
             // Database mode - return empty or user's credentials if available

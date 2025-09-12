@@ -48,7 +48,7 @@ Starting with this version, Igloo Server **automatically generates and persists*
 
 3. **Manual Override**: You can still set your own:
    ```bash
-   SESSION_SECRET=your-custom-64-char-secret
+   SESSION_SECRET=<EXAMPLE_SESSION_SECRET>  # Replace with 64-character secret
    ```
 
 ### Security Benefits
@@ -75,7 +75,7 @@ Starting with this version, Igloo Server **automatically generates and persists*
 
 2. **Set the admin secret**:
    ```bash
-   ADMIN_SECRET=your-64-character-hex-string-here
+   ADMIN_SECRET=<EXAMPLE_ADMIN_SECRET>  # Replace with 64-character hex string
    ```
 
 3. **Important ADMIN_SECRET Guidelines**:
@@ -131,7 +131,7 @@ Igloo Server distinguishes between two user types for security:
    
    **Option A: API Key (Recommended for API access)**
    ```bash
-   API_KEY=your-super-secure-random-api-key-here
+   API_KEY=<EXAMPLE_API_KEY>  # Replace with secure random API key
    ```
    Generate a secure key: `openssl rand -hex 32`
    
@@ -149,7 +149,7 @@ Igloo Server distinguishes between two user types for security:
    # SESSION_SECRET is now auto-generated if not provided!
    # The server creates and saves it securely in data/.session-secret
    # You can still override with your own value:
-   # SESSION_SECRET=your-custom-session-secret
+   # SESSION_SECRET=<EXAMPLE_SESSION_SECRET>  # Replace if needed
    SESSION_TIMEOUT=3600  # 1 hour
    ```
    Auto-generation uses cryptographically secure random bytes
@@ -164,7 +164,7 @@ AUTH_ENABLED=false  # Only for local development
 **Production** (always secure):
 ```bash
 AUTH_ENABLED=true
-API_KEY=your-production-api-key
+API_KEY=<EXAMPLE_PRODUCTION_API_KEY>  # Replace with production API key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASS=your-strong-password
 RATE_LIMIT_ENABLED=true
@@ -295,7 +295,7 @@ echo "*.pem" >> .gitignore
 ```bash
 # Database mode for personal use across devices
 HEADLESS=false
-ADMIN_SECRET=your-admin-secret-for-setup
+ADMIN_SECRET=<EXAMPLE_ADMIN_SECRET>  # Replace with actual secret
 DB_PATH=/secure/location/data
 AUTH_ENABLED=true
 ALLOWED_ORIGINS=https://yourdomain.com
@@ -307,10 +307,10 @@ SESSION_TIMEOUT=7200  # 2 hours
 ```bash
 # Database mode for team with multiple users
 HEADLESS=false
-ADMIN_SECRET=team-admin-secret-for-onboarding
-DB_PATH=/var/lib/igloo/data
+ADMIN_SECRET=<EXAMPLE_ADMIN_SECRET>  # Replace with actual secret
+DB_PATH=<EXAMPLE_DB_PATH>  # e.g., /var/lib/igloo/data
 AUTH_ENABLED=true
-API_KEY=team-api-key  # For CI/CD integration
+API_KEY=<EXAMPLE_API_KEY>  # Replace with actual API key for CI/CD
 ALLOWED_ORIGINS=https://team.company.com,https://admin.company.com
 RATE_LIMIT_MAX=200
 SESSION_TIMEOUT=3600  # 1 hour
@@ -320,10 +320,10 @@ SESSION_TIMEOUT=3600  # 1 hour
 ```bash
 # Maximum security with database mode
 HEADLESS=false
-ADMIN_SECRET=enterprise-grade-secret-512-bits
+ADMIN_SECRET=<EXAMPLE_ENTERPRISE_ADMIN_SECRET>  # Replace with strong secret
 DB_PATH=/encrypted/volume/igloo/data
 AUTH_ENABLED=true
-API_KEY=enterprise-api-key-with-special-chars
+API_KEY=<EXAMPLE_ENTERPRISE_API_KEY>  # Replace with complex API key
 ALLOWED_ORIGINS=https://secure.enterprise.com
 # SESSION_SECRET auto-generated and persisted in data/.session-secret
 SESSION_TIMEOUT=1800   # 30 minutes
@@ -339,10 +339,10 @@ NODE_ENV=production
 ```bash
 # Headless mode for backward compatibility
 HEADLESS=true
-GROUP_CRED=bfgroup1...
-SHARE_CRED=bfshare1...
+GROUP_CRED=<EXAMPLE_GROUP_CRED>  # Replace with actual group credential
+SHARE_CRED=<EXAMPLE_SHARE_CRED>  # Replace with actual share credential
 AUTH_ENABLED=true
-API_KEY=your-personal-api-key
+API_KEY=<EXAMPLE_PERSONAL_API_KEY>  # Replace with your API key
 ALLOWED_ORIGINS=https://yourdomain.com
 RATE_LIMIT_MAX=50
 SESSION_TIMEOUT=7200  # 2 hours
@@ -352,12 +352,12 @@ SESSION_TIMEOUT=7200  # 2 hours
 ```bash
 # Headless mode for single signing node
 HEADLESS=true
-GROUP_CRED=bfgroup1...
-SHARE_CRED=bfshare1...
+GROUP_CRED=<EXAMPLE_GROUP_CRED>  # Replace with actual group credential
+SHARE_CRED=<EXAMPLE_SHARE_CRED>  # Replace with actual share credential
 AUTH_ENABLED=true
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASS=strong-password
-API_KEY=automation-key
+API_KEY=<EXAMPLE_AUTOMATION_KEY>  # Replace with automation API key
 ALLOWED_ORIGINS=https://server.domain.com
 RATE_LIMIT_MAX=100
 SESSION_TIMEOUT=3600  # 1 hour
@@ -522,7 +522,7 @@ echo "Backup completed successfully"
 4. Switch to database mode:
    ```bash
    HEADLESS=false
-   ADMIN_SECRET=your-admin-secret
+   ADMIN_SECRET=<EXAMPLE_ADMIN_SECRET>  # Replace with admin secret
    ```
 5. Complete onboarding flow
 
@@ -531,8 +531,8 @@ echo "Backup completed successfully"
 2. Set environment variables:
    ```bash
    HEADLESS=true
-   GROUP_CRED=exported-group-cred
-   SHARE_CRED=exported-share-cred
+   GROUP_CRED=<EXAMPLE_GROUP_CRED>  # Replace with exported group credential
+   SHARE_CRED=<EXAMPLE_SHARE_CRED>  # Replace with exported share credential
    ```
 3. Remove database file (optional)
 
@@ -637,7 +637,7 @@ bun run start
 
 # 2. Test with API key authentication
 AUTH_ENABLED=true
-API_KEY=test-api-key-12345
+API_KEY=<EXAMPLE_TEST_API_KEY>  # Replace with test API key
 curl -H "X-API-Key: test-api-key-12345" http://localhost:8002/api/status
 
 # 3. Test with basic authentication

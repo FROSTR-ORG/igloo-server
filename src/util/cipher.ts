@@ -21,7 +21,7 @@ export function derive_secret (
     throw new Error('Invalid salt format: must be hexadecimal string');
   }
   
-  const salt_bytes = Buffer.from(rand_salt, 'hex')
+  const salt_bytes = Buff.hex(rand_salt, SALT_CONFIG.LENGTH)
   
   // Use proper iteration count and key length from config
   const options    = { c: PBKDF2_CONFIG.ITERATIONS, dkLen: PBKDF2_CONFIG.KEY_LENGTH }
