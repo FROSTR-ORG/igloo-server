@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'crypto';
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { RouteContext } from './types.js';
 import { VALIDATION } from '../config/crypto.js';
 
@@ -260,13 +260,15 @@ export async function handleOnboardingRoute(
   if (!url.pathname.startsWith('/api/onboarding')) return null;
 
   const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     'Pragma': 'no-cache',
     'Expires': '0',
-    'Vary': 'Authorization',
     ...corsHeaders,
+    'Vary': mergedVary,
   };
 
   if (req.method === 'OPTIONS') {
@@ -274,7 +276,7 @@ export async function handleOnboardingRoute(
       ...headers,
       'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': 'Authorization, Content-Type',
-      'Vary': 'Authorization, Origin',  // Include both to prevent cache key collisions
+      'Vary': mergedVary,  // Use merged value to prevent cache key collisions
     };
     return new Response(null, { status: 200, headers: optionsHeaders });
   }

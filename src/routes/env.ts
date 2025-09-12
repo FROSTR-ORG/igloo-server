@@ -3,7 +3,6 @@ import {
   readEnvFile, 
   readPublicEnvFile,
   writeEnvFile, 
-  filterPublicEnvObject, 
   validateEnvKeys, 
   getSecureCorsHeaders,
   mergeVaryHeaders
@@ -125,7 +124,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     // In database mode, require admin privileges
     if (!HEADLESS) {
       // Check for ADMIN_SECRET in X-Admin-Secret header or Bearer token in Authorization
-      let adminSecret = req.headers.get('X-Admin-Secret');
+      let adminSecret = req.headers.get('X-Admin-Secret') ?? undefined;
       if (!adminSecret) {
         const authHeader = req.headers.get('Authorization');
         if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
@@ -252,7 +251,27 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
             );
           }
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const env = await readEnvFile();
           
           // Validate which keys are allowed to be updated
@@ -333,7 +352,27 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             }
           }
           
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { keys } = body;
           
           if (!Array.isArray(keys) || keys.length === 0) {

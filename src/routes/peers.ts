@@ -182,7 +182,27 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
             return Response.json({ error: 'Node not available' }, { status: 503, headers });
           }
           
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { target } = body;
           
           if (target === 'all') {

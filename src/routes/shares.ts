@@ -74,7 +74,27 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
         
         if (req.method === 'POST') {
           // Save share data (for future enhancement - could store in a file or database)
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { shareCredential, groupCredential } = body;
           
           if (!shareCredential || !groupCredential) {

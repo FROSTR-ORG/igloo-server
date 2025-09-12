@@ -4,6 +4,7 @@ import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 
 // Session secret persistence configuration
 // Properly handle DB_PATH whether it's a file or directory
@@ -586,12 +587,54 @@ export async function authenticate(req: Request): Promise<AuthResult> {
 
 // Login endpoint
 export async function handleLogin(req: Request): Promise<Response> {
+  // Get CORS headers for cross-origin support
+  const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
+  const baseHeaders = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Vary': mergedVary,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+  
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: baseHeaders });
+  }
+  
   if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
+    return new Response('Method not allowed', { status: 405, headers: baseHeaders });
   }
 
   try {
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return Response.json(
+          { error: 'Invalid JSON in request body' },
+          { status: 400, headers: { 
+            ...baseHeaders,
+            'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+          } }
+        );
+      }
+      throw error; // Re-throw non-JSON errors
+    }
+    
+    // Body must be a JSON object
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return Response.json(
+        { error: 'Request body must be a JSON object' },
+        { status: 400, headers: { 
+          ...baseHeaders,
+          'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+        } }
+      );
+    }
+    
     const { username, password, apiKey } = body;
 
     let authenticated = false;
@@ -682,7 +725,7 @@ export async function handleLogin(req: Request): Promise<Response> {
       return Response.json({ 
         success: false, 
         error: 'Invalid credentials' 
-      }, { status: 401 });
+      }, { status: 401, headers: baseHeaders });
     }
 
     const clientIP = getClientIP(req);
@@ -694,7 +737,7 @@ export async function handleLogin(req: Request): Promise<Response> {
         success: true,
         userId,
         warning: 'Session not created - SESSION_SECRET not configured. Authentication will be required for each request.'
-      });
+      }, { headers: baseHeaders });
     }
 
     return Response.json({
@@ -704,8 +747,8 @@ export async function handleLogin(req: Request): Promise<Response> {
       expiresIn: AUTH_CONFIG.SESSION_TIMEOUT
     }, {
       headers: {
-        'Set-Cookie': `session=${sessionId}; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`,
-        'Content-Type': 'application/json'
+        ...baseHeaders,
+        'Set-Cookie': `session=${sessionId}; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`
       }
     });
 
@@ -713,24 +756,36 @@ export async function handleLogin(req: Request): Promise<Response> {
     return Response.json({ 
       success: false, 
       error: 'Invalid request body' 
-    }, { status: 400 });
+    }, { status: 400, headers: baseHeaders });
   }
 }
 
 // Logout endpoint
 export function handleLogout(req: Request): Response {
+  // Get CORS headers for cross-origin support
+  const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Vary': mergedVary,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
+    'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+  };
+  
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+  
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
   
   if (sessionId) {
     sessionStore.delete(sessionId);
   }
 
-  return Response.json({ success: true }, {
-    headers: {
-      'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`,
-      'Content-Type': 'application/json'
-    }
-  });
+  return Response.json({ success: true }, { headers });
 }
 
 // Authentication middleware wrapper (deprecated - use explicit auth parameters instead)

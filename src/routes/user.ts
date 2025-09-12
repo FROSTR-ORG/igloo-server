@@ -6,7 +6,7 @@ import {
   deleteUserCredentials,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
@@ -49,21 +49,9 @@ export async function handleUserRoute(
   if (!url.pathname.startsWith('/api/user')) return null;
 
   const corsHeaders = getSecureCorsHeaders(req);
-  // Merge Vary header from CORS with Authorization/Cookie and deduplicate.
-  // We spread CORS headers first, then assign the merged Vary so it wins.
-  const varyFromCors = (corsHeaders as any)?.['Vary'] ?? (corsHeaders as any)?.['vary'];
-  const mergedVary = (() => {
-    const base: string[] = ['Authorization', 'Cookie'];
-    if (typeof varyFromCors === 'string' && varyFromCors.length > 0) {
-      const parts = varyFromCors
-        .split(',')
-        .map((p: string) => p.trim())
-        .filter(Boolean);
-      for (const part of parts) if (!base.includes(part)) base.push(part);
-    }
-    return base.join(', ');
-  })();
-  const { Vary: _ignoreVary, vary: _ignorevary, ...corsWithoutVary } = corsHeaders as Record<string, string>;
+  // Use utility function to merge Vary headers properly
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store, no-cache, must-revalidate, private',
@@ -71,7 +59,7 @@ export async function handleUserRoute(
     'Expires': '0',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
-    ...corsWithoutVary,
+    ...corsHeaders,
     'Vary': mergedVary,
   };
 
