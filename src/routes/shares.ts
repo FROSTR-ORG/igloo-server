@@ -1,51 +1,72 @@
 import { validateShare, validateGroup } from '@frostr/igloo-core';
-import { RouteContext } from './types.js';
-import { getSecureCorsHeaders } from './utils.js';
+import { RouteContext, RequestAuth } from './types.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
+import { authenticate, AUTH_CONFIG } from './auth.js';
+import { hasCredentials } from '../const.js';
 
-export async function handleSharesRoute(req: Request, url: URL, _context: RouteContext): Promise<Response | null> {
+export async function handleSharesRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/shares')) return null;
 
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
+  
+  const mergedVary = mergeVaryHeaders(corsHeaders);
   
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
+
+  // Allow CORS preflight without authentication
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+
+  // Check authentication - prefer passed auth, fallback to authenticate()
+  if (AUTH_CONFIG.ENABLED) {
+    // Use provided auth if available, otherwise authenticate the request
+    // Note: authenticate() always returns an AuthResult object, never null
+    const authToUse = _auth ?? await authenticate(req);
+    
+    // Explicit null check for extra safety (though authenticate never returns null)
+    if (!authToUse || !authToUse.authenticated) {
+      // Log failed authentication attempt for audit
+      context.addServerLog('warn', 'Unauthorized access attempt to shares endpoint', { clientIp: context.clientIp, requestId: context.requestId });
+      
+      return Response.json(
+        { error: 'Authentication required' }, 
+        { status: 401, headers }
+      );
+    }
+  }
 
   try {
     switch (url.pathname) {
       case '/api/shares':
         if (req.method === 'GET') {
-          // Return stored shares (for now, we'll use the current env credentials as an example)
-          const env = await readEnvFile();
+          // Return metadata about stored shares without exposing actual credentials
           const shares = [];
           
-          // If we have both credentials in env, return them as a share
-          if (env.SHARE_CRED && env.GROUP_CRED) {
-            try {
-              // Validate credentials before returning
-              const shareValidation = validateShare(env.SHARE_CRED);
-              const groupValidation = validateGroup(env.GROUP_CRED);
-              
-              if (shareValidation.isValid && groupValidation.isValid) {
-                // Get the actual save timestamp
-                const savedAt = await getCredentialsSavedAt();
-                
-                shares.push({
-                  shareCredential: env.SHARE_CRED,
-                  groupCredential: env.GROUP_CRED,
-                  savedAt: savedAt || new Date().toISOString(), // Fallback to current time if no timestamp found
-                  id: 'env-stored-share',
-                  source: 'environment'
-                });
-              }
-            } catch (error) {
-              // Invalid credentials, skip
-            }
+          // Check if credentials exist without reading their values
+          if (hasCredentials()) {
+            // Get the actual save timestamp
+            const savedAt = await getCredentialsSavedAt();
+            
+            shares.push({
+              // Security: Never expose actual credentials in GET responses
+              // Only return metadata about the shares
+              hasShareCredential: true,
+              hasGroupCredential: true,
+              // Can't validate without reading credentials, assume valid if present
+              isValid: true,
+              savedAt: savedAt || null, // null indicates timestamp unavailable
+              id: 'env-stored-share',
+              source: 'environment'
+            });
           }
           
           return Response.json(shares, { headers });
@@ -53,7 +74,27 @@ export async function handleSharesRoute(req: Request, url: URL, _context: RouteC
         
         if (req.method === 'POST') {
           // Save share data (for future enhancement - could store in a file or database)
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { shareCredential, groupCredential } = body;
           
           if (!shareCredential || !groupCredential) {

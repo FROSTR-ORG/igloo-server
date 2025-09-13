@@ -2,14 +2,29 @@ import { Buff }   from '@cmdcode/buff'
 import { gcm }    from '@noble/ciphers/aes'
 import { sha256 } from '@noble/hashes/sha256'
 import { pbkdf2 } from '@noble/hashes/pbkdf2'
+import { PBKDF2_CONFIG, SALT_CONFIG } from '../config/crypto.js'
 
 export function derive_secret (
   password  : string,
   rand_salt : string
 ) {
   const pass_bytes = Buff.str(password).digest
-  const salt_bytes = Buff.hex(rand_salt, 32)
-  const options    = { c: 32, dkLen: 32 }
+  
+  // Strict salt validation: expect SALT_CONFIG.LENGTH bytes as hex
+  const EXPECTED_HEX_LENGTH = SALT_CONFIG.LENGTH * 2; // 32 bytes = 64 hex chars
+  if (rand_salt.length !== EXPECTED_HEX_LENGTH) {
+    throw new Error(
+      `Invalid salt length: expected ${SALT_CONFIG.LENGTH} bytes (${EXPECTED_HEX_LENGTH} hex chars), got ${rand_salt.length} chars`
+    );
+  }
+  if (!/^[0-9a-fA-F]+$/.test(rand_salt)) {
+    throw new Error('Invalid salt format: must be hexadecimal string');
+  }
+  
+  const salt_bytes = Buff.hex(rand_salt, SALT_CONFIG.LENGTH)
+  
+  // Use proper iteration count and key length from config
+  const options    = { c: PBKDF2_CONFIG.ITERATIONS, dkLen: PBKDF2_CONFIG.KEY_LENGTH }
   const secret     = pbkdf2(sha256, pass_bytes, salt_bytes, options)
   return new Buff(secret).hex
 }

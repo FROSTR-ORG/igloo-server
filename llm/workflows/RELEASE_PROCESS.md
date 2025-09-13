@@ -73,7 +73,7 @@ Before initiating a release, ensure:
 
 - **Branch**: You MUST be on the `dev` branch
 - **Working Directory**: Must be clean (no uncommitted changes)
-- **Dependencies**: Bun/Node.js installed and working
+- **Dependencies**: Bun runtime installed and working (required); Node.js and npm installed (required for version bump via `npm version` command)
 - **Port 8002**: Must be available for server testing
 
 ### 2. Release Script Execution (`scripts/release.sh`)
@@ -165,33 +165,40 @@ The script performs these checks in sequence:
    ```
    Example: `release/prepare-v1.2.3`
 
-2. **Create and Push Branch**
+2. **Create Branch, Commit Version Bump, and Push**
    ```bash
    git checkout -b "$RELEASE_BRANCH"
+
+   # Stage and commit the version bump so the PR contains the change
+   git add package.json
+   git commit -m "chore(release): bump version to v${NEW_VERSION}"
+
+   # Push the branch to upload it to the remote repository
    git push origin "$RELEASE_BRANCH"
    ```
 
 ### 3. Manual Steps (Developer Action Required)
 
-After the script completes, you must:
+After the script pushes the release branch, you must create a pull request to merge the changes into the `main` branch.
 
-1. **Review Changes**
-   - Visit the comparison URL provided
-   - Example: `https://github.com/FROSTR-ORG/igloo-server/compare/master...release/prepare-v1.2.3`
+1.  **Create a Pull Request**
 
-2. **Create Pull Request**
-   - Source: `release/prepare-v{version}`
-   - Target: `master` branch
-   - Title: "Release v{version}"
-   - Description: Include changelog and notable changes
+    Pushing the branch makes it available on the remote repository. To create a pull request, you can use the GitHub web interface. GitHub will typically show a prompt to create a PR from a recently pushed branch, or you can use the comparison URL provided by the script.
 
-3. **Merge PR**
-   - Get approvals if required
-   - Merge to master to trigger automated release
+    Alternatively, if you have the [GitHub CLI](https://cli.github.com/) installed, you can create the pull request from your terminal:
+    ```bash
+    # Optional: Create the pull request using the GitHub CLI
+    # Replace <VERSION> with the new version number from the script's output
+    gh pr create --base main --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
+    ```
+
+2.  **Review and Merge PR**
+    - Get approvals if required.
+    - Merge the pull request to `main` to trigger the automated release workflow.
 
 ### 4. GitHub Actions Automation
 
-When the PR is merged to master:
+When the PR is merged to main:
 
 1. **Release Creation**
    - GitHub automatically creates a release
@@ -318,7 +325,7 @@ Apply appropriate labels for changelog categorization:
 ## Release Artifacts
 
 Each release produces:
-1. **Git Tag**: `v{version}` on master branch
+1. **Git Tag**: `v{version}` on main branch
 2. **GitHub Release**: With auto-generated changelog
 3. **Updated package.json**: New version number
 4. **Release Branch**: Archived as `release/prepare-v{version}`
@@ -329,9 +336,9 @@ If a release needs to be rolled back:
 
 1. **Revert on Master**
    ```bash
-   git checkout master
+   git checkout main
    git revert <merge-commit-hash>
-   git push origin master
+   git push origin main
    ```
 
 2. **Create Hotfix**
@@ -339,7 +346,7 @@ If a release needs to be rolled back:
    git checkout -b hotfix/v{version}-rollback
    # Make fixes
    git push origin hotfix/v{version}-rollback
-   # Create PR to master
+   # Create PR to main
    ```
 
 ## Monitoring Post-Release

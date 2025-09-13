@@ -5,7 +5,8 @@ Thank you for your interest in contributing to Igloo Server! This guide will hel
 ## Development Workflow
 
 ### Prerequisites
-- **Bun runtime** (recommended) or Node.js 18+
+- **Bun runtime** (required) - This project uses Bun-specific APIs. Install from [bun.sh](https://bun.sh/)
+- **Node.js 20+ and npm** (required for versioning and release tooling)
 - **Git** for version control
 - **Docker** (optional, for testing Docker builds)
 
@@ -142,7 +143,7 @@ git commit -m "chore: update dependencies"
 
 The project uses automated releases through GitHub Actions:
 
-1. **Push to master** triggers automatic release detection
+1. **Push to main** triggers automatic release detection
 2. **Version bumping** is based on commit messages:
    - `feat:` → minor version bump
    - `fix:` → patch version bump
@@ -199,7 +200,7 @@ git checkout -b release/prepare-vX.X.X
 git push origin release/prepare-vX.X.X
 ```
 
-Create a PR from `release/prepare-vX.X.X` → `master` with:
+Create a PR from `release/prepare-vX.X.X` → `main` with:
 - **Title**: `release: prepare for vX.X.X`
 - **Description**: Summary of changes, breaking changes, migration notes
 - **Checklist**: Verify all tests pass, documentation updated
@@ -207,13 +208,13 @@ Create a PR from `release/prepare-vX.X.X` → `master` with:
 #### 4. **Merge and Release**
 
 Once the release PR is approved:
-1. **Merge release PR** to master (this triggers automatic release)
+1. **Merge release PR** to main (this triggers automatic release)
 2. **Monitor GitHub Actions** for successful release
 3. **Verify release artifacts**:
    - GitHub release created
    - Docker images published
    - CHANGELOG.md updated
-4. **Sync dev branch**: `git checkout dev && git merge master && git push origin dev`
+4. **Sync dev branch**: `git checkout dev && git merge main && git push origin dev`
 
 #### 5. **Post-Release Verification**
 
@@ -226,14 +227,14 @@ Once the release PR is approved:
 For critical bug fixes:
 
 ```bash
-# Create hotfix branch from master
-git checkout master
+# Create hotfix branch from main
+git checkout main
 git checkout -b hotfix/critical-fix
 
 # Make fix and commit
 git commit -m "fix: critical security issue"
 
-# Push and create PR to master
+# Push and create PR to main
 git push origin hotfix/critical-fix
 ```
 
@@ -251,7 +252,7 @@ bun run release:major
 
 # Create a custom version
 npm version 1.2.3
-git push origin master --tags
+git push origin main --tags
 ```
 
 ### Release Artifacts
@@ -317,7 +318,7 @@ Use the provided PR template and include:
 1. **Automated checks** must pass
 2. **Code review** by maintainers
 3. **Testing** in different environments
-4. **Merge** to master branch
+4. **Merge** to main branch
 
 ## Security
 

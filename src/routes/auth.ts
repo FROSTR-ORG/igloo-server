@@ -1,28 +1,221 @@
-import { randomBytes, timingSafeEqual } from 'crypto';
+import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
+import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
+import path from 'path';
+import { HEADLESS } from '../const.js';
+import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
+import { PBKDF2_CONFIG } from '../config/crypto.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+
+// Session secret persistence configuration
+// Properly handle DB_PATH whether it's a file or directory
+function getSessionSecretDir(): string {
+  const dbPath = process.env.DB_PATH;
+  if (!dbPath) {
+    return path.join(process.cwd(), 'data');
+  }
+
+  try {
+    const stats = statSync(dbPath);
+    return stats.isFile() ? path.dirname(dbPath) : dbPath;
+  } catch {
+    // If path doesn't exist, infer more robustly
+    const normalized = path.normalize(dbPath);
+    const endsWithSep = normalized.endsWith(path.sep) || normalized.endsWith(path.win32.sep);
+    if (endsWithSep) return normalized;
+
+    const base = path.basename(normalized);
+    // Treat as file only if basename contains a non-leading dot (e.g., "file.ext")
+    const firstDot = base.indexOf('.');
+    const isHidden = firstDot === 0; // leading dot like .config
+    const hasNonLeadingDot = firstDot > 0; // any dot not at position 0
+    if (hasNonLeadingDot && !isHidden) {
+      return path.dirname(normalized);
+    }
+    // Default to directory in ambiguous cases
+    return normalized;
+  }
+}
+
+const SESSION_SECRET_DIR = getSessionSecretDir();
+const SESSION_SECRET_FILE = path.join(SESSION_SECRET_DIR, '.session-secret');
+
+// Load or generate a persistent SESSION_SECRET
+function loadOrGenerateSessionSecret(): string | null {
+  try {
+    // Ensure data directory exists with strict permissions
+    if (!existsSync(SESSION_SECRET_DIR)) {
+      mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
+    }
+    // Enforce strict permissions on the directory (0700)
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      // On Windows, chmod may be a no-op or limited; proceed best-effort
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
+    
+    // Check if secret already exists
+    if (existsSync(SESSION_SECRET_FILE)) {
+      const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
+      // Validate format: must be exactly 64 hex characters (32 bytes)
+      if (/^[0-9a-f]{64}$/i.test(secret)) {
+        console.log('🔑 SESSION_SECRET loaded from secure storage');
+        return secret;
+      }
+      console.warn('⚠️  Existing SESSION_SECRET is invalid format, generating new one');
+    }
+    
+    // Generate new secret (32 bytes = 64 hex characters)
+    const newSecret = randomBytes(32).toString('hex');
+    
+    // Atomically write the new secret with unique temp file
+    const tempFileName = `.session-secret.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
+    const tempFilePath = path.join(SESSION_SECRET_DIR, tempFileName);
+    let tempFileHandle: number | undefined;
+    let dirHandle: number | undefined;
+
+    try {
+      // Open temp file with exclusive flag to prevent races
+      tempFileHandle = openSync(tempFilePath, 'wx', 0o600);
+      // Write the secret to the temp file
+      writeSync(tempFileHandle, newSecret, 0, 'utf8');
+
+      // Open directory handle for fsync
+      try {
+        dirHandle = openSync(SESSION_SECRET_DIR, 'r');
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        // Windows doesn't support opening directories for fsync
+        console.warn('⚠️  Windows platform detected: Directory fsync not available. Session secret may be lost in case of system crash before filesystem cache flush.');
+        dirHandle = undefined;
+      }
+
+      // First, ensure the temp file is on disk
+      fsyncSync(tempFileHandle);
+
+      // Atomically rename the temp file to the final destination
+      renameSync(tempFilePath, SESSION_SECRET_FILE);
+
+      // Enforce strict permissions on the final secret file (0600)
+      try {
+        chmodSync(SESSION_SECRET_FILE, 0o600);
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+      }
+
+      // Finally, fsync the directory to durably record the rename (best-effort on Windows)
+      if (dirHandle !== undefined) {
+        try {
+          fsyncSync(dirHandle);
+        } catch (e) {
+          if (process.platform !== 'win32') {
+            throw e;
+          }
+          // Windows fsync on directory handle may fail even after successful open
+          console.warn('⚠️  Windows platform: Directory fsync failed. Session secret rename may not be durable until filesystem cache flush.');
+        }
+      }
+
+    } catch (error) {
+      console.error('Failed to write session secret atomically:', error);
+      // Clean up the temporary file if it exists
+      if (existsSync(tempFilePath)) {
+        try {
+          unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error('Failed to clean up temporary session secret file:', cleanupError);
+        }
+      }
+      throw error; // Re-throw the original error
+    } finally {
+      if (tempFileHandle !== undefined) closeSync(tempFileHandle);
+      if (dirHandle !== undefined) closeSync(dirHandle);
+    }
+    
+    // Final assurance of correct permissions after write/rename
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
+    try {
+      chmodSync(SESSION_SECRET_FILE, 0o600);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+    }
+
+    console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
+    console.log('   Sessions will now persist across server restarts');
+    
+    return newSecret;
+  } catch (error) {
+    console.error('Failed to load/generate SESSION_SECRET:', error);
+    return null;
+  }
+}
 
 // Validate SESSION_SECRET configuration
 function validateSessionSecret(): string | null {
-  const sessionSecret = process.env.SESSION_SECRET;
+  let sessionSecret = process.env.SESSION_SECRET;
   const isProduction = process.env.NODE_ENV === 'production';
   
+  // If no SESSION_SECRET provided, attempt to auto-generate or load
   if (!sessionSecret) {
-    const message = 'SESSION_SECRET environment variable is not set';
-    if (isProduction) {
-      console.error(`❌ SECURITY ERROR: ${message}. This is required in production to prevent session invalidation on server restarts.`);
-      process.exit(1);
-    } else {
-      console.warn(`⚠️  WARNING: ${message}. Sessions will be invalidated on server restart. Set SESSION_SECRET for persistent sessions.`);
-      return null;
+    const generatedSecret = loadOrGenerateSessionSecret();
+    
+    if (!generatedSecret) {
+      // Generation failed
+      const message = 'Failed to auto-generate SESSION_SECRET';
+      if (isProduction) {
+        console.error(`❌ SECURITY ERROR: ${message}. Sessions cannot be enabled.`);
+        process.exit(1);
+      } else {
+        console.warn(`⚠️  WARNING: ${message}. Sessions will be disabled. Check file permissions on data directory.`);
+        return null;
+      }
     }
-  }
-  
-  if (sessionSecret.length < 32) {
-    const message = 'SESSION_SECRET should be at least 32 characters long for security';
-    if (isProduction) {
+    // Use the generated secret
+    sessionSecret = generatedSecret;
+    process.env.SESSION_SECRET = generatedSecret;
+  } else {
+    // Validate provided SESSION_SECRET from environment
+    // Must be exactly 64 hex characters (32 bytes)
+    if (!/^[0-9a-f]{64}$/i.test(sessionSecret)) {
+      const message = 'SESSION_SECRET must be a 64-character hex string (32 bytes)';
       console.error(`❌ SECURITY ERROR: ${message}`);
-      process.exit(1);
+      
+      // In production, exit immediately for security
+      if (isProduction) {
+        process.exit(1);
+      }
+      
+      // In development, attempt to auto-generate a valid secret
+      console.warn('⚠️  Attempting to auto-generate a valid SESSION_SECRET...');
+      const generatedSecret = loadOrGenerateSessionSecret();
+      
+      if (!generatedSecret) {
+        console.error('❌ Failed to auto-generate SESSION_SECRET. Sessions will be disabled.');
+        return null;
+      }
+      
+      sessionSecret = generatedSecret;
+      process.env.SESSION_SECRET = generatedSecret;
     } else {
-      console.warn(`⚠️  WARNING: ${message}`);
+      console.log('🔐 SESSION_SECRET configured via environment variable');
     }
   }
   
@@ -49,20 +242,61 @@ export const AUTH_CONFIG = {
   RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100'), // 100 requests per window
 };
 
+// Use centralized crypto constants for consistency
+
+// Derive an ephemeral key from password and salt, returning as Uint8Array
+function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uint8Array {
+  let saltBuffer: Buffer;
+  
+  if (typeof salt === 'string') {
+    // Strict validation for hex salt strings
+    const EXPECTED_HEX_LENGTH = 64; // 32 bytes = 64 hex chars (SALT_CONFIG.LENGTH * 2)
+    if (salt.length !== EXPECTED_HEX_LENGTH) {
+      throw new Error(
+        `Invalid salt length: expected 32 bytes (${EXPECTED_HEX_LENGTH} hex chars), got ${salt.length} chars`
+      );
+    }
+    if (!/^[0-9a-fA-F]+$/.test(salt)) {
+      throw new Error('Invalid salt format: must be hexadecimal string');
+    }
+    saltBuffer = Buffer.from(salt, 'hex');
+  } else {
+    // For Uint8Array, validate length
+    if (salt.length !== 32) {
+      throw new Error(`Invalid salt length: expected 32 bytes, got ${salt.length} bytes`);
+    }
+    saltBuffer = Buffer.from(salt);
+  }
+  
+  const key = pbkdf2Sync(
+    password,
+    saltBuffer,
+    PBKDF2_CONFIG.ITERATIONS,
+    PBKDF2_CONFIG.KEY_LENGTH,
+    PBKDF2_CONFIG.ALGORITHM
+  );
+  // Return as Uint8Array for binary safety
+  return new Uint8Array(key);
+}
+
 // In-memory stores (consider Redis for production clustering)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 const sessionStore = new Map<string, { 
-  userId: string; 
+  userId: string | number | bigint; // Support string (env auth), number, and bigint (database user id)
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
+  derivedKey?: Uint8Array; // Store derived key as binary (will be moved to ephemeral storage per request)
+  salt?: string; // Store salt as hex string for non-database users (env auth)
+  // Note: for database users, salt comes from the database
 }>();
 
 export interface AuthResult {
   authenticated: boolean;
-  userId?: string;
+  userId?: string | number | bigint; // Support string, number, and bigint IDs
   error?: string;
   rateLimited?: boolean;
+  derivedKey?: Uint8Array; // Derived key for decryption operations (ephemeral - cleared after extraction)
 }
 
 // Get client IP address from various headers
@@ -190,7 +424,7 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   session.lastAccess = now;
-  return { authenticated: true, userId: session.userId };
+  return { authenticated: true, userId: session.userId, derivedKey: session.derivedKey };
 }
 
 // Extract session ID from cookie header
@@ -208,7 +442,12 @@ function extractSessionFromCookie(req: Request): string | null {
 }
 
 // Create new session
-export function createSession(userId: string, ipAddress: string): string | null {
+export function createSession(
+  userId: string | number | bigint, 
+  ipAddress: string, 
+  password?: string,
+  dbSalt?: string  // Optional database salt for database users
+): string | null {
   // If no SESSION_SECRET is configured, sessions are not available
   if (!AUTH_CONFIG.SESSION_SECRET) {
     return null;
@@ -217,11 +456,45 @@ export function createSession(userId: string, ipAddress: string): string | null 
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
   
+  // Generate derived key if password is provided
+  let derivedKey: Uint8Array | undefined;
+  let sessionSalt: string | undefined; // Salt to store for non-database users
+  
+  if (password) {
+    if (dbSalt) {
+      // Database users: Use persistent salt from database
+      // This ensures the derived key can be recreated consistently across sessions
+      derivedKey = deriveKeyFromPassword(password, dbSalt);
+      // Don't store salt in session for database users (it's in the database)
+    } else {
+      // Non-database users (env auth): Generate ephemeral salt for this session
+      // SECURITY DESIGN: This salt is intentionally session-specific and ephemeral.
+      // Non-database users (Basic Auth/API Key users with string userIds) are 
+      // explicitly blocked from accessing credential storage endpoints (/api/user/*).
+      // This prevents data loss since they cannot save encrypted credentials anyway.
+      // The ephemeral salt ensures session-scoped operations remain secure without
+      // creating false expectations of data persistence.
+      const salt = randomBytes(32);
+      const saltHex = salt.toString('hex');
+      sessionSalt = saltHex; // Store salt for this session's lifetime only
+      derivedKey = deriveKeyFromPassword(password, saltHex);
+    }
+  }
+  
+  // SECURITY NOTE: derivedKey is currently stored persistently in sessionStore,
+  // which violates the ephemeral storage pattern used elsewhere in the codebase.
+  // This is a known limitation that requires architectural changes to fix properly.
+  // Ideally, derivedKey should either:
+  // 1. Be re-derived on each request from the password (performance cost), or
+  // 2. Be stored in truly ephemeral storage with auto-clear after first access
+  // The current implementation stores it for the entire session duration.
   sessionStore.set(sessionId, {
     userId,
     createdAt: now,
     lastAccess: now,
-    ipAddress
+    ipAddress,
+    derivedKey, // Store derived key as binary (NOTE: not truly ephemeral - see above)
+    salt: sessionSalt // Store salt for non-database users
   });
   
   cleanupExpiredSessions();
@@ -257,9 +530,29 @@ setInterval(() => {
 }, CLEANUP_INTERVAL);
 
 // Main authentication function
-export function authenticate(req: Request): AuthResult {
-  if (!AUTH_CONFIG.ENABLED) {
-    return { authenticated: true, userId: 'anonymous' };
+export async function authenticate(req: Request): Promise<AuthResult> {
+  // In headless mode or when auth is disabled, use traditional auth
+  if (!AUTH_CONFIG.ENABLED || HEADLESS) {
+    if (!AUTH_CONFIG.ENABLED) {
+      return { authenticated: true, userId: 'anonymous' };
+    }
+    // Continue with env-based auth in headless mode
+  } else {
+    // In non-headless mode, check if database is initialized
+    // If not initialized, allow access to onboarding routes only
+    const isOnboardingRoute = req.url.includes('/api/onboarding');
+    try {
+      const initialized = isDatabaseInitialized();
+      if (!initialized && !isOnboardingRoute) {
+        return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+      }
+    } catch (err: any) {
+      console.error('[auth] Database initialization check failed:', err.message);
+      // Treat database errors as "not initialized" to enforce onboarding
+      if (!isOnboardingRoute) {
+        return { authenticated: false, error: 'Database not initialized. Please complete onboarding.' };
+      }
+    }
   }
 
   const rateLimit = checkRateLimit(req);
@@ -294,16 +587,59 @@ export function authenticate(req: Request): AuthResult {
 
 // Login endpoint
 export async function handleLogin(req: Request): Promise<Response> {
+  // Get CORS headers for cross-origin support
+  const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
+  const baseHeaders = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Vary': mergedVary,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+  };
+  
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers: baseHeaders });
+  }
+  
   if (req.method !== 'POST') {
-    return new Response('Method not allowed', { status: 405 });
+    return new Response('Method not allowed', { status: 405, headers: baseHeaders });
   }
 
   try {
-    const body = await req.json();
+    let body;
+    try {
+      body = await req.json();
+    } catch (error) {
+      if (error instanceof SyntaxError) {
+        return Response.json(
+          { error: 'Invalid JSON in request body' },
+          { status: 400, headers: { 
+            ...baseHeaders,
+            'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+          } }
+        );
+      }
+      throw error; // Re-throw non-JSON errors
+    }
+    
+    // Body must be a JSON object
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+      return Response.json(
+        { error: 'Request body must be a JSON object' },
+        { status: 400, headers: { 
+          ...baseHeaders,
+          'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+        } }
+      );
+    }
+    
     const { username, password, apiKey } = body;
 
     let authenticated = false;
-    let userId = '';
+    let userId: string | number | bigint = '';
+    let userPassword: string | undefined; // Store for database users
 
     if (apiKey && AUTH_CONFIG.API_KEY) {
       if (timingSafeEqual(Buffer.from(apiKey), Buffer.from(AUTH_CONFIG.API_KEY))) {
@@ -312,6 +648,63 @@ export async function handleLogin(req: Request): Promise<Response> {
       }
     }
     
+    // Try database authentication first (unless in headless mode)
+    let userSalt: string | undefined; // Store user's database salt
+    let dbInitialized = false;
+    if (!HEADLESS) {
+      try {
+        dbInitialized = isDatabaseInitialized();
+      } catch (err: any) {
+        console.error('[auth] Database initialization check failed during session validation:', err.message);
+        dbInitialized = false; // Treat errors as not initialized
+      }
+    }
+    if (!authenticated && !HEADLESS && username && password && dbInitialized) {
+      try {
+        const dbResult = await authenticateUser(username, password);
+        // authenticateUser returns a structured result, not throwing for auth failures
+        if (dbResult && typeof dbResult === 'object' && dbResult.success === true && dbResult.user && dbResult.user.id != null) {
+          authenticated = true;
+          userId = dbResult.user.id;
+          userPassword = password; // Store for later decryption needs
+          userSalt = dbResult.user.salt; // Store user's salt for key derivation
+        }
+        // If dbResult.success is false, it's an expected auth failure, not an error
+        // We simply leave authenticated=false and continue
+      } catch (err: any) {
+        // Only real database errors should reach here (authenticateUser re-throws DB errors)
+        // Check for specific SQLite error codes
+        if (err?.code === 'SQLITE_BUSY' || 
+            err?.code === 'SQLITE_LOCKED' || 
+            err?.code === 'SQLITE_IOERR' ||
+            err?.code === 'SQLITE_CORRUPT' ||
+            err?.code === 'SQLITE_FULL') {
+          // Critical database error - log and re-throw
+          console.error('[auth] Database error during login:', {
+            code: err.code,
+            message: err.message,
+            stack: process.env.NODE_ENV !== 'production' ? err.stack : undefined
+          });
+          
+          // Return a generic error to the client (don't expose DB details)
+          return Response.json({ 
+            success: false, 
+            error: 'Database temporarily unavailable. Please try again.' 
+          }, { status: 503 }); // 503 Service Unavailable
+        }
+        
+        // For unexpected errors, log but don't expose details
+        console.error('[auth] Unexpected error during database authentication:', {
+          type: typeof err,
+          message: err?.message || 'Unknown error'
+        });
+        
+        // Treat as auth failure (fail-closed approach for security)
+        // We leave authenticated=false and continue
+      }
+    }
+    
+    // Try env-based basic auth (headless mode or fallback)
     if (!authenticated && username && password && AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
       const userValid = timingSafeEqual(
         Buffer.from(username),
@@ -332,11 +725,11 @@ export async function handleLogin(req: Request): Promise<Response> {
       return Response.json({ 
         success: false, 
         error: 'Invalid credentials' 
-      }, { status: 401 });
+      }, { status: 401, headers: baseHeaders });
     }
 
     const clientIP = getClientIP(req);
-    const sessionId = createSession(userId, clientIP);
+    const sessionId = createSession(userId, clientIP, userPassword, userSalt);
 
     if (!sessionId) {
       // Session creation failed (no SESSION_SECRET configured)
@@ -344,7 +737,7 @@ export async function handleLogin(req: Request): Promise<Response> {
         success: true,
         userId,
         warning: 'Session not created - SESSION_SECRET not configured. Authentication will be required for each request.'
-      });
+      }, { headers: baseHeaders });
     }
 
     return Response.json({
@@ -354,8 +747,8 @@ export async function handleLogin(req: Request): Promise<Response> {
       expiresIn: AUTH_CONFIG.SESSION_TIMEOUT
     }, {
       headers: {
-        'Set-Cookie': `session=${sessionId}; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`,
-        'Content-Type': 'application/json'
+        ...baseHeaders,
+        'Set-Cookie': `session=${sessionId}; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=${AUTH_CONFIG.SESSION_TIMEOUT / 1000}`
       }
     });
 
@@ -363,30 +756,43 @@ export async function handleLogin(req: Request): Promise<Response> {
     return Response.json({ 
       success: false, 
       error: 'Invalid request body' 
-    }, { status: 400 });
+    }, { status: 400, headers: baseHeaders });
   }
 }
 
 // Logout endpoint
 export function handleLogout(req: Request): Response {
+  // Get CORS headers for cross-origin support
+  const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
+  const headers = {
+    'Content-Type': 'application/json',
+    ...corsHeaders,
+    'Vary': mergedVary,
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
+    'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+  };
+  
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
+  
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
   
   if (sessionId) {
     sessionStore.delete(sessionId);
   }
 
-  return Response.json({ success: true }, {
-    headers: {
-      'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`,
-      'Content-Type': 'application/json'
-    }
-  });
+  return Response.json({ success: true }, { headers });
 }
 
-// Authentication middleware wrapper
+// Authentication middleware wrapper (deprecated - use explicit auth parameters instead)
+// This function is not currently used but kept for reference
 export function requireAuth(handler: Function) {
   return async (req: Request, url: URL, context: any): Promise<Response> => {
-    const authResult = authenticate(req);
+    const authResult = await authenticate(req);
     
     if (authResult.rateLimited) {
       return Response.json({ 
@@ -413,12 +819,26 @@ export function requireAuth(handler: Function) {
       });
     }
     
-    context.auth = {
+    // Note: Auth should be passed as explicit parameter, not mutating context
+    // Create auth info to pass to handler
+    // Store sensitive values that will be cleared after first access
+    let derivedKey = authResult.derivedKey;
+    
+    const authInfo = {
       userId: authResult.userId,
-      authenticated: true
+      authenticated: true,
+      // Removed direct storage of sensitive data to prevent exposure
+      // Use secure getter functions instead
+      
+      // Secure getter function that clears sensitive data after first access
+      getDerivedKey(): Uint8Array | undefined {
+        const value = derivedKey;
+        derivedKey = undefined; // Clear after access
+        return value;
+      }
     };
     
-    return handler(req, url, context);
+    return handler(req, url, context, authInfo);
   };
 }
 

@@ -5,45 +5,119 @@ import {
   comparePubkeys,
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
-import { RouteContext, PeerStatus } from './types.js';
-import { readEnvFile, getSecureCorsHeaders } from './utils.js';
+import { RouteContext, PeerStatus, RequestAuth } from './types.js';
+import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { HEADLESS } from '../const.js';
 
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
 
-export async function handlePeersRoute(req: Request, url: URL, context: RouteContext): Promise<Response | null> {
+// Helper function to get credentials based on mode
+async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?: string; share_cred?: string } | null> {
+  if (HEADLESS) {
+    // Headless mode - get from environment
+    const env = await readEnvFile();
+    return {
+      group_cred: env.GROUP_CRED,
+      share_cred: env.SHARE_CRED
+    };
+  } else {
+    // Database mode - get from authenticated user's stored credentials
+    if (!auth?.authenticated || (typeof auth.userId !== 'number' && typeof auth.userId !== 'bigint')) {
+      return null;
+    }
+    
+    // Get authentication secret - avoid double-consuming ephemeral getters
+    let secret: string | Uint8Array | null = null;
+    let isDerivedKey = false;
+    
+    // Try password first (if getter exists and returns a value)
+    if (auth.getPassword) {
+      const password = auth.getPassword();
+      if (password) {
+        secret = password;
+        isDerivedKey = false;
+      }
+    }
+    
+    // Only try derivedKey if password wasn't available
+    if (!secret && auth.getDerivedKey) {
+      const derivedKey = auth.getDerivedKey();
+      if (derivedKey) {
+        secret = derivedKey;
+        isDerivedKey = true;
+      }
+    }
+    
+    // No authentication secret available
+    if (!secret) {
+      return null;
+    }
+    
+    try {
+      // Dynamic import to avoid bundling DB code in headless builds
+      const { getUserCredentials } = await import('../db/database.js');
+      
+      // Await the call to support both sync and async implementations
+      const credentials = await getUserCredentials(
+        auth.userId,
+        secret,
+        isDerivedKey
+      );
+      
+      if (credentials) {
+        // Convert nulls to undefined for consistency with expected type
+        return {
+          group_cred: credentials.group_cred || undefined,
+          share_cred: credentials.share_cred || undefined
+        };
+      }
+      return null;
+    } catch (error) {
+      console.error('Failed to retrieve user credentials for peers:', error);
+      return null;
+    }
+  }
+}
+
+export async function handlePeersRoute(req: Request, url: URL, context: RouteContext, auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/peers')) return null;
 
   // Get secure CORS headers based on request origin
   const corsHeaders = getSecureCorsHeaders(req);
+  
+  const mergedVary = mergeVaryHeaders(corsHeaders);
   
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
+    'Vary': mergedVary,
   };
 
   try {
     switch (url.pathname) {
       case '/api/peers':
         if (req.method === 'GET') {
-          // Get all peers from group credential using igloo-core decoding
-          const env = await readEnvFile();
-          if (!env.GROUP_CRED) {
-            return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+          // Get credentials based on mode
+          const credentials = await getCredentials(auth);
+          if (!credentials || !credentials.group_cred) {
+            // Return 401 in DB mode for auth failures, 400 in headless for missing env
+            const statusCode = !HEADLESS ? 401 : 400;
+            return Response.json({ error: 'No group credential available' }, { status: statusCode, headers });
           }
           
           try {
             // Use igloo-core function to decode group and extract peers
-            const decodedGroup = decodeGroup(env.GROUP_CRED);
+            const decodedGroup = decodeGroup(credentials.group_cred);
             const allPeers = decodedGroup.commits.map(commit => commit.pubkey);
             
             // Filter out self if we have share credential
             let filteredPeers = allPeers;
-            if (env.SHARE_CRED) {
+            if (credentials.share_cred) {
               try {
-                const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+                const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
                 if (selfPubkeyResult.pubkey) {
                   filteredPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
                 }
@@ -80,12 +154,14 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
 
       case '/api/peers/self':
         if (req.method === 'GET') {
-          const env = await readEnvFile();
-          if (!env.GROUP_CRED || !env.SHARE_CRED) {
-            return Response.json({ error: 'Missing credentials' }, { status: 400, headers });
+          const credentials = await getCredentials(auth);
+          if (!credentials || !credentials.group_cred || !credentials.share_cred) {
+            // Return 401 in DB mode for auth failures, 400 in headless for missing env
+            const statusCode = !HEADLESS ? 401 : 400;
+            return Response.json({ error: 'Missing credentials' }, { status: statusCode, headers });
           }
           
-          const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+          const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
           if (selfPubkeyResult.pubkey) {
             return Response.json({ 
               pubkey: selfPubkeyResult.pubkey,
@@ -106,11 +182,31 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
             return Response.json({ error: 'Node not available' }, { status: 503, headers });
           }
           
-          const body = await req.json();
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { target } = body;
           
           if (target === 'all') {
-            return await handlePingAllPeers(context, headers);
+            return await handlePingAllPeers(context, headers, auth);
           } else if (typeof target === 'string') {
             return await handlePingSinglePeer(target, context, headers);
           } else {
@@ -127,22 +223,24 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
   }
 }
 
-async function handlePingAllPeers(context: RouteContext, headers: Record<string, string>): Promise<Response> {
-  // Ping all peers using igloo-core decoding
-  const env = await readEnvFile();
-  if (!env.GROUP_CRED) {
-    return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+async function handlePingAllPeers(context: RouteContext, headers: Record<string, string>, auth?: RequestAuth | null): Promise<Response> {
+  // Get credentials based on mode
+  const credentials = await getCredentials(auth);
+  if (!credentials || !credentials.group_cred) {
+    // Return 401 in DB mode for auth failures, 400 in headless for missing env
+    const statusCode = !HEADLESS ? 401 : 400;
+    return Response.json({ error: 'No group credential available' }, { status: statusCode, headers });
   }
   
   try {
     // Use igloo-core function to decode group and extract peers
-    const decodedGroup = decodeGroup(env.GROUP_CRED);
+    const decodedGroup = decodeGroup(credentials.group_cred);
     let allPeers = decodedGroup.commits.map(commit => commit.pubkey);
     
     // Filter out self if we have share credential
-    if (env.SHARE_CRED) {
+    if (credentials.share_cred) {
       try {
-        const selfPubkeyResult = extractSelfPubkeyFromCredentials(env.GROUP_CRED, env.SHARE_CRED);
+        const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
         if (selfPubkeyResult.pubkey) {
           allPeers = allPeers.filter(pubkey => !comparePubkeys(pubkey, selfPubkeyResult.pubkey!));
         }

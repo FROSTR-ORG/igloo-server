@@ -1,42 +1,43 @@
-import { 
-  createConnectedNode, 
-  createAndConnectNode
-} from '@frostr/igloo-core';
-import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
+import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { 
   readEnvFile, 
+  readPublicEnvFile,
   writeEnvFile, 
-  filterEnvObject, 
   validateEnvKeys, 
-  getValidRelays,
-  getSecureCorsHeaders 
+  getSecureCorsHeaders,
+  mergeVaryHeaders
 } from './utils.js';
+import { HEADLESS } from '../const.js';
+import { getUserCredentials } from '../db/database.js';
+import { validateAdminSecret } from './onboarding.js';
+import { createAndStartNode } from './node-manager.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
 
 // Helper function to execute node operations under lock without poisoning the queue
-async function executeUnderNodeLock<T>(
+export async function executeUnderNodeLock<T>(
   operation: () => Promise<T>,
   context: PrivilegedRouteContext
 ): Promise<T> {
   // Create a promise for this specific operation
   const run = nodeUpdateLock.then(operation);
   
-  // Keep the queue alive even if this run fails
+  // Update the queue to continue even if this operation fails
+  // This preserves queue continuity while allowing caller to see errors
   nodeUpdateLock = run
-    .catch((error) => {
-      context.addServerLog('error', 'Node operation failed', error);
-      // Don't re-throw here - just log and continue
-    })
-    .then(() => undefined); // Ensure queue always resolves
+    .then(() => undefined)
+    .catch(() => undefined);
   
-  // Return the result of this specific operation (may throw)
-  return run;
+  // Add error handling that logs but re-throws for caller visibility
+  return run.catch((error) => {
+    context.addServerLog('error', 'Node operation failed', error);
+    throw error; // Re-throw so callers see the failure
+  });
 }
 
 // Synchronized node cleanup function
-async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise<void> {
+export async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise<void> {
   return executeUnderNodeLock(async () => {
     if (context.node) {
       context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
@@ -47,82 +48,135 @@ async function cleanupNodeSynchronized(context: PrivilegedRouteContext): Promise
   }, context);
 }
 
-// Extracted node creation and connection logic with reduced timeout and retries
-async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
-  return executeUnderNodeLock(async () => {
-    // Note: updateNode will handle cleanup of the old node and its monitoring
-    // We don't call cleanupMonitoring() here to avoid a gap in monitoring
-    if (context.node) {
-      context.addServerLog('info', 'Preparing to replace existing Bifrost node...');
-    }
+// Helper function to validate relay URLs
+function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
+  if (!relays) {
+    return { valid: true, urls: undefined };
+  }
 
-    // Check if we now have both credentials
-    if (env.SHARE_CRED && env.GROUP_CRED) {
-      // Log handled in createAndConnectServerNode to avoid duplication
-      const nodeRelays = getValidRelays(env.RELAYS);
-      let apiConnectionAttempts = 0;
-      const apiMaxAttempts = 1; // Only 1 attempt for API responsiveness
-      let newNode: ServerBifrostNode | null = null;
-      
-      while (apiConnectionAttempts < apiMaxAttempts && !newNode) {
-        apiConnectionAttempts++;
-        try {
-          const result = await createConnectedNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays,
-            connectionTimeout: 5000, // 5 seconds for fast API response
-            autoReconnect: true
-          }, {
-            enableLogging: false,
-            logLevel: 'error'
-          });
-          if (result.node) {
-            newNode = result.node as unknown as ServerBifrostNode;
-            context.updateNode(newNode);
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready');
-            if (result.state) {
-              context.addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${nodeRelays.length} relays`);
-            }
-            break;
-          } else {
-            throw new Error('Enhanced node creation returned no node');
-          }
-        } catch (enhancedError) {
-          context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
-          const basicNode = await createAndConnectNode({
-            group: env.GROUP_CRED,
-            share: env.SHARE_CRED,
-            relays: nodeRelays
-          });
-          if (basicNode) {
-            newNode = basicNode as unknown as ServerBifrostNode;
-            context.updateNode(newNode);
-            // updateNode already sets up event listeners and health monitoring
-            context.addServerLog('info', 'Node connected and ready (basic mode)');
-          }
-        }
-      }
-      
-      if (!newNode) {
-        context.addServerLog('error', 'Failed to create node after all attempts');
-      }
-    } else {
-      context.addServerLog('info', 'Insufficient credentials for node creation');
+  // Parse relays if they're a string
+  let parsedRelays: string[];
+  if (typeof relays === 'string') {
+    try {
+      parsedRelays = JSON.parse(relays);
+    } catch {
+      // If not valid JSON, try splitting by comma
+      parsedRelays = relays.split(',').map((r: string) => r.trim());
     }
+  } else if (Array.isArray(relays)) {
+    parsedRelays = relays;
+  } else {
+    return { valid: false, error: 'Relays must be a string or array' };
+  }
+
+  // Validate each relay URL
+  for (const relay of parsedRelays) {
+    if (typeof relay !== 'string') {
+      return { valid: false, error: 'Each relay must be a string' };
+    }
+    
+    try {
+      const url = new URL(relay);
+      // Relays should be WebSocket URLs
+      if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+        return { valid: false, error: `Invalid relay protocol: ${url.protocol}. Must be ws:// or wss://` };
+      }
+    } catch {
+      return { valid: false, error: `Invalid relay URL: ${relay}` };
+    }
+  }
+
+  return { valid: true, urls: parsedRelays };
+}
+
+// Wrapper function to use shared node creation with env variables
+async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
+  // Validate and parse relays
+  const relayValidation = validateRelayUrls(env.RELAYS);
+  if (!relayValidation.valid) {
+    throw new Error(relayValidation.error);
+  }
+  
+  return createAndStartNode({
+    group_cred: env.GROUP_CRED,
+    share_cred: env.SHARE_CRED,
+    relays: relayValidation.urls,
+    group_name: env.GROUP_NAME
   }, context);
 }
 
-export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext): Promise<Response | null> {
+export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext, auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/env')) return null;
-
-  // Get secure CORS headers based on request origin
+  
   const corsHeaders = getSecureCorsHeaders(req);
+  
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
+  // Authentication and admin privileges required for POST requests in both modes
+  if (req.method === 'POST') {
+    if (!auth || typeof auth !== 'object' || !auth.authenticated) {
+      return Response.json(
+        { error: 'Authentication required for environment modifications' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+      );
+    }
+    
+    // In database mode, require admin privileges
+    if (!HEADLESS) {
+      // Check for ADMIN_SECRET in X-Admin-Secret header or Bearer token in Authorization
+      let adminSecret = req.headers.get('X-Admin-Secret') ?? undefined;
+      if (!adminSecret) {
+        const authHeader = req.headers.get('Authorization');
+        if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+          adminSecret = authHeader.substring(7).trim();
+        }
+      }
+      
+      const isAdmin = await validateAdminSecret(adminSecret);
+      if (!isAdmin) {
+        // Also allow the first user (admin user) to modify environment
+        const validUserId = (typeof auth.userId === 'number' && auth.userId === 1) || 
+                           (typeof auth.userId === 'bigint' && auth.userId === 1n);
+        if (!validUserId) {
+          return Response.json(
+            { error: 'Admin privileges required for environment modifications' },
+            { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+          );
+        }
+      }
+    }
+  }
+
+  // Validate auth parameter structure when needed in database mode
+  if (!HEADLESS && req.method === 'GET') {
+    if (!auth || typeof auth !== 'object') {
+      return Response.json(
+        { error: 'Authentication required' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+      );
+    }
+    
+    if (!auth.authenticated) {
+      return Response.json(
+        { error: 'Invalid authentication' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+      );
+    }
+    
+    const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) || 
+                       (typeof auth.userId === 'bigint' && auth.userId > 0n);
+    if (!validUserId) {
+      return Response.json(
+        { error: 'Invalid user authentication' },
+        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+      );
+    }
+  }
 
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
+    'Vary': mergedVary,
   };
 
   if (req.method === 'OPTIONS') {
@@ -133,17 +187,106 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     switch (url.pathname) {
       case '/api/env':
         if (req.method === 'GET') {
-          const env = await readEnvFile();
-          const { filteredEnv } = filterEnvObject(env);
-          return Response.json(filteredEnv, { headers });
+          // In headless mode, return env vars
+          // In database mode, try to return user credentials in env format for compatibility
+          if (HEADLESS) {
+            const publicEnv = await readPublicEnvFile();
+            return Response.json(publicEnv, { headers });
+          } else {
+            // Database mode - return empty or user's credentials if available
+            if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint')) {
+              // Use secure getters to access sensitive data
+              let secret: string | Uint8Array | null = null;
+              let isDerivedKey = false;
+              
+              // Try to get password first (direct auth) - only use secure getter
+              const password = auth.getPassword?.();
+              if (password) {
+                secret = password;
+                isDerivedKey = false;
+              } else {
+                // Try to get derived key (session auth) - only use secure getter
+                const derivedKey = auth.getDerivedKey?.();
+                if (!derivedKey) return Response.json({}, { headers });
+                // Keep binary; database layer will accept binary and convert as needed
+                secret = derivedKey;
+                isDerivedKey = true;
+              }
+              
+              if (!secret) return Response.json({}, { headers });
+              let credentials;
+              try {
+                credentials = getUserCredentials(
+                  auth.userId,
+                  secret,
+                  isDerivedKey
+                );
+              } catch (error) {
+                console.error('Failed to retrieve user credentials for env:', error);
+                return Response.json({}, { headers });
+              }
+              if (credentials) {
+                // In database mode, don't return credential placeholders as they can be misinterpreted
+                // The frontend should use /api/user/credentials to get actual values
+                return Response.json({
+                  // Don't return placeholders - return undefined for security
+                  GROUP_CRED: undefined,
+                  SHARE_CRED: undefined,
+                  // Safe to return non-sensitive metadata
+                  GROUP_NAME: credentials.group_name || undefined,
+                  RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : undefined,
+                  // Add metadata to indicate credentials exist
+                  hasCredentials: !!(credentials.group_cred && credentials.share_cred)
+                }, { headers });
+              }
+            }
+            return Response.json({}, { headers });
+          }
         }
         
         if (req.method === 'POST') {
-          const body = await req.json();
+          if (HEADLESS) {
+            return Response.json(
+              { error: 'Environment modifications are not allowed in headless mode' },
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+            );
+          }
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const env = await readEnvFile();
           
           // Validate which keys are allowed to be updated
           const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
+          
+          // Validate relays before updating
+          if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
+            const relayValidation = validateRelayUrls(body.RELAYS);
+            if (!relayValidation.valid) {
+              return Response.json({ 
+                success: false, 
+                error: relayValidation.error 
+              }, { status: 400, headers });
+            }
+          }
           
           // Update only allowed keys
           const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
@@ -156,10 +299,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
-            // If credentials or relays were updated, recreate the node
+            // If credentials or relays were updated, recreate the node (with lock)
             if (updatingCredentials || updatingRelays) {
               try {
-                await createAndConnectServerNode(env, context);
+                await executeUnderNodeLock(async () => {
+                  await createAndConnectServerNode(env, context);
+                }, context);
               } catch (error) {
                 context.addServerLog('error', 'Error recreating Bifrost node', error);
                 // Continue anyway - the env vars were saved
@@ -183,7 +328,51 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
       case '/api/env/delete':
         if (req.method === 'POST') {
-          const body = await req.json();
+          if (HEADLESS) {
+            return Response.json(
+              { error: 'Environment modifications are not allowed in headless mode' },
+              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+            );
+          }
+          
+          // Require admin privileges in database mode
+          const adminSecret = req.headers.get('X-Admin-Secret') || 
+                             req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+          
+          const isAdmin = await validateAdminSecret(adminSecret);
+          if (!isAdmin) {
+            // Also allow the first user (admin user) to delete environment vars
+            const validUserId = (auth && ((typeof auth.userId === 'number' && auth.userId === 1) || 
+                               (typeof auth.userId === 'bigint' && auth.userId === 1n)));
+            if (!validUserId) {
+              return Response.json(
+                { error: 'Admin privileges required for deleting environment variables' },
+                { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+              );
+            }
+          }
+          
+          let body;
+          try {
+            body = await req.json();
+          } catch (error) {
+            if (error instanceof SyntaxError) {
+              return Response.json(
+                { error: 'Invalid JSON in request body' },
+                { status: 400, headers }
+              );
+            }
+            throw error; // Re-throw non-JSON errors
+          }
+          
+          // Body must be a JSON object
+          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+            return Response.json(
+              { error: 'Request body must be a JSON object' },
+              { status: 400, headers }
+            );
+          }
+          
           const { keys } = body;
           
           if (!Array.isArray(keys) || keys.length === 0) {

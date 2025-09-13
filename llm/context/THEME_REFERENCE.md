@@ -295,12 +295,24 @@ accordion-up: height content-height to 0 (200ms ease-out)
 ### Custom Utility Classes
 
 ```css
-/* Igloo-specific utility classes */
-.igloo-card: bg-gray-800/50 border border-blue-900/30 rounded-lg
-.igloo-button: bg-blue-600 hover:bg-blue-700 text-blue-100
-.igloo-button-ghost: text-blue-400 hover:text-blue-300 hover:bg-blue-900/30
-.igloo-text-primary: text-blue-300
-.igloo-text-secondary: text-blue-400
+/* Igloo-specific utility classes (defined in frontend/styles.css) */
+@layer components {
+  .igloo-card {
+    @apply bg-gray-800/50 border border-blue-900/30 rounded-lg;
+  }
+  .igloo-button {
+    @apply bg-blue-600 hover:bg-blue-700 text-blue-100;
+  }
+  .igloo-button-ghost {
+    @apply text-blue-400 hover:text-blue-300 hover:bg-blue-900/30;
+  }
+  .igloo-text-primary {
+    @apply text-blue-300;
+  }
+  .igloo-text-secondary {
+    @apply text-blue-400;
+  }
+}
 ```
 
 ## Example Component Structure

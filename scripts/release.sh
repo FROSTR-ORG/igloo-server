@@ -102,7 +102,20 @@ RELEASE_BRANCH="release/prepare-v${NEW_VERSION:-next}"
 echo "🌿 Creating release branch: $RELEASE_BRANCH"
 git checkout -b "$RELEASE_BRANCH"
 
+# Stage and commit the version bump
+echo "📦 Committing version bump..."
+git add package.json
+
+# Also stage lock files if they exist
+[ -f "package-lock.json" ] && git add package-lock.json && echo "  Added package-lock.json"
+[ -f "yarn.lock" ] && git add yarn.lock && echo "  Added yarn.lock"
+[ -f "pnpm-lock.yaml" ] && git add pnpm-lock.yaml && echo "  Added pnpm-lock.yaml"
+[ -f "bun.lockb" ] && git add bun.lockb && echo "  Added bun.lockb"
+
+git commit -m "chore(release): bump version to v$NEW_VERSION"
+
 # Push release branch
+echo "🚀 Pushing release branch to origin..."
 git push origin "$RELEASE_BRANCH"
 
 echo ""

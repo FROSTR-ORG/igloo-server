@@ -4,7 +4,7 @@ import {
   normalizePubkey,
   extractSelfPubkeyFromCredentials
 } from '@frostr/igloo-core';
-import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
+import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
 
@@ -34,6 +34,31 @@ const EVENT_MAPPINGS = {
 const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
 const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
 const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
+
+/**
+ * Race a promise against a timeout and ensure the timeout is cleared once settled.
+ * Prevents stray timer callbacks from rejecting after the race is over.
+ *
+ * @param promise The promise to race against the timeout
+ * @param timeoutMs The timeout in milliseconds
+ * @returns The original promise's resolved value, or rejects on timeout
+ */
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeoutError = new Error('Ping timeout');
+
+  const wrapped = new Promise<T>((resolve, reject) => {
+    timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
+    promise.then(
+      value => resolve(value),
+      error => reject(error)
+    );
+  });
+
+  return wrapped.finally(() => {
+    if (timeoutId !== undefined) clearTimeout(timeoutId);
+  });
+}
 
 // Simplified monitoring state
 interface NodeHealth {
@@ -192,8 +217,10 @@ async function checkRelayConnectivity(
     
     // If we're idle AND connected, send a keepalive ping (if available)
     if (isIdle) {
-      // Check if ping function exists
-      if (typeof (node as any).ping !== 'function') {
+      // Resolve ping function from either node.ping or node.req.ping
+      const pingFn = (node as any)?.ping ?? (node as any)?.req?.ping;
+      
+      if (typeof pingFn !== 'function') {
         // No ping capability - this is not a critical failure
         // The relay reconnection logic above is sufficient for maintaining connectivity
         // Check if we have any connected relays from the pool check above
@@ -249,17 +276,16 @@ async function checkRelayConnectivity(
         // Send a ping to the first available peer
         const targetPeer = peers[0];
         const peerPubkey = targetPeer.pubkey || targetPeer;
+        // Normalize pubkey to canonical form to avoid case/format mismatches
+        const normalizedPeerPubkey = normalizePubkey(peerPubkey);
         
-        // Create a timeout promise using shared constant
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Ping timeout')), CONNECTIVITY_PING_TIMEOUT)
-        );
-        
-        // Race between ping and timeout
-        const pingResult = await Promise.race([
-          (node as any).ping(peerPubkey),
-          timeoutPromise
-        ]).catch(err => ({ ok: false, err: err.message || 'ping failed' }));
+        // Race ping with timeout using helper to avoid stray rejections
+        // NOTE: Currently we treat any resolved ping as successful - if the ping function
+        // returns without throwing, we consider connectivity established. The PingResult
+        // data field is not currently examined for success/failure status.
+        const pingResult = await withTimeout<PingResult>(pingFn(normalizedPeerPubkey), CONNECTIVITY_PING_TIMEOUT)
+          .then((res: PingResult) => ({ ok: true, result: res }))
+          .catch((err: Error) => ({ ok: false, err: err?.message || 'ping failed' })) as { ok: boolean; err?: string; result?: PingResult };
         
         if (pingResult && pingResult.ok) {
           // Ping succeeded - connection is good!
@@ -936,12 +962,33 @@ export async function createNodeWithCredentials(
             }
           }
           
-          // Perform initial connectivity check
+          // Perform initial connectivity check and await completion to avoid startup races
           if (addServerLog) {
-            setTimeout(async () => {
+            try {
+              // Validate INITIAL_CONNECTIVITY_DELAY environment variable
+              let initialDelay = 5000; // Safe default
+              const envValue = process.env.INITIAL_CONNECTIVITY_DELAY;
+              if (envValue) {
+                const parsed = parseInt(envValue, 10);
+                if (Number.isFinite(parsed) && parsed > 0) {
+                  initialDelay = parsed;
+                } else {
+                  addServerLog('warning', `Invalid INITIAL_CONNECTIVITY_DELAY value: "${envValue}". Using default: ${initialDelay}ms`);
+                }
+              }
+              await new Promise(resolve => setTimeout(resolve, initialDelay));
               const isConnected = await checkRelayConnectivity(node, addServerLog);
               addServerLog('info', `Initial connectivity check: ${isConnected ? 'PASSED' : 'FAILED'}`);
-            }, 5000);
+    
+              // If initial check fails, log a warning but don't fail node creation
+              // The monitoring loop will handle recovery
+              if (!isConnected) {
+                addServerLog('warning', 'Initial connectivity check failed - monitoring will attempt recovery');
+              }
+            } catch (e) {
+              addServerLog('error', 'Initial connectivity check threw an error', e);
+              // Don't fail node creation - let monitoring handle it
+            }
           }
           
           return node;

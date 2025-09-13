@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import YAML from 'yaml';
-import { getSecureCorsHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 
 /**
  * API Documentation Route Handler
@@ -109,8 +109,11 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
 
   // CORS headers for documentation endpoints (use secure CORS)
   const corsHeaders = getSecureCorsHeaders(req);
+  const mergedVary = mergeVaryHeaders(corsHeaders);
+  
   const headers = {
     ...corsHeaders,
+    'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type',
   };

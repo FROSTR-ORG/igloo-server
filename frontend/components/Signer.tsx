@@ -73,7 +73,7 @@ const getShareInfo = (groupCredential: string, shareCredential: string, shareNam
   }
 };
 
-const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {} }, ref) => {
+const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders = {}, isHeadlessMode, onReady }, ref) => {
   const [isSignerRunning, setIsSignerRunning] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [signerSecret, setSignerSecret] = useState("");
@@ -88,7 +88,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   const [serverStatus, setServerStatus] = useState<{
     serverRunning: boolean;
     nodeActive: boolean;
-    hasCredentials: boolean;
+    hasCredentials: boolean | null;
     relayCount: number;
     timestamp: string;
   } | null>(null);
@@ -107,12 +107,16 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
 
-  // Expose the stopSigner method to parent components through ref
+  // Expose methods to parent components through ref
   useImperativeHandle(ref, () => ({
     stopSigner: async () => {
       if (isSignerRunning) {
         await handleStopSigner();
       }
+    },
+    checkStatus: () => {
+      // Force immediate status check
+      return checkServerStatus();
     }
   }));
 
@@ -196,7 +200,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       
       // Update signer running state based on server node status
       const wasRunning = isSignerRunning;
-      const nowRunning = status.nodeActive && status.hasCredentials;
+      const nowRunning = status.nodeActive && status.hasCredentials === true;
       
       if (wasRunning !== nowRunning) {
         setIsSignerRunning(nowRunning);
@@ -217,6 +221,17 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       }
     }
   }, [isSignerRunning]);
+
+  // Track whether onReady has been called to ensure it's only called once
+  const onReadyCalledRef = useRef(false);
+  
+  // Fire onReady once after initial load and ref methods are established
+  useEffect(() => {
+    if (!isLoading && typeof onReady === 'function' && !onReadyCalledRef.current) {
+      onReadyCalledRef.current = true;
+      onReady();
+    }
+  }, [isLoading, onReady]);
 
   // Poll server status every 5 seconds
   useEffect(() => {
@@ -404,9 +419,19 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
   }, [cleanupNode]); // Include dependencies
 
-  // Fetch initial data from server .env file
+  // Fetch initial data from server .env file (only in headless mode)
   useEffect(() => {
     const fetchEnvData = async () => {
+      // Skip fetching from /api/env if we're in database mode with real credentials
+      // Check using the isDatabaseMode helper which now properly detects the mode
+      if (isDatabaseMode()) {
+        // Only skip if we have actual credentials, not empty placeholders
+        if (initialData && initialData.share && initialData.groupCredential) {
+          setIsLoading(false);
+          return;
+        }
+      }
+      
       try {
         const response = await fetch('/api/env', {
         headers: authHeaders
@@ -474,26 +499,74 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
 
     fetchEnvData();
-  }, []);
+  }, [initialData, authHeaders, isHeadlessMode]);
 
-  // Validate initial data (fallback for when props are provided)
+  // Validate initial data (when props are provided in database mode)
   useEffect(() => {
-    if (initialData?.share && !signerSecret) {
+    if (initialData?.share) {
       setSignerSecret(initialData.share);
       const validation = validateShare(initialData.share);
-      setIsShareValid(validation.isValid);
+      
+      // Perform deep validation with actual decoding (same as handleShareChange)
+      if (validation.isValid && initialData.share.trim()) {
+        try {
+          const decodedShare = decodeShare(initialData.share);
+          
+          // Check decoded structure has required fields
+          if (typeof decodedShare.idx !== 'number' ||
+              typeof decodedShare.seckey !== 'string' ||
+              typeof decodedShare.binder_sn !== 'string' ||
+              typeof decodedShare.hidden_sn !== 'string') {
+            setIsShareValid(false);
+          } else {
+            setIsShareValid(true);
+          }
+        } catch (error) {
+          setIsShareValid(false);
+        }
+      } else {
+        setIsShareValid(validation.isValid);
+      }
     }
 
-    if (initialData?.groupCredential && !groupCredential) {
+    if (initialData?.groupCredential) {
       setGroupCredential(initialData.groupCredential);
       const validation = validateGroup(initialData.groupCredential);
-      setIsGroupValid(validation.isValid);
+      
+      // Perform deep validation with actual decoding (same as handleGroupChange)
+      if (validation.isValid && initialData.groupCredential.trim()) {
+        try {
+          const decodedGroup = decodeGroup(initialData.groupCredential);
+          
+          // Check decoded structure has required fields
+          if (typeof decodedGroup.threshold !== 'number' ||
+              typeof decodedGroup.group_pk !== 'string' ||
+              !Array.isArray(decodedGroup.commits) ||
+              decodedGroup.commits.length === 0) {
+            setIsGroupValid(false);
+          } else {
+            setIsGroupValid(true);
+          }
+        } catch (error) {
+          setIsGroupValid(false);
+        }
+      } else {
+        setIsGroupValid(validation.isValid);
+      }
     }
     
-    if (initialData?.name && !signerName) {
+    if (initialData?.name) {
       setSignerName(initialData.name);
     }
-  }, [initialData, signerSecret, groupCredential, signerName]);
+    
+    // Load relays from initialData (database mode)
+    if (initialData?.relays && Array.isArray(initialData.relays) && initialData.relays.length > 0) {
+      setRelayUrls(initialData.relays);
+    } else if (initialData) {
+      // In database mode with no saved relays, set default
+      setRelayUrls([DEFAULT_RELAY]);
+    }
+  }, [initialData]);
 
   const handleCopy = async (text: string, field: 'group' | 'share') => {
     try {
@@ -664,8 +737,36 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     }
   };
 
-  // Save relay URLs to server .env file
-  const saveRelaysToEnv = async (relays: string[]) => {
+  // Helper function to determine if we're in database mode
+  const isDatabaseMode = () => {
+    // Use explicit flag if provided, otherwise fall back to presence of real initial data
+    if (isHeadlessMode !== undefined) {
+      return !isHeadlessMode; // Database mode is the opposite of headless mode
+    }
+    // Backward compatibility: only consider it database mode if we have actual credentials
+    return !!(initialData && initialData.share && initialData.groupCredential);
+  };
+  
+  // Save relay URLs to user credentials (database mode)
+  const saveRelaysToUserCredentials = async (relays: string[]) => {
+    try {
+      await fetch('/api/user/relays', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          relays: relays
+        })
+      });
+    } catch (error) {
+      console.error('Error saving relays to user credentials:', error);
+    }
+  };
+  
+  // Save relay URLs to server .env file (headless mode)
+  const saveRelaysToServerEnv = async (relays: string[]) => {
     try {
       await fetch('/api/env', {
         method: 'POST',
@@ -679,6 +780,15 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       });
     } catch (error) {
       console.error('Error saving relays to env:', error);
+    }
+  };
+
+  // Save relay URLs (routes to appropriate endpoint based on mode)
+  const saveRelaysToEnv = async (relays: string[]) => {
+    if (isDatabaseMode()) {
+      await saveRelaysToUserCredentials(relays);
+    } else {
+      await saveRelaysToServerEnv(relays);
     }
   };
 
@@ -938,9 +1048,10 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           {!isSignerRunning && isShareValid && isGroupValid && (
             <div className="mt-4 p-3 bg-blue-900/30 rounded-lg">
               <div className="text-blue-300 text-sm">
-                <strong>Server-Managed Signer:</strong> The signer runs automatically on the server when credentials are configured. 
-                {!serverStatus?.hasCredentials && " Save your credentials to start the signer."}
-                {serverStatus?.hasCredentials && !serverStatus?.nodeActive && " Server is starting the signer node..."}
+                <strong>Server-Managed Signer:</strong> The signer runs automatically on the server when credentials are configured.
+                {serverStatus?.hasCredentials === false && " Save your credentials to start the signer."}
+                {serverStatus?.hasCredentials === true && !serverStatus?.nodeActive && " Server is starting the signer node..."}
+                {serverStatus?.hasCredentials === null && " Please authenticate to view signer status."}
               </div>
             </div>
           )}

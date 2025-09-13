@@ -113,6 +113,7 @@ export type RenderableData = DecodedGroup | DecodedShare | Record<string, unknow
 // Signer types
 export interface SignerHandle {
   stopSigner: () => Promise<void>;
+  checkStatus: () => Promise<void>;
 }
 
 export interface SignerProps {
@@ -122,8 +123,20 @@ export interface SignerProps {
     name?: string;
     threshold?: number;
     totalShares?: number;
+    relays?: string[];
   };
   authHeaders?: Record<string, string>;
+  /**
+   * Explicitly specify if running in headless mode (env-based config).
+   * When true, saves to /api/env. When false, saves to user database.
+   * If not specified, inferred from initialData presence (for backward compatibility).
+   */
+  isHeadlessMode?: boolean;
+  /**
+   * Callback invoked when the `Signer` component is mounted and ready for interaction.
+   * Consumers can safely call methods on the forwarded ref (e.g., `checkStatus`).
+   */
+  onReady?: () => void;
 }
 
 // Keyset types
