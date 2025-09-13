@@ -346,8 +346,8 @@ export async function handleOnboardingRoute(
           // Extract admin secret from Authorization header
           const authHeader = req.headers.get('Authorization');
           let adminSecret: string | undefined;
-          if (authHeader && authHeader.startsWith('Bearer ')) {
-            adminSecret = authHeader.substring(7);
+          if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+            adminSecret = authHeader.substring(7).trim();
           }
 
           // Use the helper function for validation
@@ -404,8 +404,8 @@ export async function handleOnboardingRoute(
           // Extract admin secret from Authorization header
           const authHeader = req.headers.get('Authorization');
           let adminSecret: string | undefined;
-          if (authHeader && authHeader.startsWith('Bearer ')) {
-            adminSecret = authHeader.substring(7);
+          if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+            adminSecret = authHeader.substring(7).trim();
           }
 
           let body;

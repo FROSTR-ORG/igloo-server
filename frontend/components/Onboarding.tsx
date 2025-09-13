@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Alert } from './ui/alert';
@@ -25,6 +25,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [networkError, setNetworkError] = useState('');
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Keep a ref to adminSecret to ensure it's not lost during re-renders
+  const adminSecretRef = useRef<string>('');
 
   // Match server-side password policy exactly (see src/routes/onboarding.ts)
   // - Minimum 8 characters
@@ -41,6 +43,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       }
     };
   }, []);
+
+  // Sync adminSecret with ref to ensure it's not lost during re-renders
+  useEffect(() => {
+    adminSecretRef.current = adminSecret;
+  }, [adminSecret]);
 
   const checkStatus = async () => {
     setIsCheckingStatus(true);
@@ -151,6 +158,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       return;
     }
 
+    // Check if adminSecret is still available (use ref as fallback)
+    const secretToUse = adminSecret || adminSecretRef.current;
+    if (!secretToUse) {
+      setError('Session expired. Please refresh and try again.');
+      return;
+    }
+
     setIsLoading(true);
     setError('');
 
@@ -159,7 +173,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${adminSecret}`,
+          'Authorization': `Bearer ${secretToUse}`,
         },
         body: JSON.stringify({
           username: trimmedUsername,
