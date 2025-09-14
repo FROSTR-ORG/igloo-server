@@ -1,0 +1,62 @@
+/* NIP-46 UI styles (tailwind-assisted utility classes) */
+
+@layer components {
+  .sessions-container { @apply space-y-6; }
+  .sessions-section { @apply bg-gray-800/50 border border-blue-900/30 rounded-lg p-4 sm:p-6 shadow-lg; }
+  .sessions-list { @apply grid gap-3; }
+  .session-card { @apply relative bg-gray-900/40 border border-blue-900/30 rounded-lg p-4 sm:p-5; }
+  .session-badge { @apply absolute top-2 right-2 text-[10px] uppercase tracking-wide px-2 py-0.5 rounded bg-gray-700 text-gray-300; }
+  .session-badge.active { @apply bg-green-700 text-green-100; }
+  .session-badge.pending { @apply bg-yellow-700 text-yellow-100; }
+  .session-header { @apply mb-2; }
+  .session-info { @apply flex flex-col gap-1; }
+  .session-name-container { @apply flex items-center gap-2; }
+  .session-icon { @apply w-6 h-6 rounded; }
+  .session-name { @apply text-blue-200 font-medium; }
+  .session-url { @apply text-xs text-blue-400 hover:underline; }
+  .session-pubkey-container { @apply flex items-center gap-2; }
+  .session-pubkey { @apply font-mono text-xs text-gray-400; }
+  .copy-pubkey-btn { @apply text-xs text-blue-400 hover:text-blue-300; }
+  .session-created { @apply text-xs text-gray-500; }
+  .session-permissions-toggle { @apply mt-3; }
+  .session-permissions-btn { @apply text-xs text-blue-400 hover:text-blue-300; }
+  .session-card-actions-bottom { @apply mt-3 flex justify-end; }
+  .session-revoke-btn { @apply text-xs text-red-400 hover:text-red-300; }
+  .session-input-row { @apply flex gap-2; }
+  .session-input { @apply w-full bg-gray-900/60 border border-blue-900/30 rounded px-3 py-2 text-sm text-blue-300 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .qr-scan-btn { @apply px-3 py-2 bg-gray-800/60 border border-blue-900/30 rounded text-blue-200 hover:bg-blue-900/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .session-btn-primary { @apply mt-3 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-blue-100 rounded focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .session-error { @apply text-sm text-red-400 mt-2; }
+
+  .scanner-container { @apply flex flex-col items-center; }
+  .scanner-video { @apply rounded; }
+  .scanner-error { @apply text-center; }
+  .scanner-modal { @apply fixed inset-0 z-50; }
+  .scanner-overlay { @apply absolute inset-0 bg-black/80 backdrop-blur-sm; }
+  .scanner-container-modal { @apply relative mx-auto mt-24 max-w-md bg-gray-900 rounded-lg shadow-xl border border-blue-900/30 p-4 sm:p-6; }
+  .qr-reticule { @apply absolute inset-4 pointer-events-none; }
+  .qr-corner { @apply absolute w-6 h-6 border-2 border-blue-400; }
+  .qr-corner-tl { @apply top-0 left-0 border-b-0 border-r-0; }
+  .qr-corner-tr { @apply top-0 right-0 border-b-0 border-l-0; }
+  .qr-corner-bl { @apply bottom-0 left-0 border-t-0 border-r-0; }
+  .qr-corner-br { @apply bottom-0 right-0 border-t-0 border-l-0; }
+
+  /* Permissions */
+  .session-permissions-dropdown { @apply mt-3 bg-gray-900/50 border border-blue-900/30 rounded p-3; }
+  .permissions-title { @apply text-blue-300 font-semibold; }
+  .permissions-list { @apply space-y-2; }
+  .permission-item { @apply flex items-center justify-between; }
+  .permission-label { @apply flex items-center gap-2 text-sm text-blue-100; }
+  .permission-checkbox { @apply accent-blue-500; }
+  .sign-event-permission { @apply flex flex-col gap-2; }
+  .permission-header { @apply text-sm text-blue-100; }
+  .event-kinds-list { @apply flex flex-wrap gap-2; }
+  .event-kind-item { @apply flex items-center gap-1 bg-gray-800/80 border border-blue-900/30 px-2 py-1 rounded; }
+  .event-kind-number { @apply text-xs text-blue-200; }
+  .remove-event-kind-btn { @apply text-xs text-red-400 hover:text-red-300; }
+  .add-event-kind { @apply flex items-center gap-2; }
+  .event-kind-input { @apply w-28 bg-gray-900/60 border border-blue-900/30 rounded px-2 py-1 text-xs text-blue-300 placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500; }
+  .add-event-kind-btn { @apply text-xs text-blue-200 bg-gray-800/60 border border-blue-900/30 px-2 py-1 rounded; }
+  .permissions-actions { @apply mt-3 flex justify-end; }
+  .permissions-update-btn { @apply text-xs; }
+}

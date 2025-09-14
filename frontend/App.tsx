@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react"
 import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
+import { NIP46 } from "./components/NIP46"
 import Login from "./components/Login"
 import Onboarding from "./components/Onboarding"
 import type { SignerHandle } from "./types"
@@ -446,9 +447,12 @@ const App: React.FC = () => {
             value={activeTab}
             onValueChange={handleTabChange}
           >
-            <TabsList className="grid grid-cols-2 mb-4 bg-gray-800/50 w-full">
+            <TabsList className="grid grid-cols-3 mb-4 bg-gray-800/50 w-full">
               <TabsTrigger value="signer" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Signer
+              </TabsTrigger>
+              <TabsTrigger value="nip46" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
+                NIP-46
               </TabsTrigger>
               <TabsTrigger value="recover" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Recover
@@ -462,6 +466,15 @@ const App: React.FC = () => {
                 authHeaders={memoizedAuthHeaders}
                 isHeadlessMode={authState.headlessMode ?? false}
                 onReady={() => signerRef.current?.checkStatus()}
+              />
+            </TabsContent>
+
+            <TabsContent value="nip46" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
+              <NIP46 
+                privateKey={signerData?.share}
+                groupCred={signerData?.groupCredential}
+                shareCred={signerData?.share}
+                authHeaders={memoizedAuthHeaders}
               />
             </TabsContent>
             

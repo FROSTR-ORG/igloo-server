@@ -98,6 +98,25 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
 
   try {
     switch (url.pathname) {
+      case '/api/peers/group':
+        if (req.method === 'GET') {
+          // Return group pubkey in x-only hex and basic info
+          const credentials = await getCredentials(auth);
+          if (!credentials || !credentials.group_cred) {
+            const statusCode = !HEADLESS ? 401 : 400;
+            return Response.json({ error: 'No group credential available' }, { status: statusCode, headers });
+          }
+          try {
+            const decoded = decodeGroup(credentials.group_cred);
+            const compressed = decoded.group_pk; // Expect 02/03 + X
+            const hex = typeof compressed === 'string' ? compressed.toLowerCase() : '';
+            const pubkey = (hex.length === 66 && (hex.startsWith('02') || hex.startsWith('03'))) ? hex.slice(2) : hex;
+            return Response.json({ pubkey, threshold: decoded.threshold, totalShares: decoded.commits.length }, { headers });
+          } catch (e) {
+            return Response.json({ error: 'Failed to decode group credential' }, { status: 400, headers });
+          }
+        }
+        break;
       case '/api/peers':
         if (req.method === 'GET') {
           // Get credentials based on mode

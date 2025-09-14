@@ -77,6 +77,80 @@ let peerStatuses = new Map<string, PeerStatus>();
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
 
+// Global nostr-tools SimplePool.patch: ensure per-relay publish rejections are caught everywhere
+try {
+  const nt: any = await import('nostr-tools');
+  const SP = nt?.SimplePool;
+  if (SP && SP.prototype && !SP.prototype.__iglooPatched) {
+    const original = SP.prototype.publish;
+    SP.prototype.publish = function(relays: string[], event: any, options?: any) {
+      try {
+        const results: Promise<any>[] = original.call(this, relays, event, options);
+        return results.map((p: Promise<any>, idx: number) => p.catch((err: any) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          const url = Array.isArray(relays) ? relays[idx] : undefined;
+          addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
+          return null;
+        }));
+      } catch (e) {
+        addServerLog('warning', 'SimplePool.publish shim encountered an error; returning empty result');
+        return [] as Promise<any>[];
+      }
+    };
+    Object.defineProperty(SP.prototype, '__iglooPatched', { value: true, enumerable: false });
+    addServerLog('system', 'Applied global SimplePool.publish shim');
+  }
+} catch (e) {
+  // Non-fatal; continue without global shim
+}
+
+// Global error guards to prevent process crash on relay rejections or library throws
+process.on('unhandledRejection', (reason: any) => {
+  try {
+    const msg = reason instanceof Error ? reason.message : String(reason);
+    // Common Nostr relay rejection message shape (e.g., "blocked: only kind ... is accepted")
+    if (msg && msg.toLowerCase().includes('blocked:')) {
+      addServerLog('warning', `Relay publish rejected: ${msg}`);
+      return; // swallow known benign relay policy rejections
+    }
+    addServerLog('error', `Unhandled promise rejection: ${msg}`);
+  } catch {
+    // Best-effort logging only
+  }
+});
+
+process.on('uncaughtException', (err: any) => {
+  try {
+    const msg = err instanceof Error ? err.message : String(err);
+    // Keep server alive; log and continue
+    addServerLog('error', `Uncaught exception: ${msg}`);
+  } catch {
+    // noop
+  }
+});
+
+// Bun/whatwg-style global handlers (some rejections/errors arrive here instead of process)
+try {
+  globalThis.addEventListener?.('unhandledrejection', (ev: any) => {
+    try {
+      const msg = ev?.reason instanceof Error ? ev.reason.message : String(ev?.reason ?? 'unknown');
+      if (typeof ev?.preventDefault === 'function') ev.preventDefault();
+      if (msg.toLowerCase().includes('blocked:')) {
+        addServerLog('warning', `Relay publish rejected: ${msg}`);
+      } else {
+        addServerLog('error', `Unhandled promise rejection (global): ${msg}`);
+      }
+    } catch {}
+  });
+  globalThis.addEventListener?.('error', (ev: any) => {
+    try {
+      const msg = ev?.error instanceof Error ? ev.error.message : String(ev?.message ?? 'unknown');
+      if (typeof ev?.preventDefault === 'function') ev.preventDefault();
+      addServerLog('error', `Global error: ${msg}`);
+    } catch {}
+  });
+} catch {}
+
 // Fail fast if forbidden env keys are accidentally exposed via utils configuration
 assertNoSessionSecretExposure();
 

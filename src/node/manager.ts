@@ -7,6 +7,7 @@ import {
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
+import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools';
 
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
@@ -78,6 +79,50 @@ let nodeHealth: NodeHealth = {
 let connectivityCheckInterval: ReturnType<typeof setInterval> | null = null;
 let connectivityCheckInFlight = false;
 let nodeRecreateCallback: (() => Promise<void>) | null = null;
+
+// Quick relay capability probe: keep relays that accept the given kind.
+// Uses an ephemeral keypair and a tiny, throwaway event, and closes connections immediately.
+export async function filterRelaysForKindSupport(
+  relays: string[],
+  kind: number = 20004,
+  addServerLog?: ReturnType<typeof createAddServerLog>
+): Promise<string[]> {
+  if (!Array.isArray(relays) || relays.length === 0) return [];
+
+  const pool = new SimplePool();
+  try {
+    const seckey = generateSecretKey();
+    const pubkey = getPublicKey(seckey);
+    const event = finalizeEvent({
+      kind,
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [],
+      content: 'probe'
+    }, seckey);
+
+    const checks = relays.map(async (url) => {
+      try {
+        const results = pool.publish([url], event);
+        // publish returns an array (one per relay); we used single relay, index 0
+        const outcome = await Promise.allSettled(results);
+        const ok = outcome.length > 0 && outcome[0].status === 'fulfilled';
+        if (!ok && addServerLog) {
+          const reason = outcome[0].status === 'rejected' ? String((outcome[0] as PromiseRejectedResult).reason) : 'unknown';
+          addServerLog('warning', `Relay rejected kind ${kind}: ${url}`, { reason });
+        }
+        return ok ? url : null;
+      } catch (e) {
+        if (addServerLog) addServerLog('warning', `Relay probe failed: ${url}`, e);
+        return null;
+      }
+    });
+
+    const settled = await Promise.all(checks);
+    return settled.filter((r): r is string => typeof r === 'string');
+  } finally {
+    try { pool.close(relays); } catch {}
+  }
+}
 
 // Helper function to update node activity
 function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isKeepalive: boolean = false) {
@@ -888,7 +933,21 @@ export async function createNodeWithCredentials(
   relaysEnv?: string,
   addServerLog?: ReturnType<typeof createAddServerLog>
 ): Promise<ServerBifrostNode | null> {
-  const relays = getValidRelays(relaysEnv);
+  let relays = getValidRelays(relaysEnv);
+
+  // Minimal startup self-test: drop relays that reject kind 20004 (Bifrost)
+  try {
+    const tested = await filterRelaysForKindSupport(relays, 20004, addServerLog);
+    if (tested.length === 0) {
+      if (addServerLog) addServerLog('warning', 'All configured relays reject kind 20004; proceeding with original list but server may log policy rejections');
+    } else if (tested.length < relays.length) {
+      const dropped = relays.filter(r => !tested.includes(r));
+      if (addServerLog) addServerLog('info', `Filtering ${dropped.length} relay(s) that reject kind 20004`, { dropped, kept: tested });
+      relays = tested;
+    }
+  } catch (e) {
+    if (addServerLog) addServerLog('warning', 'Relay self-test failed; using configured relays as-is', e);
+  }
   
   if (addServerLog) {
     addServerLog('info', 'Creating and connecting node...');
@@ -952,6 +1011,47 @@ export async function createNodeWithCredentials(
                 hasUpdate: typeof client.update === 'function',
                 isReady: client._is_ready || client.is_ready || false
               });
+
+              // Minimal, robust patch: suppress relay publish rejections so a single
+              // policy block (e.g., "only kind 24133 and 24135 is accepted")
+              // cannot crash the server. We convert per-relay rejections to
+              // resolved nulls; higher layers already compute ok/acks/fails.
+              try {
+                const pool = client._pool || client.pool;
+                if (pool && typeof pool.publish === 'function' && !pool.__iglooPatched) {
+                  const originalPublish = pool.publish.bind(pool);
+                  pool.publish = (relays: string[], event: any) => {
+                    const promises: Promise<any>[] = originalPublish(relays, event);
+                    return promises.map((p, idx) => p.catch((err: any) => {
+                      const reason = err instanceof Error ? err.message : String(err);
+                      const url = Array.isArray(relays) ? relays[idx] : undefined;
+                      if (addServerLog) addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
+                      return null; // swallow per-relay failure
+                    }));
+                  };
+                  Object.defineProperty(pool, '__iglooPatched', { value: true, enumerable: false });
+                }
+              } catch {}
+
+              // Wrap client.publish to never throw on aggregate failures.
+              try {
+                if (typeof client.publish === 'function' && !client.__iglooClientPublishPatched) {
+                  const origClientPublish = client.publish.bind(client);
+                  client.publish = async (...args: any[]) => {
+                    try {
+                      return await origClientPublish(...args);
+                    } catch (err: any) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      if (addServerLog) addServerLog('warning', `Client publish failed: ${msg}`);
+                      const relaysList = Array.isArray(client.relays) ? client.relays : [];
+                      const message = args?.[0];
+                      const peerPk = args?.[1];
+                      return { ok: false, acks: [], fails: relaysList, msg_id: message?.id, peer_pk: peerPk, data: undefined };
+                    }
+                  };
+                  Object.defineProperty(client, '__iglooClientPublishPatched', { value: true, enumerable: false });
+                }
+              } catch {}
             }
             
             // Check if node has ping capability
@@ -1017,6 +1117,40 @@ export async function createNodeWithCredentials(
               if (addServerLog) {
                 addServerLog('info', 'Node connected and ready (basic mode)');
               }
+              // Apply the same publish-swallow patch in basic mode
+              try {
+                const client = (node as any)._client || (node as any).client;
+                const pool = client?._pool || client?.pool;
+                if (pool && typeof pool.publish === 'function' && !pool.__iglooPatched) {
+                  const originalPublish = pool.publish.bind(pool);
+                  pool.publish = (relays: string[], event: any) => {
+                    const promises: Promise<any>[] = originalPublish(relays, event);
+                    return promises.map((p, idx) => p.catch((err: any) => {
+                      const reason = err instanceof Error ? err.message : String(err);
+                      const url = Array.isArray(relays) ? relays[idx] : undefined;
+                      if (addServerLog) addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
+                      return null;
+                    }));
+                  };
+                  Object.defineProperty(pool, '__iglooPatched', { value: true, enumerable: false });
+                }
+                if (client && typeof client.publish === 'function' && !client.__iglooClientPublishPatched) {
+                  const origClientPublish = client.publish.bind(client);
+                  client.publish = async (...args: any[]) => {
+                    try {
+                      return await origClientPublish(...args);
+                    } catch (err: any) {
+                      const msg = err instanceof Error ? err.message : String(err);
+                      if (addServerLog) addServerLog('warning', `Client publish failed: ${msg}`);
+                      const relaysList = Array.isArray(client.relays) ? client.relays : [];
+                      const message = args?.[0];
+                      const peerPk = args?.[1];
+                      return { ok: false, acks: [], fails: relaysList, msg_id: message?.id, peer_pk: peerPk, data: undefined };
+                    }
+                  };
+                  Object.defineProperty(client, '__iglooClientPublishPatched', { value: true, enumerable: false });
+                }
+              } catch {}
               return node;
             }
           } catch (basicError) {

@@ -6,6 +6,8 @@ export { handleRecoveryRoute } from './recovery.js';
 export { handleSharesRoute } from './shares.js';
 export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
+export { handleSignRoute } from './sign.js';
+export { handleNip44Route } from './nip44.js';
 
 // Export types and utilities
 export * from './types.js';
@@ -20,6 +22,8 @@ import { handleRecoveryRoute } from './recovery.js';
 import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
+import { handleSignRoute } from './sign.js';
+import { handleNip44Route } from './nip44.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
 import { handleUserRoute } from './user.js';
@@ -266,6 +270,8 @@ export async function handleRequest(
     handleStatusRoute,    // Allow unauthenticated for health checks
     handleEventsRoute,
     handlePeersRoute,
+    handleSignRoute,
+    handleNip44Route,
     handleRecoveryRoute,
     handleSharesRoute,
   ];
