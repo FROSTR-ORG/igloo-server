@@ -16,6 +16,27 @@ import {
   resetHealthMonitoring
 } from './node/manager.js';
 
+// Global error handlers to prevent crashes
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[Server] Unhandled Promise Rejection:', reason);
+  // Log but don't crash - especially for relay timeout errors
+  if (reason && typeof reason === 'object' && 'message' in reason) {
+    const error = reason as Error;
+    if (error.message && error.message.includes('publish timed out')) {
+      console.log('[Server] Ignoring nostr-tools publish timeout - relay may be slow or unavailable');
+      return;
+    }
+  }
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[Server] Uncaught Exception:', error);
+  // For critical errors, still exit after logging
+  if (error.message && !error.message.includes('publish timed out')) {
+    process.exit(1);
+  }
+});
+
 // Node restart configuration with validation
 const parseRestartConfig = () => {
   const initialRetryDelay = parseInt(process.env.NODE_RESTART_DELAY || '30000');
@@ -129,7 +150,7 @@ async function restartNode(reason: string = 'health check failure', forceRestart
         setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
           // Controlled restart callback to prevent infinite recursion
           scheduleRestartWithBackoff('watchdog timeout');
-        });
+        }, CONST.GROUP_CRED, CONST.SHARE_CRED);
         addServerLog('system', 'Node successfully restarted');
         
         // Reset retry count on successful restart
@@ -191,7 +212,7 @@ if (CONST.hasCredentials()) {
               setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
           // Node unhealthy callback
           scheduleRestartWithBackoff('watchdog timeout');
-        });
+        }, CONST.GROUP_CRED, CONST.SHARE_CRED);
     }
   } catch (error) {
     addServerLog('error', 'Failed to create initial Bifrost node', error);
@@ -223,7 +244,7 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
     setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses, () => {
       // Node unhealthy callback for dynamically created nodes
       scheduleRestartWithBackoff('dynamic node watchdog timeout');
-    });
+    }, CONST.GROUP_CRED, CONST.SHARE_CRED);
   }
 };
 

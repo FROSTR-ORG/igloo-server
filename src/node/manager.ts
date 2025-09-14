@@ -1,7 +1,8 @@
 import { 
   createAndConnectNode, 
   createConnectedNode,
-  normalizePubkey
+  normalizePubkey,
+  extractSelfPubkeyFromCredentials
 } from '@frostr/igloo-core';
 import { ServerBifrostNode, PeerStatus } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
@@ -93,16 +94,24 @@ let nodeHealth: NodeHealth = {
 
 let healthCheckInterval: NodeJS.Timeout | null = null;
 let watchdogTimer: NodeJS.Timeout | null = null;
+let heartbeatInterval: NodeJS.Timeout | null = null;
 
 // Helper function to update node activity
-function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>) {
+function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>, isHeartbeat: boolean = false) {
   const now = new Date();
   nodeHealth.lastActivity = now;
-  if (!nodeHealth.isHealthy) {
+  
+  // Only log health restoration for real activity, not heartbeats
+  if (!nodeHealth.isHealthy && !isHeartbeat) {
     nodeHealth.isHealthy = true;
     nodeHealth.consecutiveFailures = 0;
     nodeHealth.lastHealthyPeriodStart = now;
     addServerLog('system', 'Node health restored - activity detected');
+  } else if (!nodeHealth.isHealthy && isHeartbeat) {
+    // Silently restore health on heartbeat
+    nodeHealth.isHealthy = true;
+    nodeHealth.consecutiveFailures = 0;
+    nodeHealth.lastHealthyPeriodStart = now;
   }
 }
 
@@ -186,6 +195,21 @@ function startHealthMonitoring(
     checkNodeHealth(node, addServerLog, onNodeUnhealthy);
   }, HEALTH_CHECK_INTERVAL);
 
+  // Simplified keepalive - just update activity timestamp when idle
+  // Since peers are pinging us regularly, we don't need to self-ping
+  heartbeatInterval = setInterval(() => {
+    const now = new Date();
+    const timeSinceActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+    
+    // If we've been idle for more than 90 seconds, update activity
+    // This prevents false unhealthy detection when peers aren't pinging
+    if (timeSinceActivity > 90000) {
+      // Just update the timestamp - no network operations needed
+      // This prevents the watchdog from incorrectly restarting the node
+      updateNodeActivity(addServerLog, true);
+    }
+  }, 30000); // Check every 30 seconds
+
   // Reset health state for new node
   nodeHealth = {
     lastActivity: new Date(),
@@ -207,6 +231,10 @@ function stopHealthMonitoring() {
   if (watchdogTimer) {
     clearTimeout(watchdogTimer);
     watchdogTimer = null;
+  }
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
   }
 }
 
@@ -326,7 +354,9 @@ export function setupNodeEventListeners(
   addServerLog: ReturnType<typeof createAddServerLog>,
   broadcastEvent: ReturnType<typeof createBroadcastEvent>,
   peerStatuses: Map<string, PeerStatus>,
-  onNodeUnhealthy?: () => void
+  onNodeUnhealthy?: () => void,
+  groupCred?: string,
+  shareCred?: string
 ) {
   // Start health monitoring
   startHealthMonitoring(node, addServerLog, onNodeUnhealthy || (() => {}));
@@ -440,7 +470,7 @@ export function setupNodeEventListeners(
                   eventType: tag
                 },
                 timestamp: new Date().toLocaleTimeString(),
-                id: Math.random().toString(36).substr(2, 9)
+                id: Math.random().toString(36).substring(2, 11)
               });
               
             }
@@ -454,7 +484,53 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
-            addServerLog('bifrost', `Ping event: ${tag}`, msg);
+            // Check if this is a self-ping (keepalive) by comparing pubkeys
+            let isSelfPing = false;
+            try {
+              // Extract self pubkey if we have credentials
+              let selfPubkey: string | undefined;
+              if (groupCred && shareCred) {
+                const selfPubkeyResult = extractSelfPubkeyFromCredentials(groupCred, shareCred);
+                selfPubkey = selfPubkeyResult.pubkey || undefined;
+              }
+              
+              // If we have self pubkey, check if this ping involves ourself
+              if (selfPubkey) {
+                const normalizedSelf = normalizePubkey(selfPubkey);
+                
+                // Check various message structures for the from/to pubkey
+                let fromPubkey: string | undefined;
+                
+                // Try to extract from env.pubkey (standard Nostr event structure)
+                if ('env' in messageData && typeof messageData.env === 'object' && messageData.env !== null) {
+                  const env = messageData.env as any;
+                  if ('pubkey' in env && typeof env.pubkey === 'string') {
+                    fromPubkey = env.pubkey;
+                  }
+                }
+                
+                // Fallback to data.from if available
+                if (!fromPubkey && 'data' in messageData && typeof messageData.data === 'object' && messageData.data !== null) {
+                  const data = messageData.data as any;
+                  if ('from' in data && typeof data.from === 'string') {
+                    fromPubkey = data.from;
+                  }
+                }
+                
+                // Check if this is a self-ping
+                if (fromPubkey) {
+                  const normalizedFrom = normalizePubkey(fromPubkey);
+                  isSelfPing = normalizedFrom === normalizedSelf;
+                }
+              }
+            } catch (error) {
+              // If we can't determine, log it anyway (safer to log than miss real pings)
+            }
+            
+            // Only log non-keepalive pings
+            if (!isSelfPing) {
+              addServerLog('bifrost', `Ping event: ${tag}`, msg);
+            }
           } else {
             addServerLog('bifrost', `Message received: ${tag}`, msg);
           }

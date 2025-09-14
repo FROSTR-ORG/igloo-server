@@ -99,6 +99,29 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
           }
         }
         break;
+        
+      case '/api/peers/group':
+        if (req.method === 'GET') {
+          const env = await readEnvFile();
+          if (!env.GROUP_CRED) {
+            return Response.json({ error: 'No group credential available' }, { status: 400, headers });
+          }
+          
+          try {
+            // Decode group to get the group public key
+            const decodedGroup = decodeGroup(env.GROUP_CRED);
+            return Response.json({ 
+              pubkey: decodedGroup.group_pk,
+              threshold: decodedGroup.threshold,
+              totalShares: decodedGroup.commits.length
+            }, { headers });
+          } catch (error) {
+            return Response.json({ 
+              error: 'Failed to decode group credential' 
+            }, { status: 400, headers });
+          }
+        }
+        break;
 
       case '/api/peers/ping':
         if (req.method === 'POST') {
