@@ -19,6 +19,7 @@ export class NIP46Controller extends Emitter {
   private transport: any | null = null
   private serverSigner: ServerSigner
   private config: NIP46Config
+  private authHeaders: Record<string, string> = {}
 
   private identityPubkey: string | null = null
   private requests: PermissionRequest[] = []
@@ -33,7 +34,10 @@ export class NIP46Controller extends Emitter {
   }
 
   async initialize(hexPrivateKey?: string, authHeaders?: Record<string, string>) {
-    if (authHeaders) this.serverSigner = new ServerSigner(authHeaders)
+    if (authHeaders) {
+      this.authHeaders = authHeaders
+      this.serverSigner = new ServerSigner(authHeaders)
+    }
     await this.loadLib()
     const { SignerAgent, SimpleSigner, Lib } = this.lib as any
     this.transport = hexPrivateKey ? new SimpleSigner(hexPrivateKey) : new SimpleSigner()
@@ -67,13 +71,19 @@ export class NIP46Controller extends Emitter {
         const payload = await this.decryptEnvelope(event)
         const msg = JSON.parse(payload)
         // Normalize to request shape the rest of the controller expects
-        const req = { id: msg?.id, method: msg?.method, params: msg?.params || [], env: { pubkey: event?.pubkey } }
+        const req = { id: msg?.id, method: msg?.method, params: msg?.params || [], env: { pubkey: event?.pubkey }, pubkey: event?.pubkey }
         // CONNECT: ack + promote session
         if (req.method === 'connect') {
           try { await this.agent.socket.send({ id: req.id, result: 'ack' }, event?.pubkey) } catch {}
           const sess = this.sessionFromReq(req)
           this.pendingSessions = this.pendingSessions.filter(s => s.pubkey !== sess.pubkey)
-          if (!this.activeSessions.find(s => s.pubkey === sess.pubkey)) this.activeSessions.push({ ...sess, status: 'active', policy: this.config.policy })
+          if (!this.activeSessions.find(s => s.pubkey === sess.pubkey)) {
+            const active = { ...sess, status: 'active', policy: this.config.policy }
+            this.activeSessions.push(active)
+            // Persist
+            this.saveSession(active).catch(() => {})
+            this.updateSessionStatus(active.pubkey, 'active', true).catch(() => {})
+          }
           this.emit('session:active')
           return
         }
@@ -94,8 +104,13 @@ export class NIP46Controller extends Emitter {
       try {
         // Create session bookkeeping on first message from a client
         const sess = this.sessionFromReq(req)
-        if (!this.activeSessions.find(s => s.pubkey === sess.pubkey) && !this.pendingSessions.find(s => s.pubkey === sess.pubkey)) {
-          this.pendingSessions.push({ ...sess, status: 'pending' })
+        const pub = this.getReqPubkey(req) || sess.pubkey
+        const valid = typeof pub === 'string' && /^[0-9a-f]{64}$/i.test(pub)
+        if (valid && !this.activeSessions.find(s => s.pubkey === pub) && !this.pendingSessions.find(s => s.pubkey === pub)) {
+          const pending = { ...sess, pubkey: pub, status: 'pending' as const }
+          this.pendingSessions.push(pending)
+          // Persist initial pending session
+          this.saveSession(pending).catch(() => {})
           this.emit('session:pending')
         }
 
@@ -123,6 +138,8 @@ export class NIP46Controller extends Emitter {
 
     await this.agent.connect(this.config.relays)
     try { this.identityPubkey = await this.serverSigner.loadPublicKey().then(() => this.serverSigner.get_pubkey()) } catch {}
+    // Load any persisted sessions
+    try { await this.loadPersistedSessions() } catch {}
     // If socket already ready, connected already fired; otherwise the above will emit soon.
   }
 
@@ -145,6 +162,8 @@ export class NIP46Controller extends Emitter {
       if (!this.lib || !this.agent) throw new Error('Signer not initialized')
       const original = this.reqById.get(id)
       await this.processRequest(original)
+      const pubkey = this.getReqPubkey(original)
+      if (pubkey) this.autoGrantOnApprove(pubkey, req)
     } catch (e) {
       this.emit('error', e)
     } finally {
@@ -173,13 +192,16 @@ export class NIP46Controller extends Emitter {
     }
     upd(this.activeSessions)
     upd(this.pendingSessions)
-    // also update controller policy baseline
-    this.config.policy = { ...this.config.policy, methods: { ...this.config.policy.methods, ...policy.methods }, kinds: { ...this.config.policy.kinds, ...policy.kinds } }
-    // propagate to library session manager if available
+    // propagate to library session manager if available (per-session only)
     try {
       const libSess = this.agent?.session?.get?.(pubkey)
       if (libSess) this.agent.session.update({ ...libSess, policy })
     } catch {}
+    // Persist policy for this session
+    this.api(`/api/nip46/sessions/${pubkey}/policy`, {
+      method: 'PUT',
+      body: JSON.stringify({ methods: policy.methods || {}, kinds: policy.kinds || {} })
+    }).catch(() => {})
     this.emit('session:updated')
   }
 
@@ -210,6 +232,8 @@ export class NIP46Controller extends Emitter {
       }
       if (!this.pendingSessions.find(s => s.pubkey === pending.pubkey) && !this.activeSessions.find(s => s.pubkey === pending.pubkey)) {
         this.pendingSessions.push(pending)
+        // Persist pending session with relays
+        this.saveSession(pending, Array.isArray(invite.relays) ? invite.relays : undefined).catch(() => {})
         this.emit('session:pending')
       }
       return true
@@ -224,12 +248,14 @@ export class NIP46Controller extends Emitter {
     this.activeSessions = f(this.activeSessions)
     this.pendingSessions = f(this.pendingSessions)
     try { this.agent?.session?.revoke?.(pubkey) } catch {}
+    // Remove from persistence instead of marking revoked
+    this.api(`/api/nip46/sessions/${pubkey}`, { method: 'DELETE' }).catch(() => {})
     this.emit('session:updated')
   }
 
   private sessionFromReq(req: any): SignerSession {
     const p = req?.session?.profile || req?.profile || {}
-    const k = req?.session?.pubkey || req?.pubkey || 'unknown'
+    const k = req?.session?.pubkey || req?.pubkey || req?.env?.pubkey || req?.client_pubkey || 'unknown'
     return { pubkey: k, created_at: Math.floor(Date.now() / 1000), profile: { name: p?.name, url: p?.url, image: p?.image }, policy: this.config.policy }
   }
   private sessionFromJoin(ev: any): SignerSession {
@@ -257,14 +283,24 @@ export class NIP46Controller extends Emitter {
       session: this.sessionFromReq(req),
       stamp: Date.now()
     }
-    // Default deny kinds for sign_event unless explicitly allowed in baseline policy
+    // Ensure we have a session record in memory and persistence (only if pubkey looks valid)
+    const pub = this.getReqPubkey(req) || permissionReq.session.pubkey
+    const valid = typeof pub === 'string' && /^[0-9a-f]{64}$/i.test(pub)
+    if (valid && !this.activeSessions.find(s => s.pubkey === pub) && !this.pendingSessions.find(s => s.pubkey === pub)) {
+      const pending = { ...permissionReq.session, pubkey: pub, status: 'pending' as const, policy: permissionReq.session.policy || this.config.policy }
+      this.pendingSessions.push(pending)
+      this.saveSession(pending).catch(() => {})
+      this.emit('session:pending')
+    }
+    // Evaluate against per-session policy
+    const policy = this.getPolicyForPubkey(permissionReq.session.pubkey)
     if (permissionReq.method === 'sign_event') {
       try {
         const tmpl = JSON.parse(permissionReq.params[0] || '{}')
-        const kindAllowed = !!this.config.policy.kinds?.[String(tmpl?.kind)]
+        const kindAllowed = policy?.kinds?.[String(tmpl?.kind)] === true
         if (!kindAllowed) permissionReq.deniedReason = `sign_event kind ${tmpl?.kind} not allowed by policy`
       } catch {}
-    } else if (!this.config.policy.methods?.[permissionReq.method]) {
+    } else if (policy?.methods?.[permissionReq.method] !== true) {
       permissionReq.deniedReason = `${permissionReq.method} not allowed by policy`
     }
     this.requests.push(permissionReq)
@@ -274,12 +310,14 @@ export class NIP46Controller extends Emitter {
 
   private isAllowedByPolicy(req: any): boolean | null {
     try {
+      const pubkey = this.getReqPubkey(req)
+      const policy = this.getPolicyForPubkey(pubkey)
       if (req?.method === 'sign_event') {
         const tmpl = JSON.parse(req?.params?.[0] || '{}')
-        const v = this.config.policy.kinds?.[String(tmpl?.kind)]
+        const v = policy?.kinds?.[String(tmpl?.kind)]
         if (v === true) return true; if (v === false) return false; return null
       } else {
-        const v = this.config.policy.methods?.[req?.method]
+        const v = policy?.methods?.[req?.method]
         if (v === true) return true; if (v === false) return false; return null
       }
     } catch {}
@@ -289,38 +327,42 @@ export class NIP46Controller extends Emitter {
   private async processRequest(original: any) {
     if (!this.agent) throw new Error('Signer not initialized')
     const method = original?.method
-    this.ensureActive(original?.env?.pubkey)
+    this.ensureActive(this.getReqPubkey(original))
     switch (method) {
       case 'get_public_key': {
         const pk = this.serverSigner.get_pubkey() || await this.serverSigner.loadPublicKey()
-        await this.agent.socket.send({ id: original.id, result: pk }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, result: pk }, this.getReqPubkey(original))
+        const pub = this.getReqPubkey(original); if (pub) this.updateSessionStatus(pub, 'active', true).catch(() => {})
         return
       }
       case 'sign_event': {
         const tmpl = JSON.parse(original.params?.[0])
         const signed = await this.serverSigner.sign_event(tmpl)
-        await this.agent.socket.send({ id: original.id, result: JSON.stringify(signed) }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, result: JSON.stringify(signed) }, this.getReqPubkey(original))
+        const pub = this.getReqPubkey(original); if (pub) this.updateSessionStatus(pub, 'active', true).catch(() => {})
         return
       }
       case 'nip44_encrypt': {
         const [peer, plaintext] = original.params || []
         const ct = await this.serverSigner.nip44_encrypt(peer, plaintext)
-        await this.agent.socket.send({ id: original.id, result: ct }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, result: ct }, this.getReqPubkey(original))
+        const pub = this.getReqPubkey(original); if (pub) this.updateSessionStatus(pub, 'active', true).catch(() => {})
         return
       }
       case 'nip44_decrypt': {
         const [peer, ciphertext] = original.params || []
         const pt = await this.serverSigner.nip44_decrypt(peer, ciphertext)
-        await this.agent.socket.send({ id: original.id, result: pt }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, result: pt }, this.getReqPubkey(original))
+        const pub = this.getReqPubkey(original); if (pub) this.updateSessionStatus(pub, 'active', true).catch(() => {})
         return
       }
       case 'nip04_encrypt':
       case 'nip04_decrypt': {
-        await this.agent.socket.send({ id: original.id, error: 'NIP-04 not implemented' }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, error: 'NIP-04 not implemented' }, this.getReqPubkey(original))
         return
       }
       default: {
-        await this.agent.socket.send({ id: original.id, result: null }, original.env?.pubkey)
+        await this.agent.socket.send({ id: original.id, result: null }, this.getReqPubkey(original))
       }
     }
   }
@@ -343,7 +385,79 @@ export class NIP46Controller extends Emitter {
       const active = { ...pending, status: 'active' as const, policy: pending.policy || this.config.policy }
       if (existing) Object.assign(existing, active)
       else this.activeSessions.push(active)
+      // Persist status transition
+      this.updateSessionStatus(pubkey, 'active', true).catch(() => {})
       this.emit('session:active')
     }
+  }
+
+  // Per-session helpers
+  private getReqPubkey(req: any): string | undefined {
+    return (req?.env?.pubkey || req?.session?.pubkey || req?.pubkey || undefined)
+  }
+
+  private getPolicyForPubkey(pubkey?: string): PermissionPolicy {
+    if (!pubkey) return this.config.policy
+    const s = this.activeSessions.find(x => x.pubkey === pubkey) || this.pendingSessions.find(x => x.pubkey === pubkey)
+    return s?.policy || this.config.policy
+  }
+
+  private autoGrantOnApprove(pubkey: string, req: PermissionRequest) {
+    const current = { ...this.getPolicyForPubkey(pubkey) }
+    current.methods = { ...(current.methods || {}) }
+    current.kinds = { ...(current.kinds || {}) }
+    if (req.method === 'sign_event') {
+      try {
+        const tmpl = JSON.parse(req.params?.[0] || '{}')
+        const k = String(tmpl?.kind)
+        if (k) current.kinds![k] = true
+      } catch {}
+    } else {
+      current.methods![req.method] = true
+    }
+    this.updateSession(pubkey, current)
+  }
+
+  private async api(path: string, init?: RequestInit) {
+    const headers = { 'Content-Type': 'application/json', ...this.authHeaders }
+    return fetch(path, { ...(init || {}), headers })
+  }
+
+  private async loadPersistedSessions() {
+    const res = await this.api('/api/nip46/sessions', { method: 'GET' })
+    if (!res.ok) return
+    const data = await res.json()
+    const sessions = Array.isArray(data.sessions) ? data.sessions : []
+    const active: SignerSession[] = []
+    const pending: SignerSession[] = []
+    for (const s of sessions) {
+      const sess: SignerSession = {
+        pubkey: s.pubkey,
+        created_at: Math.floor(Date.now() / 1000),
+        profile: s.profile || {},
+        policy: s.policy || this.config.policy,
+        status: s.status === 'active' ? 'active' : 'pending'
+      }
+      if (sess.status === 'active') active.push(sess)
+      else pending.push(sess)
+    }
+    this.activeSessions = active
+    this.pendingSessions = pending
+    if (active.length || pending.length) this.emit('session:updated')
+  }
+
+  private async saveSession(session: SignerSession, relays?: string[]) {
+    const body = {
+      pubkey: session.pubkey,
+      status: session.status || 'pending',
+      profile: session.profile || {},
+      policy: session.policy || this.config.policy,
+      relays: relays
+    }
+    await this.api('/api/nip46/sessions', { method: 'POST', body: JSON.stringify(body) })
+  }
+
+  private async updateSessionStatus(pubkey: string, status: 'pending' | 'active' | 'revoked', touch = false) {
+    await this.api(`/api/nip46/sessions/${pubkey}/status`, { method: 'PUT', body: JSON.stringify({ status, touch }) })
   }
 }

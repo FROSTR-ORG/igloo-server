@@ -18,6 +18,7 @@ export function Sessions({ controller }: SessionsProps) {
   const [copiedPubkey, setCopiedPubkey] = useState<string | null>(null)
   const [newEventKind, setNewEventKind] = useState<Record<string, string>>({})
   const [isScanning, setIsScanning] = useState(false)
+  const [history, setHistory] = useState<Record<string, { recent_kinds?: string[]; recent_methods?: string[]; last_active_at?: string; status?: string }>>({})
 
   useEffect(() => {
     if (!controller) return
@@ -37,6 +38,33 @@ export function Sessions({ controller }: SessionsProps) {
       controller.off('session:active', update)
       controller.off('session:pending', update)
       controller.off('session:updated', update)
+    }
+  }, [controller])
+
+  // Fetch compact session history: last_active, recent approvals, revoked list
+  async function fetchHistory() {
+    try {
+      const res = await fetch('/api/nip46/history', { headers: { 'Content-Type': 'application/json' } })
+      if (!res.ok) return
+      const data = await res.json()
+      const sessions: any[] = Array.isArray(data.sessions) ? data.sessions : []
+      const map: Record<string, any> = {}
+      for (const s of sessions) {
+        map[s.pubkey] = { recent_kinds: s.recent_kinds, recent_methods: s.recent_methods, last_active_at: s.last_active_at, status: s.status }
+      }
+      setHistory(map)
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchHistory()
+    if (!controller) return
+    const refresh = () => fetchHistory()
+    controller.on('session:active', refresh)
+    controller.on('session:updated', refresh)
+    return () => {
+      controller.off('session:active', refresh)
+      controller.off('session:updated', refresh)
     }
   }, [controller])
 
@@ -80,7 +108,7 @@ export function Sessions({ controller }: SessionsProps) {
   const allSessions = [
     ...activeSessions.map(s => ({ ...s, status: 'active' as const })),
     ...pendingSessions.map(s => ({ ...s, status: 'pending' as const }))
-  ]
+  ].filter(s => /^[0-9a-f]{64}$/i.test(s.pubkey))
 
   return (
     <div className="sessions-container">
@@ -114,6 +142,9 @@ export function Sessions({ controller }: SessionsProps) {
                         </button>
                       </div>
                       <span className="session-created">Created: {new Date(session.created_at * 1000).toLocaleString()}</span>
+                      {history[session.pubkey]?.last_active_at && (
+                        <span className="session-created">Last Active: {new Date(history[session.pubkey]!.last_active_at!).toLocaleString()}</span>
+                      )}
                     </div>
                   </div>
 
@@ -122,6 +153,27 @@ export function Sessions({ controller }: SessionsProps) {
                       {expandedPermissions.has(session.pubkey) ? 'Hide' : 'Show'} Permissions
                     </button>
                   </div>
+
+                  {(history[session.pubkey]?.recent_kinds?.length || history[session.pubkey]?.recent_methods?.length) && (
+                    <div className="mt-2 text-xs text-gray-400">
+                      {history[session.pubkey]?.recent_kinds?.length ? (
+                        <div>
+                          <span className="text-gray-500 mr-1">Recent kinds approved:</span>
+                          {history[session.pubkey]!.recent_kinds!.map((k: string) => (
+                            <span key={k} className="inline-block bg-purple-900/40 text-purple-200 rounded px-1.5 py-0.5 mr-1">{k}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {history[session.pubkey]?.recent_methods?.length ? (
+                        <div className="mt-1">
+                          <span className="text-gray-500 mr-1">Recent methods:</span>
+                          {history[session.pubkey]!.recent_methods!.map((m: string) => (
+                            <span key={m} className="inline-block bg-blue-900/40 text-blue-200 rounded px-1.5 py-0.5 mr-1">{m}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  )}
 
                   {expandedPermissions.has(session.pubkey) && (
                     <PermissionsDropdown
@@ -172,6 +224,8 @@ export function Sessions({ controller }: SessionsProps) {
           </div>
         )}
       </div>
+
+      {/* Revoked sessions are not persisted anymore; no separate section */}
     </div>
   )
 }

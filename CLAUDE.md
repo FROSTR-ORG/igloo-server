@@ -12,23 +12,26 @@ Igloo Server is a server-based signing device and personal ephemeral relay for t
 - Main branch: `master` (production releases)
 - Development branch: `dev` (active development)
 - Release branches: `release/prepare-v*` (temporary during release process)
+- Feature branches: `feature/*` (development of new features)
 
 ## Key Commands
 
 ### Development
 ```bash
-# Install dependencies
+# Install dependencies (REQUIRED: Bun runtime - this project uses Bun-specific APIs)
 bun install
 
-# Build frontend and CSS (required before running)
+# Build frontend and CSS (REQUIRED before running - static files not in git)
 bun run build:dev      # Development build (unminified, no caching)
 bun run build          # Production build (minified)
+bun run build:conditional # Builds only if not HEADLESS=true
 
 # Start server
 bun run start          # Runs on http://localhost:8002
+bun run start:headless # Alias that sets HEADLESS=true (API-only, no UI)
 
 # Development with hot reload
-bun run dev            # Watches frontend files for changes
+bun run dev            # Watches frontend files for changes (runs CSS + JS watch)
 
 # Individual builds
 bun run build:js       # Frontend JavaScript only
@@ -36,11 +39,12 @@ bun run build:js:prod  # Minified production JavaScript
 bun run build:css      # Tailwind CSS with watch mode
 bun run build:css:prod # Minified production CSS
 
-# Release process (must be on dev branch)
+# Release process (MUST be on dev branch)
 bun run release        # Patch release (alias for release:patch)
-bun run release:patch  # Patch release
-bun run release:minor  # Minor release  
-bun run release:major  # Major release
+bun run release:patch  # Patch release (e.g., 1.0.0 → 1.0.1)
+bun run release:minor  # Minor release (e.g., 1.0.0 → 1.1.0)
+bun run release:major  # Major release (e.g., 1.0.0 → 2.0.0)
+./scripts/release.sh 2.5.0  # Specific version
 ```
 
 ### Testing & Validation
@@ -48,7 +52,7 @@ bun run release:major  # Major release
 # Validate OpenAPI documentation
 bun run docs:validate
 
-# Bundle OpenAPI documentation
+# Bundle OpenAPI documentation to JSON
 bun run docs:bundle
 
 # Health check (server provides auto-restart on failures)
@@ -71,9 +75,10 @@ wscat -c ws://localhost:8002/api/events
 1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests. Uses dynamic imports for the database module (though DB code is still bundled due to static imports elsewhere, initialization is skipped in HEADLESS mode).
 2. **Bifrost Node**: Core logic in `src/node/manager.ts` handles the FROSTR signing node with health monitoring and auto-restart. The routes in `src/routes/node-manager.ts` expose this functionality via API endpoints.
 3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
-4. **Routes (`src/routes/`)**: API endpoints for auth, env, peers, recovery, shares, status, user, onboarding
-5. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS
-6. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing
+4. **NIP-46 Support (`src/db/nip46.ts`, `src/routes/nip46.ts`)**: Remote signing via Nostr Connect protocol with session persistence
+5. **Routes (`src/routes/index.ts`)**: Unified router handling all API endpoints (auth, env, peers, recovery, shares, status, user, onboarding, nip46, sign, nip44)
+6. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS, esbuild bundling
+7. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing (not for production)
 
 ### Key Design Patterns
 
@@ -90,7 +95,7 @@ wscat -c ws://localhost:8002/api/events
 ### Node Restart System
 
 **Main Restart**: Handles manual restarts with exponential backoff
-- Configuration validated in `src/server.ts`
+- Configuration validated in `src/server.ts` (`parseRestartConfig()`)
 - Environment variables with safe defaults:
   - `NODE_RESTART_DELAY`: Initial delay (default: 30000ms, max: 1 hour)
   - `NODE_MAX_RETRIES`: Max attempts (default: 5, max: 100)
@@ -100,21 +105,23 @@ wscat -c ws://localhost:8002/api/events
 ### Connectivity Monitoring & Idle Handling
 
 - **Active keepalive**: Updates activity timestamp locally when idle > 45 seconds (`src/node/manager.ts`)
-- **Simple monitoring**: Single 60-second check interval for relay connectivity
+- **Simple monitoring**: Single 60-second check interval for relay connectivity (`CONNECTIVITY_CHECK_INTERVAL`)
 - **Auto-recovery**: Recreates node after 3 consecutive connectivity failures
 - **Null node handling**: Treats null nodes as failures to ensure recovery mechanisms activate
 - **Self-ping detection**: Filters self-pings by comparing normalized pubkeys
 - **Race-condition safe**: Uses `withTimeout` helper to prevent stray timer callbacks
+- **Relay filtering**: `filterRelaysForKindSupport()` probes relays for kind support before connecting
 - **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
 
 - Multiple auth methods: API Key, Basic Auth, Session-based
-- Environment variable whitelisting for configuration endpoints
+- Environment variable whitelisting for configuration endpoints (`ALLOWED_ENV_KEYS`, `PUBLIC_ENV_KEYS` in `src/routes/utils.ts`)
 - Timing-safe authentication to prevent timing attacks
-- CORS configuration with allowed origins
-- Rate limiting (configurable)
+- CORS configuration with allowed origins (`getSecureCorsHeaders()`, `mergeVaryHeaders()`)
+- Rate limiting (configurable via `RATE_LIMIT_*` env vars)
 - **Auto-generated SESSION_SECRET**: Automatically creates and persists in `data/.session-secret` if not provided
+- **Auth Factory Pattern**: (`src/routes/auth-factory.ts`) Secure ephemeral storage using WeakMaps to prevent secret leakage
 
 ### Dual-Mode Operation
 
@@ -152,22 +159,26 @@ Environment variables:
 
 ## Critical Files & Patterns
 
-### TypeScript Configuration
+### TypeScript Configuration (`tsconfig.json`)
 - Strict mode enabled with all strict checks
-- Bun runtime types configured
+- Bun runtime types configured (`"types": ["bun-types"]`)
 - ESNext target with bundler module resolution
+- No unused locals/parameters allowed
 
 ### Frontend Build System
-- esbuild for JavaScript bundling
-- Tailwind CSS with PostCSS
-- Static files served from `/static` directory
+- esbuild for JavaScript bundling (`frontend/index.tsx` → `static/app.js`)
+- Tailwind CSS with PostCSS (`frontend/styles.css` → `static/styles.css`)
+- Static files served from `/static` directory (gitignored, must build)
 - React 18 with automatic JSX runtime
+- Frontend components in `frontend/components/` (PascalCase .tsx files)
 
 ### API Structure
+- Unified router in `src/routes/index.ts` (`handleRequest()` function)
 - RESTful endpoints under `/api/*`
-- WebSocket events at `/api/events`
-- OpenAPI documentation at `/api/docs`
-- Authentication required in production
+- WebSocket events at `/api/events` (migrated from SSE)
+- OpenAPI documentation at `/api/docs` (Swagger UI)
+- Authentication bypass for `/api/onboarding/*` in database mode
+- All routes return CORS headers and handle OPTIONS preflight
 
 ## Important Considerations
 
@@ -186,7 +197,7 @@ Environment variables:
 
 5. **Release Process**: See "Release Workflow" section below for detailed instructions
 
-6. **Node Event Flow**: 
+6. **Node Event Flow**:
    - All Bifrost events update `lastActivity` timestamp
    - Self-pings filtered from logs via pubkey comparison
    - Peer status tracked independently from health monitoring
@@ -199,6 +210,13 @@ Environment variables:
    - Environment auth users receive ephemeral session-specific salts
    - Timing-safe authentication prevents timing attacks
    - SESSION_SECRET must NEVER be exposed via API endpoints
+
+8. **NIP-46 Implementation**:
+   - Remote signing support via Nostr Connect protocol
+   - Session persistence in database (database mode only)
+   - Permission policies for methods and event kinds
+   - Frontend controller in `frontend/components/nip46/controller.ts`
+   - Server-side signer in `frontend/components/nip46/server-signer.ts`
 
 ## Release Workflow
 
@@ -221,11 +239,11 @@ bun run release:major
 1. **Pre-checks** (`scripts/release.sh`):
    - Must be on `dev` branch
    - Working directory must be clean
-   - Port 8002 must be available
+   - Port 8002 must be available (check with `lsof -i :8002`)
 
 2. **Automated validation**:
    - Builds frontend and CSS
-   - Starts server and tests health endpoint
+   - Starts server and tests health endpoint (5 retry attempts)
    - Validates OpenAPI documentation
    - Creates release branch `release/prepare-v{version}`
    - Commits version bump and pushes to origin
@@ -237,6 +255,7 @@ bun run release:major
 
 ### Error Recovery
 - Server cleanup handled by trap in release script
+- Kill stuck process: `lsof -i :8002` then `kill <PID>`
 - Rollback procedure documented in `llm/workflows/RELEASE_PROCESS.md`
 
 ## Troubleshooting Common Issues
@@ -268,6 +287,7 @@ bun run release:major
 - `ALLOWED_ENV_KEYS` (`src/routes/utils.ts`) - Can't be modified via API
 - `PUBLIC_ENV_KEYS` (`src/routes/utils.ts`) - Can't be read via API
 - Auto-generated and stored in `data/.session-secret` if not provided
+- Function `assertNoSessionSecretExposure()` validates this at runtime
 
 **API-Modifiable Variables** (`ALLOWED_ENV_KEYS`):
 - `SHARE_CRED`, `GROUP_CRED` (headless mode only)
@@ -282,8 +302,11 @@ bun run release:major
 
 Key packages:
 - `@frostr/igloo-core`: Core FROSTR protocol implementation
-- `@frostr/bifrost`: Bifrost node operations
-- `nostr-tools`: Nostr protocol utilities
-- `bun`: Runtime and server
-- `react` & `react-dom`: Frontend framework
-- `tailwindcss`: CSS framework
+- `@frostr/bifrost`: Bifrost node operations (v1.0.6)
+- `@cmdcode/nostr-connect`: NIP-46 remote signing protocol (v0.0.7)
+- `nostr-tools`: Nostr protocol utilities (v2.15.0)
+- `bun`: Runtime and server (uses Bun-specific APIs: `bun:sqlite`, `Bun.file`, `Bun.password`)
+- `react` & `react-dom`: Frontend framework (v18.3.1)
+- `tailwindcss`: CSS framework (v3.4.17)
+- `esbuild`: JavaScript bundler (v0.24.2)
+- `yaml`: OpenAPI documentation support
