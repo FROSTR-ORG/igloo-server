@@ -1,5 +1,5 @@
-import type { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import type { RouteContext, RequestAuth, ServerBifrostNode } from './types.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, withTimeout } from './utils.js';
 import { checkRateLimit } from './auth.js';
 import { nip44 } from 'nostr-tools';
 
@@ -16,11 +16,10 @@ function xOnly(pubkey: string): string | null {
   return null;
 }
 
-async function deriveSharedSecret(node: any, peerXOnly: string): Promise<string> {
-  // Bifrost ECDH returns { ok, data } with shared secret (hex)
-  const result = await node.req.ecdh(peerXOnly);
-  if (!result || result.ok !== true) throw new Error(result?.error || 'ecdh failed');
-  return result.data as string;
+async function deriveSharedSecret(node: ServerBifrostNode, peerXOnly: string, timeoutMs: number): Promise<string> {
+  const result: any = await withTimeout(node.req.ecdh(peerXOnly), timeoutMs, 'ECDH_TIMEOUT')
+  if (!result || result.ok !== true) throw new Error(result?.error || 'ecdh failed')
+  return result.data as string
 }
 
 export async function handleNip44Route(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {
@@ -62,11 +61,13 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
   if (typeof content !== 'string') return Response.json({ error: 'Invalid content' }, { status: 400, headers });
 
   try {
-    const secretHex = await deriveSharedSecret(context.node as any, peer);
+    const timeoutMs = getOpTimeoutMs();
+    const secretHex = await deriveSharedSecret(context.node, peer, timeoutMs);
     const mode = url.pathname.endsWith('/encrypt') ? 'encrypt' : url.pathname.endsWith('/decrypt') ? 'decrypt' : null;
     if (!mode) return Response.json({ error: 'Unknown operation' }, { status: 404, headers });
 
-    const key = Uint8Array.from(Buffer.from(secretHex, 'hex'));
+    // Platform-agnostic hex to Uint8Array conversion
+    const key = new Uint8Array(secretHex.match(/.{1,2}/g)!.map(byte => parseInt(byte, 16)));
     if (mode === 'encrypt') {
       const ciphertext = await nip44.encrypt(content, key);
       return Response.json({ result: ciphertext }, { status: 200, headers });
@@ -76,6 +77,10 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
     }
   } catch (e: any) {
     const message = e?.message || 'NIP-44 operation failed';
+    if (message === 'ECDH_TIMEOUT') {
+      try { context.addServerLog('warning', 'NIP-44 ECDH timeout', { peer }); } catch {}
+      return Response.json({ error: `NIP-44 ECDH timed out after ${parseInt(process.env.FROSTR_SIGN_TIMEOUT || process.env.SIGN_TIMEOUT_MS || '30000')}ms` }, { status: 504, headers });
+    }
     return Response.json({ error: message }, { status: 500, headers });
   }
 }

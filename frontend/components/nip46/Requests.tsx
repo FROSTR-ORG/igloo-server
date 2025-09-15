@@ -1,15 +1,36 @@
 import React, { useState, useEffect } from 'react'
 import { PermissionRequest, NIP46Request } from './types'
 import { NIP46Controller } from './controller'
+import { isValidImageUrl } from './utils'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
 import { Check, X, ChevronDown, ChevronUp, Clock, Shield, FileSignature, Key, Lock, Unlock } from 'lucide-react'
 
 interface RequestsProps { controller: NIP46Controller | null }
 
+// Type guard for sign_event content
+function isSignEventContent(content: unknown): content is { kind: number; content?: string; tags?: string[][] } {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    'kind' in content &&
+    typeof (content as any).kind === 'number'
+  );
+}
+
+// Type guard for base request content
+function isBaseRequestContent(content: unknown): content is { params: string[] } {
+  return (
+    typeof content === 'object' &&
+    content !== null &&
+    'params' in content &&
+    Array.isArray((content as any).params)
+  );
+}
+
 function transformRequest(req: PermissionRequest): NIP46Request {
   const request_type = req.method === 'sign_event' ? 'note_signature' : 'base'
-  let content: any
+  let content
   if (req.params?.length) {
     if (req.method === 'sign_event') {
       try { content = JSON.parse(req.params[0]) } catch { content = req.params[0] }
@@ -60,7 +81,11 @@ export function Requests({ controller }: RequestsProps) {
 
   const getUniqueEventKinds = (): number[] => {
     const kinds = new Set<number>()
-    pendingRequests.forEach(req => { if (req.method === 'sign_event' && req.content?.kind !== undefined) kinds.add(req.content.kind) })
+    pendingRequests.forEach(req => {
+      if (req.method === 'sign_event' && isSignEventContent(req.content)) {
+        kinds.add(req.content.kind)
+      }
+    })
     return Array.from(kinds).sort((a, b) => a - b)
   }
 
@@ -115,11 +140,11 @@ export function Requests({ controller }: RequestsProps) {
           {uniqueKinds.length > 0 && (
             <div className="flex flex-wrap gap-2 pt-2 border-t border-blue-900/20">
               {uniqueKinds.map(kind => {
-                const kindCount = pendingRequests.filter(r => r.method === 'sign_event' && r.content?.kind === kind).length
+                const kindCount = pendingRequests.filter(r => r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind).length
                 return (
                   <div key={kind} className="flex gap-1">
-                    <Button onClick={() => pendingRequests.forEach(r => r.method === 'sign_event' && r.content?.kind === kind && controller?.approveRequest(r.id))} size="sm" className="bg-blue-600 hover:bg-blue-700 text-blue-100 text-xs">Approve All Kind {kind} ({kindCount})</Button>
-                    <Button onClick={() => pendingRequests.forEach(r => r.method === 'sign_event' && r.content?.kind === kind && controller?.denyRequest(r.id, 'Denied by user'))} size="sm" className="bg-purple-600 hover:bg-purple-700 text-purple-100 text-xs">Deny All Kind {kind}</Button>
+                    <Button onClick={() => pendingRequests.forEach(r => { if (r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind) controller?.approveRequest(r.id) })} size="sm" className="bg-blue-600 hover:bg-blue-700 text-blue-100 text-xs">Approve All Kind {kind} ({kindCount})</Button>
+                    <Button onClick={() => pendingRequests.forEach(r => { if (r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind) controller?.denyRequest(r.id, 'Denied by user') })} size="sm" className="bg-purple-600 hover:bg-purple-700 text-purple-100 text-xs">Deny All Kind {kind}</Button>
                   </div>
                 )
               })}
@@ -142,7 +167,9 @@ export function Requests({ controller }: RequestsProps) {
                 <div className="p-4 space-y-3">
                   <div className="flex items-start justify-between">
                     <div className="flex items-start gap-3">
-                      {req.session_origin.image && <img src={req.session_origin.image} alt={req.source} className="w-10 h-10 rounded-lg" />}
+                      {req.session_origin.image && isValidImageUrl(req.session_origin.image) && (
+                        <img src={req.session_origin.image} alt={req.source} className="w-10 h-10 rounded-lg" />
+                      )}
                       <div className="space-y-1">
                         <div className="flex items-center gap-2">
                           <span className="font-medium text-blue-200">{req.source}</span>
@@ -161,7 +188,7 @@ export function Requests({ controller }: RequestsProps) {
 
                   {expanded && req.content && (
                     <div className="border-t border-blue-900/20 pt-3 space-y-3">
-                      {req.request_type === 'note_signature' && (
+                      {req.request_type === 'note_signature' && isSignEventContent(req.content) && (
                         <div className="space-y-2">
                           <span className="text-xs text-gray-400">Event Details:</span>
                           <div className="bg-gray-900/50 rounded-lg p-3 space-y-2">
@@ -187,7 +214,7 @@ export function Requests({ controller }: RequestsProps) {
                         </div>
                       )}
 
-                      {req.request_type === 'base' && req.content.params && (
+                      {req.request_type === 'base' && isBaseRequestContent(req.content) && (
                         <div className="space-y-2">
                           <span className="text-xs text-gray-400">Parameters:</span>
                           <div className="bg-gray-900/50 rounded-lg p-3">

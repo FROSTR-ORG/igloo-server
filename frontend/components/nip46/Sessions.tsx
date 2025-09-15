@@ -3,6 +3,7 @@ import { SignerSession, PermissionPolicy } from './types'
 import { NIP46Controller } from './controller'
 import { PermissionsDropdown } from './Permissions'
 import { QRScanner } from './QRScanner'
+import { isValidImageUrl } from './utils'
 import { QrCode } from 'lucide-react'
 import { Input } from '../ui/input'
 
@@ -127,7 +128,7 @@ export function Sessions({ controller }: SessionsProps) {
                   <div className="session-header">
                     <div className="session-info">
                       <div className="session-name-container">
-                        {session.profile.image && (
+                        {session.profile.image && isValidImageUrl(session.profile.image) && (
                           <img src={session.profile.image} alt={`${session.profile.name || 'Unknown'} icon`} className="session-icon" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         )}
                         <span className="session-name">{session.profile.name ?? 'Unknown'}</span>

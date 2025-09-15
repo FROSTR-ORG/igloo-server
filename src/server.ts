@@ -53,6 +53,64 @@ const parseRestartConfig = () => {
 
 const RESTART_CONFIG = parseRestartConfig();
 
+// Error circuit breaker configuration
+function parseErrorCircuitConfig() {
+  const windowMs = parseInt(process.env.ERROR_CIRCUIT_WINDOW_MS || '60000');
+  const threshold = parseInt(process.env.ERROR_CIRCUIT_THRESHOLD || '10');
+  const exitCode = parseInt(process.env.ERROR_CIRCUIT_EXIT_CODE || '1');
+
+  const validated = {
+    WINDOW_MS: (windowMs > 1000 && windowMs <= 3600000) ? windowMs : 60000,
+    THRESHOLD: (threshold > 0 && threshold <= 1000) ? threshold : 10,
+    EXIT_CODE: (exitCode >= 0 && exitCode <= 255) ? exitCode : 1
+  } as const;
+
+  if (windowMs !== validated.WINDOW_MS) {
+    console.warn(`Invalid ERROR_CIRCUIT_WINDOW_MS: ${windowMs}. Using default: ${validated.WINDOW_MS}ms`);
+  }
+  if (threshold !== validated.THRESHOLD) {
+    console.warn(`Invalid ERROR_CIRCUIT_THRESHOLD: ${threshold}. Using default: ${validated.THRESHOLD}`);
+  }
+  if (exitCode !== validated.EXIT_CODE) {
+    console.warn(`Invalid ERROR_CIRCUIT_EXIT_CODE: ${exitCode}. Using default: ${validated.EXIT_CODE}`);
+  }
+
+  return validated;
+}
+
+const ERROR_CIRCUIT_CONFIG = parseErrorCircuitConfig();
+
+// Unhandled error tracking state
+let unhandledErrorTimestamps: number[] = [];
+let isCircuitBreakerTripped = false;
+
+function isBenignRelayErrorMessage(message: string | undefined): boolean {
+  if (!message) return false;
+  const lower = message.toLowerCase();
+  return lower.includes('blocked:');
+}
+
+function recordUnhandledErrorAndMaybeExit(source: string, message: string) {
+  try {
+    const now = Date.now();
+    const windowStart = now - ERROR_CIRCUIT_CONFIG.WINDOW_MS;
+    unhandledErrorTimestamps = unhandledErrorTimestamps.filter(ts => ts >= windowStart);
+    unhandledErrorTimestamps.push(now);
+
+    const count = unhandledErrorTimestamps.length;
+    addServerLog('error', `${source}: ${message}`);
+
+    if (!isCircuitBreakerTripped && count >= ERROR_CIRCUIT_CONFIG.THRESHOLD) {
+      isCircuitBreakerTripped = true;
+      const seconds = Math.round(ERROR_CIRCUIT_CONFIG.WINDOW_MS / 1000);
+      addServerLog('error', `Unhandled error circuit breaker tripped (${count}/${ERROR_CIRCUIT_CONFIG.THRESHOLD} in ${seconds}s). Exiting with code ${ERROR_CIRCUIT_CONFIG.EXIT_CODE}.`);
+      setTimeout(() => process.exit(ERROR_CIRCUIT_CONFIG.EXIT_CODE), 10);
+    }
+  } catch {
+    // As a last resort, do not throw from the error handler
+  }
+}
+
 // Define expected database module interface
 interface DatabaseModule {
   isDatabaseInitialized(): boolean;
@@ -104,29 +162,27 @@ try {
   // Non-fatal; continue without global shim
 }
 
-// Global error guards to prevent process crash on relay rejections or library throws
+// Global error guards with circuit breaker
 process.on('unhandledRejection', (reason: any) => {
   try {
     const msg = reason instanceof Error ? reason.message : String(reason);
-    // Common Nostr relay rejection message shape (e.g., "blocked: only kind ... is accepted")
-    if (msg && msg.toLowerCase().includes('blocked:')) {
+    if (isBenignRelayErrorMessage(msg)) {
       addServerLog('warning', `Relay publish rejected: ${msg}`);
-      return; // swallow known benign relay policy rejections
+      return;
     }
-    addServerLog('error', `Unhandled promise rejection: ${msg}`);
-  } catch {
-    // Best-effort logging only
-  }
+    recordUnhandledErrorAndMaybeExit('Unhandled promise rejection', msg);
+  } catch {}
 });
 
 process.on('uncaughtException', (err: any) => {
   try {
     const msg = err instanceof Error ? err.message : String(err);
-    // Keep server alive; log and continue
-    addServerLog('error', `Uncaught exception: ${msg}`);
-  } catch {
-    // noop
-  }
+    if (isBenignRelayErrorMessage(msg)) {
+      addServerLog('warning', `Relay publish rejected (exception): ${msg}`);
+      return;
+    }
+    recordUnhandledErrorAndMaybeExit('Uncaught exception', msg);
+  } catch {}
 });
 
 // Bun/whatwg-style global handlers (some rejections/errors arrive here instead of process)
@@ -135,18 +191,22 @@ try {
     try {
       const msg = ev?.reason instanceof Error ? ev.reason.message : String(ev?.reason ?? 'unknown');
       if (typeof ev?.preventDefault === 'function') ev.preventDefault();
-      if (msg.toLowerCase().includes('blocked:')) {
+      if (isBenignRelayErrorMessage(msg)) {
         addServerLog('warning', `Relay publish rejected: ${msg}`);
-      } else {
-        addServerLog('error', `Unhandled promise rejection (global): ${msg}`);
+        return;
       }
+      recordUnhandledErrorAndMaybeExit('Unhandled promise rejection (global)', msg);
     } catch {}
   });
   globalThis.addEventListener?.('error', (ev: any) => {
     try {
       const msg = ev?.error instanceof Error ? ev.error.message : String(ev?.message ?? 'unknown');
       if (typeof ev?.preventDefault === 'function') ev.preventDefault();
-      addServerLog('error', `Global error: ${msg}`);
+      if (isBenignRelayErrorMessage(msg)) {
+        addServerLog('warning', `Relay publish rejected (global error): ${msg}`);
+        return;
+      }
+      recordUnhandledErrorAndMaybeExit('Global error', msg);
     } catch {}
   });
 } catch {}
@@ -217,6 +277,14 @@ if (!CONST.HEADLESS) {
       console.error('   A secure ADMIN_SECRET is required for recovery or initial setup.');
       process.exit(1);
     }
+  }
+
+  // Initialize NIP-46 database migrations on startup (no side effects on import)
+  try {
+    const { initializeNip46DB } = await import('./db/nip46.js');
+    await initializeNip46DB();
+  } catch (e: any) {
+    console.error('❌ Failed to initialize NIP-46 database:', e?.message || e);
   }
 } else {
   console.log('⚙️  Headless mode enabled - using environment variables for configuration');

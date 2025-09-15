@@ -1,31 +1,7 @@
 import { createConnectedNode, createAndConnectNode, cleanupBifrostNode } from '@frostr/igloo-core';
 import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { getValidRelays } from './utils.js';
-
-
-// Add a lock to prevent concurrent node updates
-let nodeUpdateLock: Promise<void> = Promise.resolve();
-
-// Helper function to execute node operations under lock without poisoning the queue
-async function executeUnderNodeLock<T>(
-  operation: () => Promise<T>,
-  context: PrivilegedRouteContext
-): Promise<T> {
-  // Create a promise for this specific operation
-  const run = nodeUpdateLock.then(operation);
-  
-  // Update the lock to wait for this operation, but not for its errors
-  nodeUpdateLock = run.then(
-    () => {}, // Success: just continue
-    (error) => {
-      // Failure: log it but don't propagate to next operation
-      context.addServerLog('error', 'Node operation failed', error);
-    }
-  );
-  
-  // Return the actual promise so the caller gets the result/error
-  return run;
-}
+import { executeUnderNodeLock } from '../utils/node-lock.js';
 
 export interface NodeCredentials {
   group_cred: string;

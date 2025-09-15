@@ -5,8 +5,9 @@ import {
   comparePubkeys,
   DEFAULT_PING_TIMEOUT
 } from '@frostr/igloo-core';
+import { Buffer } from 'node:buffer';
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
-import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { HEADLESS } from '../const.js';
 
 // Constants - use igloo-core default
@@ -108,8 +109,16 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
           }
           try {
             const decoded = decodeGroup(credentials.group_cred);
-            const compressed = decoded.group_pk; // Expect 02/03 + X
-            const hex = typeof compressed === 'string' ? compressed.toLowerCase() : '';
+            const groupPk: unknown = (decoded as any).group_pk;
+            let hex: string;
+            if (typeof groupPk === 'string') {
+              hex = groupPk.toLowerCase();
+            } else if (groupPk instanceof Uint8Array || Buffer.isBuffer(groupPk)) {
+              hex = Buffer.from(groupPk).toString('hex');
+            } else {
+              throw new Error('Invalid group_pk format');
+            }
+            // Strip 02/03 compression prefix if present to return x-only pubkey
             const pubkey = (hex.length === 66 && (hex.startsWith('02') || hex.startsWith('03'))) ? hex.slice(2) : hex;
             return Response.json({ pubkey, threshold: decoded.threshold, totalShares: decoded.commits.length }, { headers });
           } catch (e) {
@@ -203,21 +212,10 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
           
           let body;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
-            if (error instanceof SyntaxError) {
-              return Response.json(
-                { error: 'Invalid JSON in request body' },
-                { status: 400, headers }
-              );
-            }
-            throw error; // Re-throw non-JSON errors
-          }
-          
-          // Body must be a JSON object
-          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
             return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }

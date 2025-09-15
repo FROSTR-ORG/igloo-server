@@ -471,7 +471,6 @@ const App: React.FC = () => {
 
             <TabsContent value="nip46" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
               <NIP46 
-                privateKey={signerData?.share}
                 groupCred={signerData?.groupCredential}
                 shareCred={signerData?.share}
                 authHeaders={memoizedAuthHeaders}

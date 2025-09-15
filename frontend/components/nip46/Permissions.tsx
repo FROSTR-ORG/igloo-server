@@ -55,7 +55,7 @@ export function PermissionsDropdown({
 
   const kinds = Object.keys(editingPermissions.kinds || {})
     .map(k => parseInt(k, 10))
-    .filter(k => editingPermissions.kinds[k])
+    .filter(k => editingPermissions.kinds[String(k)])
     .sort((a, b) => a - b)
 
   return (

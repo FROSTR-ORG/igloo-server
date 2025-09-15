@@ -15,6 +15,7 @@
 - `bun run start` – Start server at `http://localhost:8002`.
 - `HEADLESS=true bun run start` – API‑only; skips UI build.
 - `bun run docs:validate` – Lint OpenAPI; `bun run docs:bundle` emits JSON.
+  - Keep `docs/openapi.yaml` in sync when adding routes (e.g., `/api/sign`, `/api/nip44/*`, `/api/nip04/*`, `/api/nip46/*`).
 
 ## Coding Style & Naming Conventions
 - Language: TypeScript (Bun). Strict `tsconfig` (no `any`; unuseds fail build).
@@ -38,9 +39,16 @@
 - Never commit secrets. Keep `data/` local (e.g., `igloo.db`, `.session-secret`).
 - Production: set `AUTH_ENABLED=true` and `ADMIN_SECRET`; admin APIs return 401 if unset.
 - Containers: bind `0.0.0.0` and proxy behind TLS.
+ - Crypto timeouts: set `FROSTR_SIGN_TIMEOUT` (or `SIGN_TIMEOUT_MS`) to bound `/api/sign`, `/api/nip44/*`, `/api/nip04/*` operations (default 30s).
+ - Ephemeral derived keys: login‑derived keys are stored in a TTL + max‑reads vault (not on the session). Tune with `AUTH_DERIVED_KEY_TTL_MS` and `AUTH_DERIVED_KEY_MAX_READS`.
+
+## Database & Migrations
+- NIP‑46 persistence uses SQLite tables `nip46_sessions` and `nip46_session_events`.
+- Migrations run automatically on startup from `src/db/migrations` via `schema_migrations`.
+- Add new migrations as timestamped `.sql` files; they are applied once, in order.
 
 ## NIP‑46 + FROSTR Notes (2025‑09)
 - Remote signing is live via NIP‑46 transport + Bifrost/FROSTR; `/api/sign` returns `{ id, signature }`.
 - Do not re‑introduce helper builders for accept/reject; use `socket.send({ id, result|error }, peer)` to avoid Zod version conflicts.
 - Keep client NIP‑46 traffic on URI‑provided relays; server Bifrost relays are filtered at startup. Enforce explicit permissions: allowed methods and `sign_event` kinds only.
-
+ - Sessions are per‑client (pubkey). Policy updates affect only that session. Revocation deletes the session (not persisted).

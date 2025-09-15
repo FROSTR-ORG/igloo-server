@@ -1,5 +1,5 @@
 import type { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, withTimeout } from './utils.js';
 import { checkRateLimit } from './auth.js';
 import { getEventHash, type EventTemplate } from 'nostr-tools';
 
@@ -22,9 +22,13 @@ function computeEventId(body: SignRequestBody): { id: string } | { error: string
 
   if (body.event) {
     try {
-      // Minimal shape validation; `pubkey` is not required for hashing
+      // Validate required pubkey for event hashing
+      const pk = typeof (body.event as any).pubkey === 'string' ? (body.event as any).pubkey.trim() : ''
+      if (!/^[0-9a-fA-F]{64}$/.test(pk)) {
+        return { error: 'Invalid event: 64-hex pubkey required' };
+      }
       const template: any = {
-        pubkey: body.event.pubkey || ''.padStart(64, '0'),
+        pubkey: pk.toLowerCase(),
         kind: body.event.kind,
         created_at: body.event.created_at,
         content: body.event.content ?? '',
@@ -81,7 +85,8 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
 
   try {
     // Bifrost sign request returns { ok, data: SignatureEntry[] }
-    const result = await (context.node as any).req.sign(id);
+    const timeoutMs = getOpTimeoutMs();
+    const result: any = await withTimeout((context.node as any).req.sign(id), timeoutMs, 'SIGN_TIMEOUT');
     if (!result || result.ok !== true) {
       const reason = (result && (result.err || result.error)) || 'signing failed';
       return Response.json({ error: reason }, { status: 502, headers });
@@ -94,7 +99,16 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
         const entry = result.data.find((e: any) => Array.isArray(e) && e[0] === id) || result.data[0];
         signatureHex = Array.isArray(entry) ? entry[2] : null;
       }
-    } catch {}
+    } catch (error) {
+      try {
+        context.addServerLog('error', 'Error extracting signature', {
+          id,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      } catch {
+        try { console.error('Error extracting signature:', error); } catch {}
+      }
+    }
 
     if (!signatureHex || typeof signatureHex !== 'string') {
       return Response.json({ error: 'invalid signature response from node' }, { status: 502, headers });
@@ -103,6 +117,10 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     return Response.json({ id, signature: signatureHex }, { status: 200, headers });
   } catch (e: any) {
     const message = e?.message || 'Internal error during sign';
+    if (message === 'SIGN_TIMEOUT') {
+      try { context.addServerLog('warning', `FROSTR signing timeout`, { id }); } catch {}
+      return Response.json({ error: `Signing timed out after ${getOpTimeoutMs()}ms` }, { status: 504, headers });
+    }
     return Response.json({ error: message }, { status: 500, headers });
   }
 }

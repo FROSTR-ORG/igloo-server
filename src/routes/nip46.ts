@@ -1,7 +1,13 @@
 import { HEADLESS } from '../const.js'
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js'
 import type { PrivilegedRouteContext, RequestAuth } from './types.js'
-import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, type Nip46Policy } from '../db/nip46.js'
+import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, type Nip46Policy } from '../db/nip46.js'
+
+// Rate limiting configuration for NIP-46 session creation
+const NIP46_RATE_LIMIT = {
+  MAX: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_MAX || '10'),
+  WINDOW_MS: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_WINDOW || '3600') * 1000 // Default: 1 hour
+}
 
 function isValidHex(str: string): boolean {
   return /^[0-9a-f]+$/i.test(str)
@@ -86,6 +92,29 @@ export async function handleNip46Route(
     if (!pubkey || !isValidHex(pubkey)) {
       return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
     }
+
+    // Rate limit check for session creation
+    const recentSessions = countUserSessionsInWindow(userId, NIP46_RATE_LIMIT.WINDOW_MS)
+    if (recentSessions >= NIP46_RATE_LIMIT.MAX) {
+      const retryAfterSeconds = Math.ceil(NIP46_RATE_LIMIT.WINDOW_MS / 1000)
+      console.warn(`[NIP46] Rate limit exceeded for user ${userId}: ${recentSessions} sessions created in ${retryAfterSeconds}s window`)
+      return Response.json({
+        error: `Rate limit exceeded: maximum ${NIP46_RATE_LIMIT.MAX} sessions per ${retryAfterSeconds} seconds`,
+        limit: NIP46_RATE_LIMIT.MAX,
+        window: retryAfterSeconds,
+        current: recentSessions
+      }, {
+        status: 429,
+        headers: {
+          ...headers,
+          'Retry-After': retryAfterSeconds.toString(),
+          'X-RateLimit-Limit': NIP46_RATE_LIMIT.MAX.toString(),
+          'X-RateLimit-Remaining': Math.max(0, NIP46_RATE_LIMIT.MAX - recentSessions).toString(),
+          'X-RateLimit-Reset': new Date(Date.now() + NIP46_RATE_LIMIT.WINDOW_MS).toISOString()
+        }
+      })
+    }
+
     // Only allow 'pending' or 'active'. 'revoked' is not persisted.
     const status = (body?.status === 'active' || body?.status === 'pending') ? body.status : 'pending'
     const profile = typeof body?.profile === 'object' && body.profile ? {
@@ -98,18 +127,37 @@ export async function handleNip46Route(
       methods: body?.policy?.methods && typeof body.policy.methods === 'object' ? body.policy.methods : {},
       kinds: body?.policy?.kinds && typeof body.policy.kinds === 'object' ? body.policy.kinds : {},
     }
-    const session = upsertSession({ userId, client_pubkey: pubkey, status, profile, relays, policy })
-    try { logSessionEvent(userId, pubkey, 'created') } catch {}
-    return Response.json({ ok: true, session: {
-      pubkey: session.client_pubkey,
-      status: session.status,
-      profile: session.profile,
-      relays: session.relays,
-      policy: session.policy,
-      created_at: session.created_at,
-      updated_at: session.updated_at,
-      last_active_at: session.last_active_at,
-    } }, { headers })
+    try {
+      const session = upsertSession({ userId, client_pubkey: pubkey, status, profile, relays, policy })
+      try {
+        logSessionEvent(userId, pubkey, 'created')
+      } catch (err) {
+        console.error('[NIP46] Database error during logSessionEvent(created)', {
+          userId,
+          pubkey,
+          operation: 'logSessionEvent(created)',
+          error: err instanceof Error ? err.message : String(err)
+        })
+      }
+      return Response.json({ ok: true, session: {
+        pubkey: session.client_pubkey,
+        status: session.status,
+        profile: session.profile,
+        relays: session.relays,
+        policy: session.policy,
+        created_at: session.created_at,
+        updated_at: session.updated_at,
+        last_active_at: session.last_active_at,
+      } }, { headers })
+    } catch (err) {
+      console.error('[NIP46] Database error during upsertSession', {
+        userId,
+        pubkey,
+        operation: 'upsertSession',
+        error: err instanceof Error ? err.message : String(err)
+      })
+      return Response.json({ error: 'Internal server error: failed to create session' }, { status: 500, headers })
+    }
   }
 
   // PUT /api/nip46/sessions/:pubkey/policy

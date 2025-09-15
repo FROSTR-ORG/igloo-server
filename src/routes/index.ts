@@ -8,6 +8,7 @@ export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
 export { handleSignRoute } from './sign.js';
 export { handleNip44Route } from './nip44.js';
+export { handleNip04Route } from './nip04.js';
 export { handleNip46Route } from './nip46.js';
 
 // Export types and utilities
@@ -25,6 +26,7 @@ import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { handleSignRoute } from './sign.js';
 import { handleNip44Route } from './nip44.js';
+import { handleNip04Route } from './nip04.js';
 import { handleNip46Route } from './nip46.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
@@ -274,6 +276,7 @@ export async function handleRequest(
     handlePeersRoute,
     handleSignRoute,
     handleNip44Route,
+    handleNip04Route,
     handleNip46Route,
     handleRecoveryRoute,
     handleSharesRoute,

@@ -1,7 +1,7 @@
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { RouteContext } from './types.js';
-import { getAllUsers, deleteUser, isDatabaseInitialized } from '../db/database.js';
+import { getAllUsers, deleteUserSafely, isDatabaseInitialized } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
 
 /**
@@ -161,40 +161,13 @@ export async function handleAdminRoute(
             );
           }
 
-          // Prevent deleting the last admin user
-          // In this system, we consider users with stored credentials as admins
-          const users = getAllUsers();
-          const targetUser = users.find(u => String(u.id) === String(normalizedUserId));
-          if (!targetUser) {
-            return Response.json(
-              { error: 'User not found or deletion failed' },
-              { status: 404, headers }
-            );
-          }
-
-          // Use consistent String comparison for filtering admin users
-          const adminUsers = users.filter(u => u.hasCredentials && String(u.id) !== String(normalizedUserId));
-          const isTargetAdmin = !!targetUser.hasCredentials;
-          if (isTargetAdmin && adminUsers.length === 0) {
-            return Response.json(
-              { error: 'Cannot delete the last admin user' },
-              { status: 400, headers }
-            );
-          }
-
-          // Pass the original targetUser.id to preserve its type
-          const success = deleteUser(targetUser.id);
+          // Perform atomic delete with last-admin guard inside a DB transaction
+          const { success, error } = deleteUserSafely(normalizedUserId);
           if (!success) {
-            return Response.json(
-              { error: 'User not found or deletion failed' },
-              { status: 404, headers }
-            );
+            const status = error === 'User not found' ? 404 : (error === 'Cannot delete the last admin user' ? 400 : 500);
+            return Response.json({ error: error || 'Deletion failed' }, { status, headers });
           }
-
-          return Response.json(
-            { success: true, message: 'User deleted successfully' },
-            { headers }
-          );
+          return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
         }
         break;
 

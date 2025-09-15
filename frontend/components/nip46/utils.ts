@@ -1,13 +1,3 @@
-import { sha256 } from '@noble/hashes/sha256'
-import { bytesToHex } from '@noble/hashes/utils'
-
-export function shareToPrivateKey(shareCredential: string): string {
-  if (/^[0-9a-fA-F]{64}$/.test(shareCredential)) return shareCredential
-  const input = shareCredential.startsWith('bfshare') ? shareCredential : shareCredential
-  const hash = sha256(new TextEncoder().encode(input))
-  return bytesToHex(hash)
-}
-
 export function formatPubkey(pubkey: string): string {
   if (!pubkey || pubkey.length < 24) return pubkey
   return `${pubkey.slice(0, 12)}...${pubkey.slice(-12)}`
@@ -24,3 +14,23 @@ export function getEventKindName(kind: number | string): string {
   return names[k] || `Kind ${k}`
 }
 
+/**
+ * Validates that a URL is safe to use as an image source.
+ * Only allows http: and https: protocols to prevent XSS attacks.
+ *
+ * @param url - The URL to validate
+ * @returns true if the URL is safe to use as an image source, false otherwise
+ */
+export function isValidImageUrl(url: string | undefined | null): boolean {
+  if (!url || typeof url !== 'string') return false
+
+  try {
+    const parsed = new URL(url)
+    // Only allow http and https protocols for images
+    // This prevents javascript:, data:, vbscript:, file:// and other dangerous protocols
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    // Invalid URL format
+    return false
+  }
+}

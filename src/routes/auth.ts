@@ -4,7 +4,7 @@ import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 
 // Session secret persistence configuration
 // Properly handle DB_PATH whether it's a file or directory
@@ -286,10 +286,45 @@ const sessionStore = new Map<string, {
   createdAt: number; 
   lastAccess: number;
   ipAddress: string;
-  derivedKey?: Uint8Array; // Store derived key as binary (will be moved to ephemeral storage per request)
   salt?: string; // Store salt as hex string for non-database users (env auth)
   // Note: for database users, salt comes from the database
 }>();
+
+// Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
+const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
+const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(10, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '3')));
+
+type VaultEntry = { key: Uint8Array; expiresAt: number; remainingReads: number };
+const derivedKeyVault = new Map<string, VaultEntry>();
+
+function vaultSet(sessionId: string, key: Uint8Array, ttlMs = AUTH_DERIVED_KEY_TTL_MS, maxReads = AUTH_DERIVED_KEY_MAX_READS) {
+  // Store a fresh copy to avoid external references
+  const copy = new Uint8Array(key);
+  derivedKeyVault.set(sessionId, { key: copy, expiresAt: Date.now() + ttlMs, remainingReads: maxReads });
+}
+
+function zeroizeAndDelete(sessionId: string) {
+  const entry = derivedKeyVault.get(sessionId);
+  if (entry) {
+    for (let i = 0; i < entry.key.length; i++) entry.key[i] = 0;
+    derivedKeyVault.delete(sessionId);
+  }
+}
+
+function vaultGetOnce(sessionId: string): Uint8Array | undefined {
+  const entry = derivedKeyVault.get(sessionId);
+  if (!entry) return undefined;
+  const now = Date.now();
+  if (now > entry.expiresAt) {
+    zeroizeAndDelete(sessionId);
+    return undefined;
+  }
+  // Return a copy to the caller
+  const out = new Uint8Array(entry.key);
+  entry.remainingReads -= 1;
+  if (entry.remainingReads <= 0) zeroizeAndDelete(sessionId);
+  return out;
+}
 
 export interface AuthResult {
   authenticated: boolean;
@@ -424,7 +459,9 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   session.lastAccess = now;
-  return { authenticated: true, userId: session.userId, derivedKey: session.derivedKey };
+  // One-time ephemeral access to derived key (if present in the vault)
+  const keyOnce = vaultGetOnce(sessionId);
+  return { authenticated: true, userId: session.userId, derivedKey: keyOnce };
 }
 
 // Extract session ID from cookie header
@@ -481,19 +518,18 @@ export function createSession(
     }
   }
   
-  // SECURITY NOTE: derivedKey is currently stored persistently in sessionStore,
-  // which violates the ephemeral storage pattern used elsewhere in the codebase.
-  // This is a known limitation that requires architectural changes to fix properly.
-  // Ideally, derivedKey should either:
-  // 1. Be re-derived on each request from the password (performance cost), or
-  // 2. Be stored in truly ephemeral storage with auto-clear after first access
-  // The current implementation stores it for the entire session duration.
+  // Store derivedKey in ephemeral vault (TTL + bounded reads); do not persist on session
+  if (derivedKey) {
+    vaultSet(sessionId, derivedKey);
+    // Zeroize local copy after storing
+    for (let i = 0; i < derivedKey.length; i++) derivedKey[i] = 0;
+    derivedKey = undefined;
+  }
   sessionStore.set(sessionId, {
     userId,
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    derivedKey, // Store derived key as binary (NOTE: not truly ephemeral - see above)
     salt: sessionSalt // Store salt for non-database users
   });
   
@@ -517,6 +553,8 @@ function cleanupExpiredSessions(): void {
   for (const [sessionId, session] of Array.from(sessionStore.entries())) {
     if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
       sessionStore.delete(sessionId);
+      // Ensure any lingering derived key is destroyed
+      zeroizeAndDelete(sessionId);
     }
   }
 }
@@ -610,25 +648,11 @@ export async function handleLogin(req: Request): Promise<Response> {
   try {
     let body;
     try {
-      body = await req.json();
+      body = await parseJsonRequestBody(req);
     } catch (error) {
-      if (error instanceof SyntaxError) {
-        return Response.json(
-          { error: 'Invalid JSON in request body' },
-          { status: 400, headers: { 
-            ...baseHeaders,
-            'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
-          } }
-        );
-      }
-      throw error; // Re-throw non-JSON errors
-    }
-    
-    // Body must be a JSON object
-    if (body === null || typeof body !== 'object' || Array.isArray(body)) {
       return Response.json(
-        { error: 'Request body must be a JSON object' },
-        { status: 400, headers: { 
+        { error: error instanceof Error ? error.message : 'Invalid request body' },
+        { status: 400, headers: {
           ...baseHeaders,
           'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
         } }
@@ -783,6 +807,8 @@ export function handleLogout(req: Request): Response {
   
   if (sessionId) {
     sessionStore.delete(sessionId);
+    // Wipe any ephemeral derived key bound to this session
+    try { zeroizeAndDelete(sessionId) } catch {}
   }
 
   return Response.json({ success: true }, { headers });

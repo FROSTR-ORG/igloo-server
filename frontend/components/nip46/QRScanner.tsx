@@ -50,7 +50,11 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
     }
 
     initializeScanner()
-    return () => { scanner?.stop(); scanner?.destroy() }
+    return () => {
+      scannerRef.current?.stop()
+      scannerRef.current?.destroy()
+      scannerRef.current = null
+    }
   }, [onResult, onError])
 
   return (

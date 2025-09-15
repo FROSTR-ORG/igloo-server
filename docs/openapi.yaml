@@ -63,6 +63,8 @@ paths:
       description: Returns the current status of the server and Bifrost node, including comprehensive health monitoring information
       tags:
         - Status
+      security: []
+      x-public: true
       responses:
         '200':
           description: Server status retrieved successfully
@@ -94,6 +96,8 @@ paths:
       description: Returns the current authentication configuration and available methods
       tags:
         - Authentication
+      security: []
+      x-public: true
       responses:
         '200':
           description: Authentication status retrieved successfully
@@ -182,6 +186,8 @@ paths:
                   success:
                     type: boolean
                     example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /api/env:
     get:
@@ -787,6 +793,312 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/sign:
+    post:
+      operationId: signEvent
+      summary: Threshold sign a Nostr event ID
+      description: |
+        Creates a Schnorr signature for a Nostr event ID using FROSTR threshold signing. Provide either `message` (32-byte hex id) or an `event` template with a valid 64-hex `pubkey`.
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      tags:
+        - Crypto
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignRequest'
+      responses:
+        '200':
+          description: Signature produced
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SignResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '504':
+          description: Signing timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '502':
+          $ref: '#/components/responses/BadGateway'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/nip44/encrypt:
+    post:
+      operationId: nip44Encrypt
+      summary: Encrypt with NIP‑44 (ECDH + symmetric)
+      tags: [Crypto]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip44Request'
+      responses:
+        '200':
+          description: Ciphertext
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NipXXResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504':
+          description: ECDH timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/nip44/decrypt:
+    post:
+      operationId: nip44Decrypt
+      summary: Decrypt with NIP‑44
+      tags: [Crypto]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip44Request'
+      responses:
+        '200':
+          description: Plaintext
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NipXXResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504':
+          description: ECDH timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/nip04/encrypt:
+    post:
+      operationId: nip04Encrypt
+      summary: Encrypt with NIP‑04 (legacy; less secure than NIP‑44)
+      tags: [Crypto]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip04Request'
+      responses:
+        '200':
+          description: Ciphertext
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NipXXResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504':
+          description: ECDH timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/nip04/decrypt:
+    post:
+      operationId: nip04Decrypt
+      summary: Decrypt with NIP‑04
+      tags: [Crypto]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip04Request'
+      responses:
+        '200':
+          description: Plaintext
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NipXXResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '504':
+          description: ECDH timed out
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/nip46/sessions:
+    get:
+      operationId: listNip46Sessions
+      summary: List NIP‑46 sessions
+      tags: [NIP‑46]
+      parameters:
+        - in: query
+          name: history
+          schema: { type: boolean }
+          description: Include recent_kinds/methods summary
+      responses:
+        '200':
+          description: Sessions
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Nip46Session'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+    post:
+      operationId: upsertNip46Session
+      summary: Create or update a NIP‑46 session
+      tags: [NIP‑46]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46Session'
+      responses:
+        '200':
+          description: Upserted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  session: { $ref: '#/components/schemas/Nip46Session' }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/nip46/sessions/{pubkey}/policy:
+    put:
+      operationId: updateNip46Policy
+      summary: Update session policy
+      tags: [NIP‑46]
+      parameters:
+        - $ref: '#/components/parameters/PubkeyParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46Policy'
+      responses:
+        '200': { description: Updated }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/nip46/sessions/{pubkey}/status:
+    put:
+      operationId: updateNip46Status
+      summary: Update session status (revoked deletes)
+      tags: [NIP‑46]
+      parameters:
+        - $ref: '#/components/parameters/PubkeyParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [pending, active, revoked]
+                touch:
+                  type: boolean
+                  description: Update last_active_at when true
+      responses:
+        '200': { description: Updated or deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/nip46/sessions/{pubkey}:
+    delete:
+      operationId: deleteNip46Session
+      summary: Delete a NIP‑46 session
+      tags: [NIP‑46]
+      parameters:
+        - $ref: '#/components/parameters/PubkeyParam'
+      responses:
+        '200':
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/nip46/history:
+    get:
+      operationId: nip46History
+      summary: Compact NIP‑46 history summary
+      tags: [NIP‑46]
+      responses:
+        '200':
+          description: History
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Nip46SessionSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
 components:
   securitySchemes:
     apiKeyAuth:
@@ -1103,6 +1415,129 @@ components:
       required:
         - error
 
+    SignRequest:
+      type: object
+      oneOf:
+        - type: object
+          properties:
+            message:
+              type: string
+              pattern: '^[0-9a-fA-F]{64}$'
+          required: [message]
+        - type: object
+          properties:
+            event:
+              $ref: '#/components/schemas/EventTemplateInput'
+          required: [event]
+
+    EventTemplateInput:
+      type: object
+      properties:
+        pubkey:
+          type: string
+          description: 64-hex x-only pubkey
+          pattern: '^[0-9a-fA-F]{64}$'
+        kind:
+          type: integer
+        created_at:
+          type: integer
+        content:
+          type: string
+        tags:
+          type: array
+          items:
+            type: array
+            items:
+              type: string
+      required: [pubkey, kind, created_at]
+
+    SignResponse:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Event id (32-byte hex)
+        signature:
+          type: string
+          description: Schnorr signature (64-byte hex)
+      required: [id, signature]
+
+    Nip44Request:
+      type: object
+      description: Request body for NIP‑44 encryption/decryption operations
+      properties:
+        peer_pubkey:
+          type: string
+          description: 32-byte x-only pubkey (or 33-byte compressed)
+          pattern: '^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{66}$'
+        content:
+          type: string
+          description: Payload to process (plaintext for encrypt, ciphertext for decrypt). Maximum plaintext length: 65,535 bytes; encrypted/padded blob may reach 65,536 bytes. Minimum plaintext: 1 byte (padded to 32 bytes). Implementations should split messages larger than 65,535 bytes.
+      required: [peer_pubkey, content]
+
+    Nip04Request:
+      $ref: '#/components/schemas/Nip44Request'
+
+    NipXXResponse:
+      type: object
+      properties:
+        result:
+          type: string
+      required: [result]
+
+    Nip46Policy:
+      type: object
+      properties:
+        methods:
+          type: object
+          additionalProperties:
+            type: boolean
+        kinds:
+          type: object
+          additionalProperties:
+            type: boolean
+
+    Nip46Profile:
+      type: object
+      properties:
+        name: { type: string }
+        url: { type: string }
+        image: { type: string }
+
+    Nip46Session:
+      type: object
+      description: Full persisted NIP‑46 session details
+      properties:
+        pubkey: { type: string }
+        status:
+          type: string
+          enum: [pending, active]
+        profile:
+          $ref: '#/components/schemas/Nip46Profile'
+        relays:
+          type: array
+          items: { type: string }
+        policy:
+          $ref: '#/components/schemas/Nip46Policy'
+        created_at: { type: string }
+        updated_at: { type: string }
+        last_active_at: { type: string }
+
+    Nip46SessionSummary:
+      type: object
+      description: Compact summary of a NIP‑46 session for history views
+      properties:
+        pubkey: { type: string }
+        status: { type: string }
+        last_active_at: { type: string }
+        profile: { $ref: '#/components/schemas/Nip46Profile' }
+        recent_kinds:
+          type: array
+          items: { type: string }
+        recent_methods:
+          type: array
+          items: { type: string }
+
   responses:
     Unauthorized:
       description: Authentication required
@@ -1129,6 +1564,44 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
           example:
             error: "Internal server error"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    BadGateway:
+      description: Upstream error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ServiceUnavailable:
+      description: Node not available
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  parameters:
+    PubkeyParam:
+      name: pubkey
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Session client pubkey (hex)
 
 tags:
   - name: Status

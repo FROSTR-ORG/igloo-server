@@ -1,4 +1,5 @@
 import db from './database.js'
+import { runMigrations } from './migrator.js'
 
 // Types for persisted NIP-46 sessions
 export type Nip46Status = 'pending' | 'active' | 'revoked'
@@ -27,44 +28,21 @@ export interface Nip46Session {
   last_active_at: string | null
 }
 
-// Create sessions table if it doesn't exist
-function createNip46Tables() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS nip46_sessions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      client_pubkey TEXT NOT NULL,
-      status TEXT NOT NULL CHECK (status IN ('pending','active','revoked')) DEFAULT 'pending',
-      profile_name TEXT,
-      profile_url TEXT,
-      profile_image TEXT,
-      relays TEXT,          -- JSON array string
-      policy_methods TEXT,  -- JSON object string
-      policy_kinds TEXT,    -- JSON object string
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      last_active_at DATETIME,
-      UNIQUE(user_id, client_pubkey)
-    );
-  `)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id)')
+// Initialize function to run migrations on demand (avoids side effects on import)
+let initializationPromise: Promise<void> | null = null
 
-  // Session events audit log
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS nip46_session_events (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      client_pubkey TEXT NOT NULL,
-      event_type TEXT NOT NULL, -- created | status_change | grant_method | grant_kind | revoke_method | revoke_kind | upsert
-      detail TEXT,              -- method name or kind number as text
-      value TEXT,               -- new status/value if relevant
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
-  `)
-  db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
+export async function initializeNip46DB(): Promise<void> {
+  if (!initializationPromise) {
+    initializationPromise = Promise.resolve().then(() => {
+      // runMigrations is synchronous, returns array of applied migrations
+      const applied = runMigrations('src/db/migrations')
+      if (applied.length > 0) {
+        console.log(`[nip46] Applied ${applied.length} migration(s):`, applied.join(', '))
+      }
+    })
+  }
+  return initializationPromise
 }
-
-createNip46Tables()
 
 function rowToSession(row: any): Nip46Session {
   let relays: string[] | null = null
@@ -94,9 +72,12 @@ function rowToSession(row: any): Nip46Session {
 }
 
 export function listSessions(userId: number | bigint, opts?: { includeRevoked?: boolean }): Nip46Session[] {
-  const rows = db.prepare(
-    `SELECT * FROM nip46_sessions WHERE user_id = ? ${opts?.includeRevoked ? '' : "AND status != 'revoked'"} ORDER BY updated_at DESC, id DESC`
-  ).all(userId) as any[]
+  const includeRevoked = !!opts?.includeRevoked
+  const rows = db
+    .prepare(
+      'SELECT * FROM nip46_sessions WHERE user_id = ? AND (? = 1 OR status != ?) ORDER BY updated_at DESC, id DESC'
+    )
+    .all(userId, includeRevoked ? 1 : 0, 'revoked') as any[]
   return rows.map(rowToSession)
 }
 
@@ -205,6 +186,20 @@ export function deleteSession(userId: number | bigint, client_pubkey: string): b
   return !!changed && changed.c > 0
 }
 
+/**
+ * Count sessions created by a user within a time window for rate limiting
+ * @param userId - The user ID to check
+ * @param windowMs - Time window in milliseconds
+ * @returns Number of sessions created in the window
+ */
+export function countUserSessionsInWindow(userId: number | bigint, windowMs: number): number {
+  const cutoff = new Date(Date.now() - windowMs).toISOString()
+  const row = db.prepare(
+    'SELECT COUNT(*) as count FROM nip46_sessions WHERE user_id = ? AND created_at >= ?'
+  ).get(userId, cutoff) as { count: number } | undefined
+  return row?.count || 0
+}
+
 // Utility JSON parser with default
 function safeParseJSON(text: string | null | undefined, fallback: any) {
   if (!text) return fallback
@@ -243,4 +238,3 @@ export function listSessionEvents(userId: number | bigint, client_pubkey: string
     created_at: r.created_at,
   }))
 }
-

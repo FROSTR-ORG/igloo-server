@@ -7,7 +7,7 @@ import {
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
-import { SimplePool, finalizeEvent, generateSecretKey, getPublicKey } from 'nostr-tools';
+import { SimplePool, finalizeEvent, generateSecretKey } from 'nostr-tools';
 
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
@@ -36,6 +36,189 @@ const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
 const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
 const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
 
+// Publish failure metrics tracking
+interface PublishMetrics {
+  totalAttempts: number;
+  totalFailures: number;
+  failuresByRelay: Map<string, number>;
+  failuresByReason: Map<string, number>;
+  lastReportTime: number;
+  windowStart: number;
+}
+
+// Metrics configuration
+const METRICS_WINDOW = 60000; // 1 minute sliding window
+const FAILURE_THRESHOLD = 10; // Alert if >10 failures per minute
+const METRICS_REPORT_INTERVAL = 60000; // Report every minute
+
+// Global metrics state
+let publishMetrics: PublishMetrics = {
+  totalAttempts: 0,
+  totalFailures: 0,
+  failuresByRelay: new Map(),
+  failuresByReason: new Map(),
+  lastReportTime: Date.now(),
+  windowStart: Date.now()
+};
+
+// Helper to reset metrics window
+function resetMetricsWindow() {
+  publishMetrics = {
+    totalAttempts: 0,
+    totalFailures: 0,
+    failuresByRelay: new Map(),
+    failuresByReason: new Map(),
+    lastReportTime: Date.now(),
+    windowStart: Date.now()
+  };
+}
+
+// Helper to track and report publish failures
+function trackPublishFailure(
+  relay: string | undefined,
+  reason: string,
+  addServerLog?: ReturnType<typeof createAddServerLog>
+) {
+  const now = Date.now();
+
+  // Check if we need to reset the window
+  if (now - publishMetrics.windowStart > METRICS_WINDOW) {
+    resetMetricsWindow();
+  }
+
+  // Update metrics
+  publishMetrics.totalFailures++;
+
+  if (relay) {
+    const currentCount = publishMetrics.failuresByRelay.get(relay) || 0;
+    publishMetrics.failuresByRelay.set(relay, currentCount + 1);
+  }
+
+  // Categorize reason
+  const reasonCategory = reason.toLowerCase().includes('policy') || reason.toLowerCase().includes('reject')
+    ? 'policy_rejection'
+    : reason.toLowerCase().includes('timeout')
+    ? 'timeout'
+    : reason.toLowerCase().includes('closed') || reason.toLowerCase().includes('disconnect')
+    ? 'connection_error'
+    : 'other';
+
+  const currentReasonCount = publishMetrics.failuresByReason.get(reasonCategory) || 0;
+  publishMetrics.failuresByReason.set(reasonCategory, currentReasonCount + 1);
+
+  // Report if interval has passed
+  if (now - publishMetrics.lastReportTime > METRICS_REPORT_INTERVAL && addServerLog) {
+    const failureRate = (publishMetrics.totalFailures / Math.max(publishMetrics.totalAttempts, 1)) * 100;
+    const isAboveThreshold = publishMetrics.totalFailures > FAILURE_THRESHOLD;
+
+    // Build detailed metrics report
+    const relayFailures: Record<string, number> = {};
+    publishMetrics.failuresByRelay.forEach((count, relay) => {
+      relayFailures[relay] = count;
+    });
+
+    const reasonBreakdown: Record<string, number> = {};
+    publishMetrics.failuresByReason.forEach((count, reason) => {
+      reasonBreakdown[reason] = count;
+    });
+
+    addServerLog(
+      isAboveThreshold ? 'warning' : 'info',
+      `Publish metrics for last ${METRICS_WINDOW / 1000}s: ${publishMetrics.totalFailures}/${publishMetrics.totalAttempts} failures (${failureRate.toFixed(1)}%)`,
+      {
+        threshold: FAILURE_THRESHOLD,
+        isAboveThreshold,
+        failuresByRelay: relayFailures,
+        failuresByReason: reasonBreakdown,
+        windowDuration: METRICS_WINDOW
+      }
+    );
+
+    // Alert if above threshold
+    if (isAboveThreshold) {
+      addServerLog('error', `⚠️ High publish failure rate detected: ${publishMetrics.totalFailures} failures exceed threshold of ${FAILURE_THRESHOLD}`);
+    }
+
+    publishMetrics.lastReportTime = now;
+  }
+}
+
+// Helper function to apply publish patches with metrics to a node
+function applyPublishPatchesWithMetrics(
+  node: any,
+  addServerLog?: ReturnType<typeof createAddServerLog>
+) {
+  try {
+    const client = (node as any)._client || (node as any).client;
+    if (!client) return;
+
+    const pool = client._pool || client.pool;
+
+    // Patch pool.publish with metrics
+    if (pool && typeof pool.publish === 'function' && !pool.__iglooPatched) {
+      const originalPublish = pool.publish.bind(pool);
+      pool.publish = (relays: string[], event: any) => {
+        const promises: Promise<any>[] = originalPublish(relays, event);
+
+        // Track attempts
+        publishMetrics.totalAttempts += relays.length;
+
+        return promises.map((p, idx) => p.catch((err: any) => {
+          const reason = err instanceof Error ? err.message : String(err);
+          const url = Array.isArray(relays) ? relays[idx] : undefined;
+
+          // Track failure with metrics
+          trackPublishFailure(url, reason, addServerLog);
+
+          // Log individual failure
+          if (addServerLog) {
+            addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
+          }
+
+          return null; // swallow per-relay failure
+        }));
+      };
+      Object.defineProperty(pool, '__iglooPatched', { value: true, enumerable: false });
+    }
+
+    // Patch client.publish with metrics
+    if (typeof client.publish === 'function' && !client.__iglooClientPublishPatched) {
+      const origClientPublish = client.publish.bind(client);
+      client.publish = async (...args: any[]) => {
+        publishMetrics.totalAttempts++; // Track client-level attempt
+
+        try {
+          return await origClientPublish(...args);
+        } catch (err: any) {
+          const msg = err instanceof Error ? err.message : String(err);
+
+          // Track aggregate failure
+          trackPublishFailure(undefined, msg, addServerLog);
+
+          if (addServerLog) {
+            addServerLog('warning', `Client publish failed: ${msg}`);
+          }
+
+          const relaysList = Array.isArray(client.relays) ? client.relays : [];
+          const message = args?.[0];
+          const peerPk = args?.[1];
+          return {
+            ok: false,
+            acks: [],
+            fails: relaysList,
+            msg_id: message?.id,
+            peer_pk: peerPk,
+            data: undefined
+          };
+        }
+      };
+      Object.defineProperty(client, '__iglooClientPublishPatched', { value: true, enumerable: false });
+    }
+  } catch (e) {
+    // Silently ignore patching errors
+  }
+}
+
 /**
  * Race a promise against a timeout and ensure the timeout is cleared once settled.
  * Prevents stray timer callbacks from rejecting after the race is over.
@@ -46,13 +229,29 @@ const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity p
  */
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  let settled = false;
   const timeoutError = new Error('Ping timeout');
 
   const wrapped = new Promise<T>((resolve, reject) => {
-    timeoutId = setTimeout(() => reject(timeoutError), timeoutMs);
+    timeoutId = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        reject(timeoutError);
+      }
+    }, timeoutMs);
     promise.then(
-      value => resolve(value),
-      error => reject(error)
+      value => {
+        if (!settled) {
+          settled = true;
+          resolve(value);
+        }
+      },
+      error => {
+        if (!settled) {
+          settled = true;
+          reject(error);
+        }
+      }
     );
   });
 
@@ -92,7 +291,6 @@ export async function filterRelaysForKindSupport(
   const pool = new SimplePool();
   try {
     const seckey = generateSecretKey();
-    const pubkey = getPublicKey(seckey);
     const event = finalizeEvent({
       kind,
       created_at: Math.floor(Date.now() / 1000),
@@ -405,21 +603,24 @@ function startConnectivityMonitoring(
   recreateNodeFn: () => Promise<void>
 ) {
   stopConnectivityMonitoring();
-  
+
   // Store recreation callback even if node is null - we may need it for recovery
   nodeRecreateCallback = recreateNodeFn;
-  
+
   if (!node) {
     addServerLog('warning', 'Starting connectivity monitoring with null node - will attempt recovery');
     // Mark as unhealthy to trigger recovery
     nodeHealth.isConnected = false;
     nodeHealth.consecutiveConnectivityFailures = 1;
   } else {
-    addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings');
+    addServerLog('system', 'Starting simplified connectivity monitoring with keepalive pings and publish metrics');
   }
 
+  // Reset publish metrics for new monitoring session
+  resetMetricsWindow();
+
   // Active connectivity monitoring - test relay connections periodically
-  // This runs every 60 seconds to maintain relay connections
+  // This runs every 60 seconds to maintain relay connections and report metrics
   connectivityCheckInterval = setInterval(async () => {
     // Prevent overlapping checks
     if (connectivityCheckInFlight) {
@@ -1012,46 +1213,10 @@ export async function createNodeWithCredentials(
                 isReady: client._is_ready || client.is_ready || false
               });
 
-              // Minimal, robust patch: suppress relay publish rejections so a single
-              // policy block (e.g., "only kind 24133 and 24135 is accepted")
-              // cannot crash the server. We convert per-relay rejections to
-              // resolved nulls; higher layers already compute ok/acks/fails.
-              try {
-                const pool = client._pool || client.pool;
-                if (pool && typeof pool.publish === 'function' && !pool.__iglooPatched) {
-                  const originalPublish = pool.publish.bind(pool);
-                  pool.publish = (relays: string[], event: any) => {
-                    const promises: Promise<any>[] = originalPublish(relays, event);
-                    return promises.map((p, idx) => p.catch((err: any) => {
-                      const reason = err instanceof Error ? err.message : String(err);
-                      const url = Array.isArray(relays) ? relays[idx] : undefined;
-                      if (addServerLog) addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
-                      return null; // swallow per-relay failure
-                    }));
-                  };
-                  Object.defineProperty(pool, '__iglooPatched', { value: true, enumerable: false });
-                }
-              } catch {}
-
-              // Wrap client.publish to never throw on aggregate failures.
-              try {
-                if (typeof client.publish === 'function' && !client.__iglooClientPublishPatched) {
-                  const origClientPublish = client.publish.bind(client);
-                  client.publish = async (...args: any[]) => {
-                    try {
-                      return await origClientPublish(...args);
-                    } catch (err: any) {
-                      const msg = err instanceof Error ? err.message : String(err);
-                      if (addServerLog) addServerLog('warning', `Client publish failed: ${msg}`);
-                      const relaysList = Array.isArray(client.relays) ? client.relays : [];
-                      const message = args?.[0];
-                      const peerPk = args?.[1];
-                      return { ok: false, acks: [], fails: relaysList, msg_id: message?.id, peer_pk: peerPk, data: undefined };
-                    }
-                  };
-                  Object.defineProperty(client, '__iglooClientPublishPatched', { value: true, enumerable: false });
-                }
-              } catch {}
+              // Apply publish patches with metrics tracking
+              // This prevents relay policy rejections from crashing the server
+              // while providing visibility into failure rates
+              applyPublishPatchesWithMetrics(node, addServerLog);
             }
             
             // Check if node has ping capability
@@ -1117,40 +1282,8 @@ export async function createNodeWithCredentials(
               if (addServerLog) {
                 addServerLog('info', 'Node connected and ready (basic mode)');
               }
-              // Apply the same publish-swallow patch in basic mode
-              try {
-                const client = (node as any)._client || (node as any).client;
-                const pool = client?._pool || client?.pool;
-                if (pool && typeof pool.publish === 'function' && !pool.__iglooPatched) {
-                  const originalPublish = pool.publish.bind(pool);
-                  pool.publish = (relays: string[], event: any) => {
-                    const promises: Promise<any>[] = originalPublish(relays, event);
-                    return promises.map((p, idx) => p.catch((err: any) => {
-                      const reason = err instanceof Error ? err.message : String(err);
-                      const url = Array.isArray(relays) ? relays[idx] : undefined;
-                      if (addServerLog) addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
-                      return null;
-                    }));
-                  };
-                  Object.defineProperty(pool, '__iglooPatched', { value: true, enumerable: false });
-                }
-                if (client && typeof client.publish === 'function' && !client.__iglooClientPublishPatched) {
-                  const origClientPublish = client.publish.bind(client);
-                  client.publish = async (...args: any[]) => {
-                    try {
-                      return await origClientPublish(...args);
-                    } catch (err: any) {
-                      const msg = err instanceof Error ? err.message : String(err);
-                      if (addServerLog) addServerLog('warning', `Client publish failed: ${msg}`);
-                      const relaysList = Array.isArray(client.relays) ? client.relays : [];
-                      const message = args?.[0];
-                      const peerPk = args?.[1];
-                      return { ok: false, acks: [], fails: relaysList, msg_id: message?.id, peer_pk: peerPk, data: undefined };
-                    }
-                  };
-                  Object.defineProperty(client, '__iglooClientPublishPatched', { value: true, enumerable: false });
-                }
-              } catch {}
+              // Apply publish patches with metrics tracking in basic mode too
+              applyPublishPatchesWithMetrics(node, addServerLog);
               return node;
             }
           } catch (basicError) {
@@ -1176,10 +1309,42 @@ export async function createNodeWithCredentials(
 
 // Export health information
 export function getNodeHealth() {
-  return { 
+  return {
     ...nodeHealth,
     timeSinceLastActivity: Date.now() - nodeHealth.lastActivity.getTime(),
     timeSinceLastConnectivityCheck: Date.now() - nodeHealth.lastConnectivityCheck.getTime()
+  };
+}
+
+// Export publish metrics for monitoring
+export function getPublishMetrics() {
+  const now = Date.now();
+  const windowAge = now - publishMetrics.windowStart;
+  const failureRate = publishMetrics.totalAttempts > 0
+    ? (publishMetrics.totalFailures / publishMetrics.totalAttempts) * 100
+    : 0;
+
+  // Convert Maps to objects for JSON serialization
+  const relayFailures: Record<string, number> = {};
+  publishMetrics.failuresByRelay.forEach((count, relay) => {
+    relayFailures[relay] = count;
+  });
+
+  const reasonBreakdown: Record<string, number> = {};
+  publishMetrics.failuresByReason.forEach((count, reason) => {
+    reasonBreakdown[reason] = count;
+  });
+
+  return {
+    totalAttempts: publishMetrics.totalAttempts,
+    totalFailures: publishMetrics.totalFailures,
+    failureRate: failureRate.toFixed(1),
+    windowAge: Math.round(windowAge / 1000), // seconds
+    windowSize: METRICS_WINDOW / 1000, // seconds
+    isAboveThreshold: publishMetrics.totalFailures > FAILURE_THRESHOLD,
+    threshold: FAILURE_THRESHOLD,
+    failuresByRelay: relayFailures,
+    failuresByReason: reasonBreakdown
   };
 }
 

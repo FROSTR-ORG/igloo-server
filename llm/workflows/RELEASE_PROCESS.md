@@ -406,9 +406,10 @@ curl http://localhost:8002/api/status
 ### Version Already Exists
 **Symptom**: npm version fails
 **Cause**: Version tag already exists
-**Solution**: 
+**Solution**:
 1. Use different version number
 2. Delete existing tag (if appropriate)
+   **⚠️ WARNING**: Only delete tags if you're certain they haven't been used in production
 ```bash
 git tag -d v1.2.3
 git push origin :refs/tags/v1.2.3

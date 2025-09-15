@@ -49,9 +49,15 @@ export class ServerSigner {
 
   async loadPublicKey(): Promise<string> {
     const res = await fetch('/api/peers/group', { headers: { 'Content-Type': 'application/json', ...this.authHeaders } })
-    if (!res.ok) throw new Error('Failed to load group pubkey')
+    if (!res.ok) {
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`Failed to load group pubkey: ${res.status} ${res.statusText} - ${body}`)
+    }
     const data = await res.json()
-    if (!data.pubkey) throw new Error('Invalid group pubkey response')
+    if (!data.pubkey) {
+      const snippet = JSON.stringify(data).slice(0, 200)
+      throw new Error(`Invalid group pubkey response (missing pubkey field): ${snippet}`)
+    }
     this.groupPubkey = data.pubkey
     return this.groupPubkey
   }
@@ -77,8 +83,8 @@ export class ServerSigner {
       body: JSON.stringify({ message: id })
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.error || 'Server signing failed')
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`Server signing failed: ${res.status} ${res.statusText} - ${body}`)
     }
     const { signature } = await res.json()
     return { ...template, id, sig: signature }
@@ -91,8 +97,8 @@ export class ServerSigner {
       body: JSON.stringify({ peer_pubkey, content: plaintext })
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.error || 'NIP-44 encrypt failed')
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`NIP-44 encrypt failed: ${res.status} ${res.statusText} - ${body}`)
     }
     const { result } = await res.json()
     return result
@@ -105,14 +111,38 @@ export class ServerSigner {
       body: JSON.stringify({ peer_pubkey, content: ciphertext })
     })
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}))
-      throw new Error(err.error || 'NIP-44 decrypt failed')
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`NIP-44 decrypt failed: ${res.status} ${res.statusText} - ${body}`)
     }
     const { result } = await res.json()
     return result
   }
 
-  async nip04_encrypt(): Promise<string> { throw new Error('NIP-04 not implemented') }
-  async nip04_decrypt(): Promise<string> { throw new Error('NIP-04 not implemented') }
-}
+  async nip04_encrypt(peer_pubkey: string, plaintext: string): Promise<string> {
+    const res = await fetch('/api/nip04/encrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.authHeaders },
+      body: JSON.stringify({ peer_pubkey, content: plaintext })
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`NIP-04 encrypt failed: ${res.status} ${res.statusText} - ${body}`)
+    }
+    const { result } = await res.json()
+    return result
+  }
 
+  async nip04_decrypt(peer_pubkey: string, ciphertext: string): Promise<string> {
+    const res = await fetch('/api/nip04/decrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...this.authHeaders },
+      body: JSON.stringify({ peer_pubkey, content: ciphertext })
+    })
+    if (!res.ok) {
+      const body = await res.text().catch(() => '[unable to read response]')
+      throw new Error(`NIP-04 decrypt failed: ${res.status} ${res.statusText} - ${body}`)
+    }
+    const { result } = await res.json()
+    return result
+  }
+}

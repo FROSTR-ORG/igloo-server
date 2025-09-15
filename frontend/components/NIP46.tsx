@@ -1,9 +1,8 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { NIP46Controller } from './nip46/controller'
 import { Sessions } from './nip46/Sessions'
 import { Requests } from './nip46/Requests'
 import { NIP46Config } from './nip46/types'
-import { shareToPrivateKey } from './nip46/utils'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
 import { Button } from './ui/button'
 import { Alert } from './ui/alert'
@@ -26,8 +25,9 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
   const [activeTab, setActiveTab] = useState('sessions')
   const [requestCount, setRequestCount] = useState(0)
   const [sessionCount, setSessionCount] = useState(0)
+  const cleanupRef = useRef<(() => void) | null>(null)
 
-  const defaultConfig: NIP46Config = {
+  const defaultConfig: NIP46Config = useMemo(() => ({
     relays: [
       'wss://relay.damus.io',
       'wss://nos.lol',
@@ -53,18 +53,20 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
       image: '/assets/frostr-logo-transparent.png'
     },
     timeout: 30
-  }
+  }), [])
 
   useEffect(() => {
     if (groupCred && shareCred) {
-      ;(window as any).GROUP_CRED = groupCred
-      ;(window as any).SHARE_CRED = shareCred
+      // Use ephemeral transport key when credentials are loaded; avoid exposing secrets in the browser
       initializeController(undefined, authHeaders)
     } else if (privateKey) {
       initializeController(privateKey, authHeaders)
     }
 
     return () => {
+      // Detach event listeners and close socket cleanly
+      try { cleanupRef.current?.() } catch {}
+      cleanupRef.current = null
       controller?.disconnect().catch(() => {})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -75,16 +77,19 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
       setError(null)
       const nip46Controller = new NIP46Controller(defaultConfig)
 
-      nip46Controller.on('connected', () => setIsConnected(true))
-      nip46Controller.on('disconnected', () => setIsConnected(false))
-      nip46Controller.on('error', (err: Error) => setError(err.message))
-
+      // Bind handlers with stable references for cleanup
+      const onConnected = () => setIsConnected(true)
+      const onDisconnected = () => setIsConnected(false)
+      const onError = (err: Error) => setError(err.message)
       const updateCounts = () => {
         const sessions = nip46Controller.getActiveSessions().length + nip46Controller.getPendingSessions().length
         setSessionCount(sessions)
         setRequestCount(nip46Controller.getPendingRequests().length)
       }
 
+      nip46Controller.on('connected', onConnected)
+      nip46Controller.on('disconnected', onDisconnected)
+      nip46Controller.on('error', onError)
       nip46Controller.on('session:active', updateCounts)
       nip46Controller.on('session:pending', updateCounts)
       nip46Controller.on('session:updated', updateCounts)
@@ -92,14 +97,28 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
       nip46Controller.on('request:approved', updateCounts)
       nip46Controller.on('request:denied', updateCounts)
 
-      if (key) {
-        const hex = shareToPrivateKey(key)
-        await nip46Controller.initialize(hex, auth)
-      } else {
-        await nip46Controller.initialize(undefined, auth)
-      }
+      // Initialize transport (derive deterministic key only if explicitly provided)
+      // Always use ephemeral transport unless a deterministic key path is explicitly reintroduced
+      await nip46Controller.initialize(undefined, auth)
 
+      // Prime counts immediately
+      updateCounts()
+
+      // Save controller and a cleanup function to detach listeners
       setController(nip46Controller)
+      cleanupRef.current = () => {
+        try {
+          nip46Controller.off('connected', onConnected)
+          nip46Controller.off('disconnected', onDisconnected)
+          nip46Controller.off('error', onError)
+          nip46Controller.off('session:active', updateCounts)
+          nip46Controller.off('session:pending', updateCounts)
+          nip46Controller.off('session:updated', updateCounts)
+          nip46Controller.off('request:new', updateCounts)
+          nip46Controller.off('request:approved', updateCounts)
+          nip46Controller.off('request:denied', updateCounts)
+        } catch {}
+      }
     } catch (err: any) {
       setError(err?.message || 'Failed to initialize NIP-46')
     }

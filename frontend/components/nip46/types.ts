@@ -30,7 +30,7 @@ export interface NIP46Request {
   id: string
   method: string
   source: string
-  content: any
+  content: unknown
   timestamp: number
   session_origin: {
     name?: string

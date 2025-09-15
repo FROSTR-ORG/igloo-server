@@ -1,15 +1,15 @@
 import { HEADLESS } from '../const.js';
-import { 
-  getUserById, 
-  getUserCredentials, 
+import {
+  getUserById,
+  getUserCredentials,
   updateUserCredentials,
   deleteUserCredentials,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createAndStartNode } from './node-manager.js';
-import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
+import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 
 // Define route-to-methods mapping for proper 404/405 handling
 const ROUTE_METHODS: Record<string, string[]> = {
@@ -185,18 +185,10 @@ export async function handleUserRoute(
 
           let body: any;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
             return Response.json(
-              { error: 'Invalid JSON in request body' },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate that body is an object
-          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-            return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }
@@ -364,18 +356,10 @@ export async function handleUserRoute(
         if (req.method === 'POST' || req.method === 'PUT') {
           let body: any;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
             return Response.json(
-              { error: 'Invalid JSON in request body' },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate that body is an object
-          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-            return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }

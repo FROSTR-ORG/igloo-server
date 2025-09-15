@@ -55,6 +55,17 @@ bun run docs:validate
 # Bundle OpenAPI documentation to JSON
 bun run docs:bundle
 
+# Runtime crypto/signing timeouts (tunable)
+# Default 30s; min 1s, max 120s
+# Applies to: /api/sign (threshold sign), /api/nip44/* and /api/nip04/* (ECDH)
+# Env precedence: FROSTR_SIGN_TIMEOUT > SIGN_TIMEOUT_MS
+export FROSTR_SIGN_TIMEOUT=30000
+
+# Ephemeral derived key handling (security)
+# Keys are available briefly post-login for credential bootstrap
+export AUTH_DERIVED_KEY_TTL_MS=120000      # default 2 minutes (min 10s, max 10m)
+export AUTH_DERIVED_KEY_MAX_READS=3        # default 3 reads per session
+
 # Health check (server provides auto-restart on failures)
 curl http://localhost:8002/api/status
 
@@ -75,7 +86,11 @@ wscat -c ws://localhost:8002/api/events
 1. **Server (`src/server.ts`)**: Main Bun server handling WebSocket connections and HTTP requests. Uses dynamic imports for the database module (though DB code is still bundled due to static imports elsewhere, initialization is skipped in HEADLESS mode).
 2. **Bifrost Node**: Core logic in `src/node/manager.ts` handles the FROSTR signing node with health monitoring and auto-restart. The routes in `src/routes/node-manager.ts` expose this functionality via API endpoints.
 3. **Database (`src/db/database.ts`)**: SQLite database for user management and encrypted credential storage
-4. **NIP-46 Support (`src/db/nip46.ts`, `src/routes/nip46.ts`)**: Remote signing via Nostr Connect protocol with session persistence
+4. **NIP-46 Remote Signing**:
+   - **Database** (`src/db/nip46.ts`): Session persistence with audit logging
+   - **Routes** (`src/routes/nip46.ts`): Session CRUD, policy updates, history
+   - **Signing** (`src/routes/sign.ts`): Message and event signing endpoints
+   - **Encryption** (`src/routes/nip44.ts`): NIP-44 encrypt/decrypt via Bifrost
 5. **Routes (`src/routes/index.ts`)**: Unified router handling all API endpoints (auth, env, peers, recovery, shares, status, user, onboarding, nip46, sign, nip44)
 6. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS, esbuild bundling
 7. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing (not for production)
@@ -91,6 +106,11 @@ wscat -c ws://localhost:8002/api/events
   - Prevents secret leakage through spread/JSON/structuredClone operations
   - Auto-clears sensitive data after first access
   - Non-enumerable getter functions for password and derivedKey
+- **NIP-46 Session Lifecycle**:
+  - `pending`: Initial connection, awaiting first request
+  - `active`: Authenticated and processing requests
+  - `revoked`: Deleted from database (not persisted)
+- **Permission Evaluation**: Per-session policies checked before request processing
 
 ### Node Restart System
 
@@ -111,6 +131,10 @@ wscat -c ws://localhost:8002/api/events
 - **Self-ping detection**: Filters self-pings by comparing normalized pubkeys
 - **Race-condition safe**: Uses `withTimeout` helper to prevent stray timer callbacks
 - **Relay filtering**: `filterRelaysForKindSupport()` probes relays for kind support before connecting
+  - Filters out relays that reject kind 20004 (Bifrost protocol)
+  - Uses ephemeral keypair for probing
+  - Immediate connection cleanup after probe
+- **Per-relay error isolation**: SimplePool.publish patched to catch per-relay rejections
 - **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
@@ -129,25 +153,30 @@ The server supports two operation modes controlled by the `HEADLESS` environment
 
 #### Database Mode (Default - HEADLESS=false)
 - **Multi-user support** with individual accounts
-- **Credential security**: 
+- **Credential security**:
   - Password hashing: Argon2id via Bun.password (for user authentication)
   - Credential encryption: AES-256-GCM with PBKDF2 key derivation (200,000 iterations, see `src/config/crypto.ts`) (for storing FROSTR credentials)
 - **Onboarding flow** with `ADMIN_SECRET` for initial setup
 - **Session management** for web UI authentication
 - **Auto-start node** on login or credential save
+- **NIP-46 persistence**: Sessions, policies, and audit logs stored in SQLite
 - **Database location** configurable via `DB_PATH` (default: ./data)
 
 Key files:
 - `src/db/database.ts` - User management and encryption
+- `src/db/nip46.ts` - NIP-46 session persistence and audit logging
 - `src/routes/onboarding.ts` - Initial setup flow
 - `src/routes/user.ts` - User credential management
+- `src/routes/nip46.ts` - NIP-46 session API endpoints
 - `frontend/components/Onboarding.tsx` - Onboarding UI
+- `frontend/components/NIP46.tsx` - NIP-46 management UI
 
 #### Headless Mode (HEADLESS=true)
 - **Single-user operation** via environment variables
 - **Direct credential storage** in `GROUP_CRED` and `SHARE_CRED`
 - **Backward compatible** with existing deployments
 - **Node starts at server startup** if credentials present
+- **No NIP-46 persistence**: Sessions not saved across restarts
 - **Database code bundling**: Note that database modules are still included in the built bundle even when HEADLESS=true. Static imports in route files and the dynamic import in server.ts cause database code to be bundled, but database initialization is skipped at runtime when HEADLESS=true (modules are present but not executed).
 
 Environment variables:
@@ -156,6 +185,7 @@ Environment variables:
 - `DB_PATH` - Database storage location (default: ./data, unused in headless mode at runtime)
 - `GROUP_CRED` - FROSTR group credential (headless mode only)
 - `SHARE_CRED` - Your secret share (headless mode only)
+- `TRUST_PROXY` - Set to 'true' when behind a trusted proxy (nginx, cloudflare) to trust X-Forwarded-For headers for rate limiting
 
 ## Critical Files & Patterns
 
@@ -179,6 +209,39 @@ Environment variables:
 - OpenAPI documentation at `/api/docs` (Swagger UI)
 - Authentication bypass for `/api/onboarding/*` in database mode
 - All routes return CORS headers and handle OPTIONS preflight
+- Timeouts: `/api/sign`, `/api/nip44/*`, `/api/nip04/*` respect `FROSTR_SIGN_TIMEOUT` or `SIGN_TIMEOUT_MS`
+
+## Database Schema Notes
+
+### NIP-46 Tables
+```sql
+-- Sessions table
+CREATE TABLE nip46_sessions (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  client_pubkey TEXT NOT NULL,
+  status TEXT CHECK (status IN ('pending','active')),
+  profile_name TEXT,
+  profile_url TEXT,
+  profile_image TEXT,
+  relays TEXT,           -- JSON array
+  policy_methods TEXT,   -- JSON object
+  policy_kinds TEXT,     -- JSON object
+  last_active_at DATETIME,
+  UNIQUE(user_id, client_pubkey)
+);
+
+-- Audit log table
+CREATE TABLE nip46_session_events (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER,
+  client_pubkey TEXT,
+  event_type TEXT,  -- created|status_change|grant_method|grant_kind|revoke_method|revoke_kind
+  detail TEXT,       -- method name or kind number
+  value TEXT,        -- new status if relevant
+  created_at DATETIME
+);
+```
 
 ## Important Considerations
 
@@ -211,12 +274,31 @@ Environment variables:
    - Timing-safe authentication prevents timing attacks
    - SESSION_SECRET must NEVER be exposed via API endpoints
 
-8. **NIP-46 Implementation**:
-   - Remote signing support via Nostr Connect protocol
-   - Session persistence in database (database mode only)
-   - Permission policies for methods and event kinds
-   - Frontend controller in `frontend/components/nip46/controller.ts`
-   - Server-side signer in `frontend/components/nip46/server-signer.ts`
+8. **NIP-46 Remote Signing (Nostr Connect)**:
+   - **Protocol**: Full NIP-46 signer implementation using `@cmdcode/nostr-connect` for transport
+   - **Threshold Signing**: Uses FROSTR/Bifrost for threshold Schnorr signatures
+   - **Session Management**:
+     - Persistent sessions in SQLite (`nip46_sessions` table)
+     - Session states: `pending` → `active` (revoked sessions are deleted, not persisted)
+     - Profile metadata, relay tracking, last activity timestamps
+   - **Permission System**:
+     - Per-session policies for methods and event kinds
+     - Default-deny with explicit grants
+     - Auto-grant on approval, policy diffs tracked in audit log
+   - **Frontend Components**:
+     - Controller (`frontend/components/nip46/controller.ts`): Handles bounced messages, per-session policies
+     - Server Signer (`frontend/components/nip46/server-signer.ts`): Delegates to server APIs
+     - UI tabs: Sessions management, Requests approval, Permissions editor, QR scanner
+   - **Backend APIs**:
+     - `/api/sign`: Accepts message/event, returns `{ id, signature }`
+     - `/api/nip44/{encrypt,decrypt}`: NIP-44 encryption using Bifrost ECDH
+     - `/api/nip46/sessions/*`: CRUD operations for sessions and policies
+     - `/api/nip46/history`: Audit log with recent approvals
+   - **Hardening**:
+     - Relay probing at startup (filters relays that reject kind 20004)
+     - Per-relay publish failure isolation
+     - Validates 64-char hex pubkeys before persistence
+     - Rate limiting on signing endpoints
 
 ## Release Workflow
 
@@ -258,6 +340,53 @@ bun run release:major
 - Kill stuck process: `lsof -i :8002` then `kill <PID>`
 - Rollback procedure documented in `llm/workflows/RELEASE_PROCESS.md`
 
+## NIP-46 Testing Workflow
+
+### Manual Test Flow
+1. **Session Creation**:
+   - Scan/paste a `nostrconnect://` invite → Pending session appears
+   - Session becomes Active on first real request (not CONNECT)
+   - Valid 64-char hex pubkeys required for persistence
+
+2. **Permission Management**:
+   - Approve `sign_event` kind 1 in App A; App B remains blocked (per-session policy)
+   - Approving updates only that session's policy
+   - Policies persist across server restarts (database mode)
+
+3. **Request Handling**:
+   - **Requests tab**: Approve/deny single, all, or "Approve All Kind X"
+   - Subsequent requests auto-approve when allowed by policy
+   - Bounced messages (schema validation failures) handled gracefully
+
+4. **Session Management**:
+   - **Sessions tab**: Shows Last Active, recent kinds/methods from audit log
+   - Revoking removes session from DB (not marked as revoked)
+   - Session events tracked: created, status_change, grant/revoke method/kind
+
+5. **API Testing**:
+   ```bash
+   # Test signing
+   curl -X POST http://localhost:8002/api/sign \
+     -H "Content-Type: application/json" \
+     -d '{"message": "test message"}'
+
+   # Test NIP-44 encryption
+   curl -X POST http://localhost:8002/api/nip44/encrypt \
+     -H "Content-Type: application/json" \
+     -d '{"pubkey": "...", "plaintext": "test"}'
+
+   # List sessions
+   curl http://localhost:8002/api/nip46/sessions?history=true
+
+   # View compact history
+   curl http://localhost:8002/api/nip46/history
+   ```
+
+6. **Persistence Verification**:
+   - Restart server; sessions and policies should persist
+   - Check SQLite tables: `nip46_sessions`, `nip46_session_events`
+   - Old revoked sessions cleanup: `DELETE FROM nip46_sessions WHERE status = 'revoked';`
+
 ## Troubleshooting Common Issues
 
 ### Build/Frontend Issues
@@ -274,6 +403,14 @@ bun run release:major
 - **Problem**: Node marked unhealthy despite being responsive
 - **Solution**: Check `lastActivity` timestamp - keepalive updates occur after 45s idle
 - **Debug**: Monitor with `curl http://localhost:8002/api/status | jq '.health'`
+
+### NIP-46 Issues
+- **Problem**: "Unknown" sessions appearing in UI
+- **Solution**: Fixed in latest - validates 64-char hex pubkeys before persistence
+- **Problem**: Relay rejecting NIP-46 events
+- **Solution**: Server probes relays at startup, filters incompatible ones
+- **Problem**: Sessions not persisting across restarts
+- **Solution**: Ensure database mode (not headless), check DB permissions
 
 ### Release Script Issues
 - **Problem**: Port 8002 already in use
@@ -305,6 +442,7 @@ Key packages:
 - `@frostr/bifrost`: Bifrost node operations (v1.0.6)
 - `@cmdcode/nostr-connect`: NIP-46 remote signing protocol (v0.0.7)
 - `nostr-tools`: Nostr protocol utilities (v2.15.0)
+- `qr-scanner`: QR code scanning for nostrconnect URIs (v1.4.2)
 - `bun`: Runtime and server (uses Bun-specific APIs: `bun:sqlite`, `Bun.file`, `Bun.password`)
 - `react` & `react-dom`: Frontend framework (v18.3.1)
 - `tailwindcss`: CSS framework (v3.4.17)

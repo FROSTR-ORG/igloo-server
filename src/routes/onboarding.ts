@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'crypto';
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { RouteContext } from './types.js';
 import { VALIDATION } from '../config/crypto.js';
 
@@ -62,13 +62,54 @@ async function addUniformDelay(): Promise<void> {
 }
 
 /**
- * Extracts client IP from request headers.
- * Checks x-forwarded-for, x-real-ip, then falls back to 'unknown'.
+ * Extracts client IP from request headers with proxy trust validation.
+ * Only trusts proxy headers when TRUST_PROXY environment variable is set.
+ *
+ * Security Note: In production behind a proxy (nginx, cloudflare, etc), set
+ * TRUST_PROXY=true. Without a trusted proxy, we cannot reliably determine
+ * the client IP, so we use a hash of headers for rate limiting consistency.
  */
 function getClientIp(req: Request): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
-         req.headers.get('x-real-ip') || 
-         'unknown';
+  // Check if we should trust proxy headers
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+
+  if (trustProxy) {
+    // Trust proxy headers when explicitly configured
+    // Priority: X-Forwarded-For (standard), X-Real-IP (nginx), fallback
+    const xForwardedFor = req.headers.get('x-forwarded-for');
+    if (xForwardedFor) {
+      // Take the first IP (original client) from comma-separated list
+      return xForwardedFor.split(',')[0]?.trim() || 'unknown';
+    }
+
+    const xRealIp = req.headers.get('x-real-ip');
+    if (xRealIp) {
+      return xRealIp.trim();
+    }
+  }
+
+  // When not trusting proxy or no proxy headers available,
+  // use a combination of headers as a fingerprint for rate limiting
+  // This prevents simple header spoofing attacks
+  const userAgent = req.headers.get('user-agent') || '';
+  const acceptLang = req.headers.get('accept-language') || '';
+  const acceptEnc = req.headers.get('accept-encoding') || '';
+
+  // Create a consistent fingerprint for rate limiting
+  // Not perfect IP detection, but prevents trivial bypasses
+  if (userAgent || acceptLang || acceptEnc) {
+    // Use a simple hash to create a consistent identifier
+    const fingerprint = `${userAgent}|${acceptLang}|${acceptEnc}`;
+    // Simple hash to create shorter consistent ID
+    let hash = 0;
+    for (let i = 0; i < fingerprint.length; i++) {
+      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
+      hash = hash & hash; // Convert to 32-bit integer
+    }
+    return `fp_${Math.abs(hash).toString(36)}`;
+  }
+
+  return 'unknown';
 }
 
 /**
@@ -120,14 +161,6 @@ const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 // - Special character (at least one of @$!%*?&, but allows any special chars)
 // Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])\S*$/;
-
-// Common weak passwords that should be rejected
-const COMMON_PASSWORDS = new Set([
-  'password1!', 'password123!', 'admin123!', 'qwerty123!',
-  'password!', 'letmein1!', 'welcome1!', 'monkey123!',
-  'dragon123!', 'master123!', 'abc123!@#', 'password1',
-  'p@ssw0rd', 'p@ssword1', 'passw0rd!', 'admin@123'
-]);
 
 /**
  * Validates the admin secret in a timing-safe manner
@@ -209,11 +242,6 @@ function validatePasswordStrength(password: string, username?: string): string |
 
   if (!PASSWORD_REGEX.test(password)) {
     return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (must include at least one of @$!%*?&)';
-  }
-
-  // Check against common passwords (case-insensitive)
-  if (COMMON_PASSWORDS.has(password.toLowerCase())) {
-    return 'This password is too common. Please choose a more unique password';
   }
 
   // Check for sequential or repeated characters
@@ -312,17 +340,19 @@ export async function handleOnboardingRoute(
 
       case '/api/onboarding/validate-admin':
         if (req.method === 'POST') {
-          // Add uniform delay to all responses
-          await addUniformDelay();
-          
-          // Apply rate limiting for admin validation
+          // Apply rate limiting BEFORE delay to prevent resource exhaustion
           const rateLimited = await checkPerIpRateLimit(_context, req);
           if (rateLimited) {
+            // Still add delay to rate-limited responses for timing consistency
+            await addUniformDelay();
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }
             );
           }
+
+          // Add uniform delay to all non-rate-limited responses
+          await addUniformDelay();
           
           // Check if already initialized
           let initialized = false;
@@ -370,17 +400,19 @@ export async function handleOnboardingRoute(
 
       case '/api/onboarding/setup':
         if (req.method === 'POST') {
-          // Add uniform delay to all responses
-          await addUniformDelay();
-          
-          // Apply rate limiting for setup endpoint
+          // Apply rate limiting BEFORE delay to prevent resource exhaustion
           const rateLimited = await checkPerIpRateLimit(_context, req);
           if (rateLimited) {
+            // Still add delay to rate-limited responses for timing consistency
+            await addUniformDelay();
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }
             );
           }
+
+          // Add uniform delay to all non-rate-limited responses
+          await addUniformDelay();
           
           // Check if already initialized
           let initialized = false;
@@ -410,11 +442,11 @@ export async function handleOnboardingRoute(
 
           let body;
           try {
-            body = await req.json();
-          } catch (e) {
-            console.error('Failed to parse JSON in onboarding/setup:', e);
+            body = await parseJsonRequestBody(req);
+          } catch (error) {
+            console.error('Failed to parse JSON in onboarding/setup:', error);
             return Response.json(
-              { error: 'Invalid JSON request body' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }

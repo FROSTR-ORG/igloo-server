@@ -44,6 +44,41 @@ const pulseStyle = `
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
 
+// Reusable deep validation helpers to avoid duplication
+function performDeepShareValidation(shareCredential: string): boolean {
+  const validation = validateShare(shareCredential)
+  if (!validation.isValid || !shareCredential.trim()) return false
+  try {
+    const decodedShare = decodeShare(shareCredential)
+    return !!(
+      typeof (decodedShare as any).idx === 'number' &&
+      typeof (decodedShare as any).seckey === 'string' &&
+      typeof (decodedShare as any).binder_sn === 'string' &&
+      typeof (decodedShare as any).hidden_sn === 'string'
+    )
+  } catch {
+    return false
+  }
+}
+
+function performDeepGroupValidation(groupCredential: string): boolean {
+  const validation = validateGroup(groupCredential)
+  if (!validation.isValid || !groupCredential.trim()) return false
+  try {
+    const decodedGroup = decodeGroup(groupCredential) as any
+    // group_pk can be hex string or Uint8Array depending on upstream; accept either
+    const groupPkOk = typeof decodedGroup.group_pk === 'string' || (decodedGroup.group_pk && typeof decodedGroup.group_pk.length === 'number')
+    return !!(
+      typeof decodedGroup.threshold === 'number' &&
+      groupPkOk &&
+      Array.isArray(decodedGroup.commits) &&
+      decodedGroup.commits.length > 0
+    )
+  } catch {
+    return false
+  }
+}
+
 // Helper function to extract share information using real igloo-core functions
 const getShareInfo = (groupCredential: string, shareCredential: string, shareName?: string, realPubkey?: string) => {
   try {
@@ -504,55 +539,13 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   // Validate initial data (when props are provided in database mode)
   useEffect(() => {
     if (initialData?.share) {
-      setSignerSecret(initialData.share);
-      const validation = validateShare(initialData.share);
-      
-      // Perform deep validation with actual decoding (same as handleShareChange)
-      if (validation.isValid && initialData.share.trim()) {
-        try {
-          const decodedShare = decodeShare(initialData.share);
-          
-          // Check decoded structure has required fields
-          if (typeof decodedShare.idx !== 'number' ||
-              typeof decodedShare.seckey !== 'string' ||
-              typeof decodedShare.binder_sn !== 'string' ||
-              typeof decodedShare.hidden_sn !== 'string') {
-            setIsShareValid(false);
-          } else {
-            setIsShareValid(true);
-          }
-        } catch (error) {
-          setIsShareValid(false);
-        }
-      } else {
-        setIsShareValid(validation.isValid);
-      }
+      setSignerSecret(initialData.share)
+      setIsShareValid(performDeepShareValidation(initialData.share))
     }
 
     if (initialData?.groupCredential) {
-      setGroupCredential(initialData.groupCredential);
-      const validation = validateGroup(initialData.groupCredential);
-      
-      // Perform deep validation with actual decoding (same as handleGroupChange)
-      if (validation.isValid && initialData.groupCredential.trim()) {
-        try {
-          const decodedGroup = decodeGroup(initialData.groupCredential);
-          
-          // Check decoded structure has required fields
-          if (typeof decodedGroup.threshold !== 'number' ||
-              typeof decodedGroup.group_pk !== 'string' ||
-              !Array.isArray(decodedGroup.commits) ||
-              decodedGroup.commits.length === 0) {
-            setIsGroupValid(false);
-          } else {
-            setIsGroupValid(true);
-          }
-        } catch (error) {
-          setIsGroupValid(false);
-        }
-      } else {
-        setIsGroupValid(validation.isValid);
-      }
+      setGroupCredential(initialData.groupCredential)
+      setIsGroupValid(performDeepGroupValidation(initialData.groupCredential))
     }
     
     if (initialData?.name) {
@@ -679,62 +672,16 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
 
   const handleShareChange = (value: string) => {
     setSignerSecret(value);
-    const validation = validateShare(value);
-
-    // Try deeper validation with real decoder if basic validation passes
-    if (validation.isValid && value.trim()) {
-      try {
-        // If this doesn't throw, it's a valid share
-        const decodedShare = decodeShare(value);
-
-        // Additional structure validation - igloo-core returns proper structure
-        if (typeof decodedShare.idx !== 'number' ||
-          typeof decodedShare.seckey !== 'string' ||
-          typeof decodedShare.binder_sn !== 'string' ||
-          typeof decodedShare.hidden_sn !== 'string') {
-          setIsShareValid(false);
-          return;
-        }
-
-        setIsShareValid(true);
-        // Save valid share to env
-        saveCredentialsToEnv(value, undefined);
-      } catch {
-        setIsShareValid(false);
-      }
-    } else {
-      setIsShareValid(validation.isValid);
-    }
+    const ok = performDeepShareValidation(value)
+    setIsShareValid(ok)
+    if (ok) saveCredentialsToEnv(value, undefined)
   };
 
   const handleGroupChange = (value: string) => {
     setGroupCredential(value);
-    const validation = validateGroup(value);
-
-    // Try deeper validation with real decoder if basic validation passes
-    if (validation.isValid && value.trim()) {
-      try {
-        // If this doesn't throw, it's a valid group
-        const decodedGroup = decodeGroup(value);
-
-        // Additional structure validation - igloo-core returns proper structure
-        if (typeof decodedGroup.threshold !== 'number' ||
-          typeof decodedGroup.group_pk !== 'string' ||
-          !Array.isArray(decodedGroup.commits) ||
-          decodedGroup.commits.length === 0) {
-          setIsGroupValid(false);
-          return;
-        }
-
-        setIsGroupValid(true);
-        // Save valid group to env
-        saveCredentialsToEnv(undefined, value);
-      } catch {
-        setIsGroupValid(false);
-      }
-    } else {
-      setIsGroupValid(validation.isValid);
-    }
+    const ok = performDeepGroupValidation(value)
+    setIsGroupValid(ok)
+    if (ok) saveCredentialsToEnv(undefined, value)
   };
 
   // Helper function to determine if we're in database mode

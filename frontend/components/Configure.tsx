@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Tooltip } from "./ui/tooltip"
@@ -51,6 +51,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<typeof advancedSettings>({...advancedSettings});
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
   const [advancedError, setAdvancedError] = useState<string | undefined>(undefined);
+  const loadAdvancedSettingsRef = useRef<AbortController | null>(null);
 
   /**
    * Convert an environment value of unknown type to a string suitable for input fields.
@@ -79,12 +80,18 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   // Function to load advanced settings from env
   const loadAdvancedSettings = async () => {
     // Load advanced settings in both headless and database modes
+    if (loadAdvancedSettingsRef.current) {
+      try { loadAdvancedSettingsRef.current.abort() } catch {}
+    }
+    loadAdvancedSettingsRef.current = new AbortController();
+    const signal = loadAdvancedSettingsRef.current.signal;
     
     try {
       setIsLoadingAdvanced(true);
       setAdvancedError(undefined);
       const envResponse = await fetch('/api/env', {
-        headers: authHeaders
+        headers: authHeaders,
+        signal
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
@@ -113,6 +120,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         setAdvancedError(err.error || `Failed to load settings: ${envResponse.status}`);
       }
     } catch (error) {
+      if ((error as any)?.name === 'AbortError') {
+        return; // newer request superseded this one
+      }
       console.error('Error loading advanced settings:', error);
       setAdvancedError('Failed to load advanced settings');
     } finally {
@@ -218,23 +228,17 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   // Reload advanced settings when window regains focus or when showAdvanced changes
   // This ensures relay changes from Signer.tsx are reflected here
   useEffect(() => {
-    // Only set up listeners and load if advanced section is open
-    if (!showAdvanced) {
-      return;
-    }
+    if (!showAdvanced) return;
 
-    const handleFocus = () => {
-      loadAdvancedSettings();
-    };
-
-    // Load settings when advanced section is first opened
+    const handleFocus = () => { loadAdvancedSettings() };
     loadAdvancedSettings();
-
-    // Add focus listener to reload when window/tab regains focus
     window.addEventListener('focus', handleFocus);
-    
     return () => {
       window.removeEventListener('focus', handleFocus);
+      if (loadAdvancedSettingsRef.current) {
+        try { loadAdvancedSettingsRef.current.abort() } catch {}
+        loadAdvancedSettingsRef.current = null
+      }
     };
   }, [showAdvanced]);
 

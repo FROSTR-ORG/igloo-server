@@ -507,6 +507,49 @@ ws://localhost:8002/api/events?sessionId=your-session-id
 
 💡 **Note**: Real-time events have been migrated from Server-Sent Events (SSE) to **WebSockets** for better performance and reliability. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
 
+### Crypto: Sign and Encrypt
+```bash
+# Threshold sign a Nostr event id
+POST /api/sign
+Content-Type: application/json
+{ "message": "<32-byte-hex-id>" }
+# or
+{ "event": { "pubkey": "<64-hex>", "kind": 1, "created_at": 1734300000, "content": "...", "tags": [] } }
+
+# NIP-44 encrypt/decrypt
+POST /api/nip44/encrypt  { "peer_pubkey": "<x-only or compressed>", "content": "plaintext" }
+POST /api/nip44/decrypt  { "peer_pubkey": "<x-only or compressed>", "content": "ciphertext" }
+
+# NIP-04 encrypt/decrypt (legacy; use NIP-44 when possible)
+POST /api/nip04/encrypt  { "peer_pubkey": "<x-only or compressed>", "content": "plaintext" }
+POST /api/nip04/decrypt  { "peer_pubkey": "<x-only or compressed>", "content": "ciphertext" }
+```
+Timeouts: these endpoints honor `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEOUT_MS` (default 30000ms; bounds 1000–120000ms). On timeout, HTTP 504 is returned.
+
+### NIP‑46 Sessions
+```bash
+# List sessions (optionally include history summary)
+GET /api/nip46/sessions?history=true
+
+# Create/update a session
+POST /api/nip46/sessions
+{ "pubkey": "<64-hex>", "status": "pending", "profile": {"name": "App"}, "relays": ["wss://..."], "policy": {"methods": {}, "kinds": {}} }
+
+# Update policy for a session
+PUT /api/nip46/sessions/{pubkey}/policy
+{ "methods": {"get_public_key": true}, "kinds": {"1": true} }
+
+# Update status (revoked deletes the session)
+PUT /api/nip46/sessions/{pubkey}/status
+{ "status": "revoked" }
+
+# Delete session
+DELETE /api/nip46/sessions/{pubkey}
+
+# Compact history
+GET /api/nip46/history
+```
+
 ## Deployment
 
 ### Digital Ocean Deployment
@@ -734,6 +777,12 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
+| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy | `false` | ❌ |
+| **Crypto Timeouts** | | | |
+| `FROSTR_SIGN_TIMEOUT` / `SIGN_TIMEOUT_MS` | Timeout (ms) for signing and ECDH crypto endpoints | `30000` | ❌ |
+| **Ephemeral Derived Keys** | | | |
+| `AUTH_DERIVED_KEY_TTL_MS` | Derived key vault TTL (ms) | `120000` | ❌ |
+| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `3` | ❌ |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_WINDOW` | Rate limit window in seconds | `900` | ❌ |
@@ -859,6 +908,7 @@ Igloo Server includes comprehensive security features to protect your FROSTR cre
 - **Configurable Security**: Enable/disable authentication for development vs production
 - **Rate Limiting**: IP-based request limiting to prevent abuse
 - **Session Management**: Secure cookie-based sessions with configurable timeouts
+- **Proxy Trust**: When behind a reverse proxy (nginx, Cloudflare, etc.), set `TRUST_PROXY=true` to correctly identify client IPs for rate limiting
 
 ### 📋 **Quick Security Setup**
 

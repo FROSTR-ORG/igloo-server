@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Igloo Server API",
-    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol. \n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
+    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol.\n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
     "version": "0.1.5",
     "contact": {
       "name": "FROSTR Organization",
@@ -20,12 +20,16 @@
     },
     {
       "url": "http://localhost:8002",
-      "description": "Local development server (HTTP for local development only)"
+      "description": "Local development server (HTTP for local development only)",
+      "x-internal-only": true
     }
   ],
   "security": [
     {
       "apiKeyAuth": []
+    },
+    {
+      "bearerAuth": []
     },
     {
       "basicAuth": []
@@ -67,11 +71,14 @@
   "paths": {
     "/api/status": {
       "get": {
+        "operationId": "getServerStatus",
         "summary": "Get server status",
         "description": "Returns the current status of the server and Bifrost node, including comprehensive health monitoring information",
         "tags": [
           "Status"
         ],
+        "security": [],
+        "x-public": true,
         "responses": {
           "200": {
             "description": "Server status retrieved successfully",
@@ -85,7 +92,10 @@
                   "nodeActive": true,
                   "hasCredentials": true,
                   "relayCount": 2,
-                  "relays": ["wss://relay.primal.net", "wss://relay.damus.io"],
+                  "relays": [
+                    "wss://relay.primal.net",
+                    "wss://relay.damus.io"
+                  ],
                   "timestamp": "2025-01-20T12:00:00.000Z",
                   "health": {
                     "isHealthy": true,
@@ -107,11 +117,14 @@
     },
     "/api/auth/status": {
       "get": {
+        "operationId": "getAuthStatus",
         "summary": "Get authentication status",
         "description": "Returns the current authentication configuration and available methods",
         "tags": [
           "Authentication"
         ],
+        "security": [],
+        "x-public": true,
         "responses": {
           "200": {
             "description": "Authentication status retrieved successfully",
@@ -139,6 +152,7 @@
     },
     "/api/auth/login": {
       "post": {
+        "operationId": "authenticateUser",
         "summary": "Authenticate user",
         "description": "Login with username/password or API key to get a session",
         "tags": [
@@ -220,6 +234,7 @@
     },
     "/api/auth/logout": {
       "post": {
+        "operationId": "logoutUser",
         "summary": "Logout user",
         "description": "Clear the current session",
         "tags": [
@@ -249,12 +264,16 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
     },
     "/api/env": {
       "get": {
+        "operationId": "getEnvironmentVariables",
         "summary": "Get environment variables",
         "description": "Retrieve current environment configuration (whitelisted variables only)",
         "tags": [
@@ -271,7 +290,9 @@
                 "example": {
                   "GROUP_CRED": "bfgroup1qqsqp...",
                   "SHARE_CRED": "bfshare1qqsqp...",
-                  "RELAYS": ["wss://relay.primal.net"],
+                  "RELAYS": [
+                    "wss://relay.primal.net"
+                  ],
                   "GROUP_NAME": "my-signing-group"
                 }
               }
@@ -286,6 +307,7 @@
         }
       },
       "post": {
+        "operationId": "updateEnvironmentVariables",
         "summary": "Update environment variables",
         "description": "Update environment configuration (whitelisted variables only)",
         "tags": [
@@ -301,7 +323,10 @@
               "example": {
                 "GROUP_CRED": "bfgroup1qqsqp...",
                 "SHARE_CRED": "bfshare1qqsqp...",
-                "RELAYS": ["wss://relay.primal.net", "wss://relay.damus.io"],
+                "RELAYS": [
+                  "wss://relay.primal.net",
+                  "wss://relay.damus.io"
+                ],
                 "GROUP_NAME": "my-signing-group"
               }
             }
@@ -344,11 +369,7 @@
                   "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
-                  "success": false,
-                  "message": "No valid environment variables provided",
-                  "rejectedKeys": [
-                    "INVALID_KEY"
-                  ]
+                  "error": "No valid environment variables provided"
                 }
               }
             }
@@ -364,6 +385,7 @@
     },
     "/api/env/delete": {
       "post": {
+        "operationId": "deleteEnvironmentVariables",
         "summary": "Delete environment variables",
         "description": "Remove specified environment variables",
         "tags": [
@@ -447,6 +469,7 @@
     },
     "/api/peers": {
       "get": {
+        "operationId": "listPeers",
         "summary": "List peers in signing group",
         "description": "Get all peers from the group credential with their current status",
         "tags": [
@@ -518,6 +541,7 @@
     },
     "/api/peers/self": {
       "get": {
+        "operationId": "getSelfPublicKey",
         "summary": "Get self public key",
         "description": "Get the public key of this node from the share credential",
         "tags": [
@@ -571,6 +595,7 @@
     },
     "/api/peers/ping": {
       "post": {
+        "operationId": "pingPeers",
         "summary": "Ping peers",
         "description": "Ping specific peer or all peers to check connectivity",
         "tags": [
@@ -613,7 +638,7 @@
                 "pingSpecific": {
                   "summary": "Ping specific peer",
                   "value": {
-                    "target": "02abcd1234..."
+                    "target": "031234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
                   }
                 }
               }
@@ -711,6 +736,7 @@
     },
     "/api/recover": {
       "post": {
+        "operationId": "recoverSecretKey",
         "summary": "Recover secret key from shares",
         "description": "Use threshold shares to recover the original secret key",
         "tags": [
@@ -865,6 +891,7 @@
     },
     "/api/recover/validate": {
       "post": {
+        "operationId": "validateCredentials",
         "summary": "Validate credentials",
         "description": "Validate group or share credentials without performing recovery",
         "tags": [
@@ -940,13 +967,22 @@
                       "type": "object",
                       "properties": {
                         "threshold": {
-                          "type": ["integer", "null"]
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
                         },
                         "totalShares": {
-                          "type": ["integer", "null"]
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
                         },
                         "idx": {
-                          "type": ["integer", "null"]
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
                         }
                       }
                     }
@@ -988,6 +1024,7 @@
     },
     "/api/shares": {
       "get": {
+        "operationId": "getStoredShares",
         "summary": "Get stored shares",
         "description": "Retrieve currently stored share information",
         "tags": [
@@ -1025,6 +1062,7 @@
         }
       },
       "post": {
+        "operationId": "storeNewShare",
         "summary": "Store new share",
         "description": "Save share and group credentials",
         "tags": [
@@ -1119,6 +1157,7 @@
     },
     "/api/events": {
       "get": {
+        "operationId": "getEventStream",
         "summary": "Server-Sent Events stream",
         "description": "Subscribe to real-time server events using Server-Sent Events.\n\nEvents include:\n- `system`: Server status changes\n- `sign`: Signature requests and responses\n- `bifrost`: Peer connections and network events\n- `ecdh`: ECDH protocol events\n\nNote: This endpoint uses Server-Sent Events (SSE) and requires EventSource client.\n",
         "tags": [
@@ -1142,6 +1181,565 @@
           }
         }
       }
+    },
+    "/api/sign": {
+      "post": {
+        "operationId": "signEvent",
+        "summary": "Threshold sign a Nostr event ID",
+        "description": "Creates a Schnorr signature for a Nostr event ID using FROSTR threshold signing. Provide either `message` (32-byte hex id) or an `event` template with a valid 64-hex `pubkey`.\n",
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "basicAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "tags": [
+          "Crypto"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SignRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Signature produced",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SignResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "502": {
+            "$ref": "#/components/responses/BadGateway"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "description": "Signing timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nip44/encrypt": {
+      "post": {
+        "operationId": "nip44Encrypt",
+        "summary": "Encrypt with NIP‑44 (ECDH + symmetric)",
+        "tags": [
+          "Crypto"
+        ],
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "basicAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip44Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ciphertext",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NipXXResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "description": "ECDH timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nip44/decrypt": {
+      "post": {
+        "operationId": "nip44Decrypt",
+        "summary": "Decrypt with NIP‑44",
+        "tags": [
+          "Crypto"
+        ],
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "basicAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip44Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Plaintext",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NipXXResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "description": "ECDH timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nip04/encrypt": {
+      "post": {
+        "operationId": "nip04Encrypt",
+        "summary": "Encrypt with NIP‑04 (legacy; less secure than NIP‑44)",
+        "tags": [
+          "Crypto"
+        ],
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "basicAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip04Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ciphertext",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NipXXResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "description": "ECDH timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nip04/decrypt": {
+      "post": {
+        "operationId": "nip04Decrypt",
+        "summary": "Decrypt with NIP‑04",
+        "tags": [
+          "Crypto"
+        ],
+        "security": [
+          {
+            "apiKeyAuth": []
+          },
+          {
+            "bearerAuth": []
+          },
+          {
+            "basicAuth": []
+          },
+          {
+            "sessionAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip04Request"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Plaintext",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NipXXResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "429": {
+            "$ref": "#/components/responses/TooManyRequests"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          },
+          "504": {
+            "description": "ECDH timed out",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/nip46/sessions": {
+      "get": {
+        "operationId": "listNip46Sessions",
+        "summary": "List NIP‑46 sessions",
+        "tags": [
+          "NIP‑46"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "history",
+            "schema": {
+              "type": "boolean"
+            },
+            "description": "Include recent_kinds/methods summary"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Nip46Session"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "upsertNip46Session",
+        "summary": "Create or update a NIP‑46 session",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46Session"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Upserted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "session": {
+                      "$ref": "#/components/schemas/Nip46Session"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/nip46/sessions/{pubkey}/policy": {
+      "put": {
+        "operationId": "updateNip46Policy",
+        "summary": "Update session policy",
+        "tags": [
+          "NIP‑46"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PubkeyParam"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46Policy"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/nip46/sessions/{pubkey}/status": {
+      "put": {
+        "operationId": "updateNip46Status",
+        "summary": "Update session status (revoked deletes)",
+        "tags": [
+          "NIP‑46"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PubkeyParam"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "pending",
+                      "active",
+                      "revoked"
+                    ]
+                  },
+                  "touch": {
+                    "type": "boolean",
+                    "description": "Update last_active_at when true"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated or deleted"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/nip46/sessions/{pubkey}": {
+      "delete": {
+        "operationId": "deleteNip46Session",
+        "summary": "Delete a NIP‑46 session",
+        "tags": [
+          "NIP‑46"
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/PubkeyParam"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/nip46/history": {
+      "get": {
+        "operationId": "nip46History",
+        "summary": "Compact NIP‑46 history summary",
+        "tags": [
+          "NIP‑46"
+        ],
+        "responses": {
+          "200": {
+            "description": "History",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Nip46SessionSummary"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1155,7 +1753,7 @@
       "bearerAuth": {
         "type": "http",
         "scheme": "bearer",
-        "description": "Bearer token authentication (alternative to X-API-Key header).\n\n**Security Requirements:**  \n- HTTPS is mandatory in production environments\n- Bearer tokens must be transmitted over encrypted connections only\n- Never include bearer tokens in URL query parameters\n\n**Recommended for Production:**\nOAuth2/OIDC bearer tokens provide better security, token rotation, and scope management compared to static API keys.\n"
+        "description": "Bearer token authentication (alternative to X-API-Key header).\n\n**Security Requirements:**\n- HTTPS is mandatory in production environments\n- Bearer tokens must be transmitted over encrypted connections only\n- Never include bearer tokens in URL query parameters\n\n**Recommended for Production:**\nOAuth2/OIDC bearer tokens provide better security, token rotation, and scope management compared to static API keys.\n"
       },
       "basicAuth": {
         "type": "http",
@@ -1210,12 +1808,18 @@
                 "description": "Whether the node is considered healthy"
               },
               "lastActivity": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "format": "date-time",
                 "description": "Timestamp of last node activity"
               },
               "lastHealthCheck": {
-                "type": ["string", "null"],
+                "type": [
+                  "string",
+                  "null"
+                ],
                 "format": "date-time",
                 "description": "Timestamp of last health check"
               },
@@ -1228,7 +1832,10 @@
                 "description": "Total number of automatic restarts"
               },
               "timeSinceLastActivity": {
-                "type": ["integer", "null"],
+                "type": [
+                  "integer",
+                  "null"
+                ],
                 "description": "Milliseconds since last activity"
               }
             },
@@ -1390,16 +1997,25 @@
             "description": "Whether the peer is currently online"
           },
           "lastSeen": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time",
             "description": "Last time peer was seen online"
           },
           "latency": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "Last measured latency in milliseconds"
           },
           "lastPingAttempt": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time",
             "description": "Last ping attempt timestamp"
           }
@@ -1421,11 +2037,17 @@
             "description": "Target peer's public key"
           },
           "latency": {
-            "type": ["integer", "null"],
+            "type": [
+              "integer",
+              "null"
+            ],
             "description": "Round-trip time in milliseconds"
           },
           "policy": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "properties": {
               "send": {
                 "type": "boolean",
@@ -1438,7 +2060,10 @@
             }
           },
           "error": {
-            "type": ["string", "null"],
+            "type": [
+              "string",
+              "null"
+            ],
             "description": "Error message if ping failed"
           },
           "timestamp": {
@@ -1501,6 +2126,215 @@
         "required": [
           "error"
         ]
+      },
+      "SignRequest": {
+        "type": "object",
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string",
+                "pattern": "^[0-9a-fA-F]{64}$"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          {
+            "type": "object",
+            "properties": {
+              "event": {
+                "$ref": "#/components/schemas/EventTemplateInput"
+              }
+            },
+            "required": [
+              "event"
+            ]
+          }
+        ]
+      },
+      "EventTemplateInput": {
+        "type": "object",
+        "properties": {
+          "pubkey": {
+            "type": "string",
+            "description": "64-hex x-only pubkey",
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "kind": {
+            "type": "integer"
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "content": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "required": [
+          "pubkey",
+          "kind",
+          "created_at"
+        ]
+      },
+      "SignResponse": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Event id (32-byte hex)"
+          },
+          "signature": {
+            "type": "string",
+            "description": "Schnorr signature (64-byte hex)"
+          }
+        },
+        "required": [
+          "id",
+          "signature"
+        ]
+      },
+      "Nip44Request": {
+        "type": "object",
+        "description": "Request body for NIP‑44 encryption/decryption operations",
+        "properties": {
+          "peer_pubkey": {
+            "type": "string",
+            "description": "32-byte x-only pubkey (or 33-byte compressed)",
+            "pattern": "^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{66}$"
+          },
+          "content": {
+            "type": "string",
+            "description": "Payload to process (plaintext for encrypt, ciphertext for decrypt)"
+          }
+        },
+        "required": [
+          "peer_pubkey",
+          "content"
+        ]
+      },
+      "Nip04Request": {
+        "$ref": "#/components/schemas/Nip44Request"
+      },
+      "NipXXResponse": {
+        "type": "object",
+        "properties": {
+          "result": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "result"
+        ]
+      },
+      "Nip46Policy": {
+        "type": "object",
+        "properties": {
+          "methods": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          },
+          "kinds": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "boolean"
+            }
+          }
+        }
+      },
+      "Nip46Profile": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "image": {
+            "type": "string"
+          }
+        }
+      },
+      "Nip46Session": {
+        "type": "object",
+        "description": "Full persisted NIP‑46 session details",
+        "properties": {
+          "pubkey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active"
+            ]
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Nip46Profile"
+          },
+          "relays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Nip46Policy"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "last_active_at": {
+            "type": "string"
+          }
+        }
+      },
+      "Nip46SessionSummary": {
+        "type": "object",
+        "description": "Compact summary of a NIP‑46 session for history views",
+        "properties": {
+          "pubkey": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "last_active_at": {
+            "type": "string"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Nip46Profile"
+          },
+          "recent_kinds": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recent_methods": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
       }
     },
     "responses": {
@@ -1551,26 +2385,66 @@
           }
         }
       },
-      "RateLimitExceeded": {
-        "description": "Rate limit exceeded",
-        "headers": {
-          "Retry-After": {
-            "description": "Seconds to wait before retrying",
-            "schema": {
-              "type": "integer"
-            }
-          }
-        },
+      "NotFound": {
+        "description": "Resource not found",
         "content": {
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ErrorResponse"
-            },
-            "example": {
-              "error": "Rate limit exceeded. Try again later."
             }
           }
         }
+      },
+      "BadRequest": {
+        "description": "Invalid input",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "TooManyRequests": {
+        "description": "Rate limit exceeded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "BadGateway": {
+        "description": "Upstream error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "ServiceUnavailable": {
+        "description": "Node not available",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "PubkeyParam": {
+        "name": "pubkey",
+        "in": "path",
+        "required": true,
+        "schema": {
+          "type": "string"
+        },
+        "description": "Session client pubkey (hex)"
       }
     }
   }

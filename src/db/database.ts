@@ -553,5 +553,56 @@ export const deleteUser = (userId: number | bigint): boolean => {
   }
 };
 
+/**
+ * Delete a user with an atomic last-admin guard.
+ * A user is considered an admin if they have both encrypted credentials stored.
+ * The function prevents deleting the last such admin user via a transaction.
+ */
+export const deleteUserSafely = (
+  userId: number | bigint
+): { success: boolean; error?: string } => {
+  try {
+    db.exec('BEGIN IMMEDIATE');
+
+    const row = db
+      .prepare(
+        `SELECT id, (group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL) AS isAdmin
+         FROM users WHERE id = ?`
+      )
+      .get(userId) as { id: number; isAdmin: 0 | 1 } | undefined;
+
+    if (!row) {
+      db.exec('ROLLBACK');
+      return { success: false, error: 'User not found' };
+    }
+
+    const countRow = db
+      .query(
+        `SELECT COUNT(*) as cnt FROM users WHERE group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL`
+      )
+      .get() as { cnt: number } | null;
+    const adminCount = countRow?.cnt ?? 0;
+
+    if (row.isAdmin === 1 && adminCount <= 1) {
+      db.exec('ROLLBACK');
+      return { success: false, error: 'Cannot delete the last admin user' };
+    }
+
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    const changes = db.query('SELECT changes() as changes').get() as { changes: number } | null;
+    if (!changes || changes.changes === 0) {
+      db.exec('ROLLBACK');
+      return { success: false, error: 'User not found or deletion failed' };
+    }
+
+    db.exec('COMMIT');
+    return { success: true };
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch {}
+    console.error('Error deleting user (safe):', e);
+    return { success: false, error: 'Deletion failed' };
+  }
+};
+
 // Export database instance for advanced operations
 export default db;
