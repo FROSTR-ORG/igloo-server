@@ -191,13 +191,14 @@ export class PersistentRateLimiter {
 
     if (this.db) {
       try {
-        const res = this.db
+        this.db
           .prepare('DELETE FROM rate_limits WHERE last_attempt < ?')
           .run(cutoff);
 
         // Only log if entries were deleted
-        if (res.changes > 0) {
-          console.log(`[RateLimiter] Cleaned up ${res.changes} expired entries`);
+        const changes = this.db.query('SELECT changes() as c').get() as { c: number } | null;
+        if (changes && changes.c > 0) {
+          console.log(`[RateLimiter] Cleaned up ${changes.c} expired entries`);
         }
       } catch (error) {
         console.error('[RateLimiter] Cleanup failed:', error);

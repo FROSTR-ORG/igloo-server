@@ -370,14 +370,15 @@ export function updateStatus(userId: number | bigint, client_pubkey: string, sta
   db.exec('BEGIN')
   try {
     // Update the session status
-    const res = db.prepare(`
+    db.prepare(`
       UPDATE nip46_sessions
       SET status = ?, updated_at = CURRENT_TIMESTAMP, last_active_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_active_at END
       WHERE user_id = ? AND client_pubkey = ?
     `).run(status, touchActive ? 1 : 0, userId, client_pubkey)
 
     // Check if UPDATE affected any rows before logging events
-    if (!res || res.changes === 0) {
+    const changed = db.query('SELECT changes() as c').get() as { c: number } | null
+    if (!changed || changed.c === 0) {
       db.exec('ROLLBACK')
       return null; // No session was updated
     }
@@ -400,10 +401,9 @@ export function updateStatus(userId: number | bigint, client_pubkey: string, sta
 }
 
 export function deleteSession(userId: number | bigint, client_pubkey: string): boolean {
-  const res = db
-    .prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?')
-    .run(userId, client_pubkey)
-  return !!res && res.changes > 0
+  db.prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').run(userId, client_pubkey)
+  const changed = db.query('SELECT changes() as c').get() as { c: number } | null
+  return !!changed && changed.c > 0
 }
 
 /**

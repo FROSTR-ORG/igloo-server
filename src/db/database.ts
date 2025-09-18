@@ -591,8 +591,9 @@ export const deleteUser = (userId: number | bigint): boolean => {
   checkShutdown();
   try {
     const stmt = db.prepare('DELETE FROM users WHERE id = ?');
-    const res = stmt.run(userId);
-    return !!res && res.changes > 0;
+    stmt.run(userId);
+    const result = db.query('SELECT changes() as changes').get() as { changes: number } | null;
+    return !!result && result.changes > 0;
   } catch (error) {
     console.error('Error deleting user:', error);
     return false;
@@ -639,8 +640,9 @@ export const deleteUserSafely = (
       return { success: false, error: 'Cannot delete the last admin user' };
     }
 
-    const res = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-    if (!res || res.changes === 0) {
+    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    const changes = db.query('SELECT changes() as changes').get() as { changes: number } | null;
+    if (!changes || changes.changes === 0) {
       db.exec('ROLLBACK');
       return { success: false, error: 'User not found or deletion failed' };
     }
