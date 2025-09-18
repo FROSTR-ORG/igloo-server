@@ -10,7 +10,15 @@ class Emitter {
   private m = new Map<string, Set<Handler>>()
   on(e: string, h: Handler) { if (!this.m.has(e)) this.m.set(e, new Set()); this.m.get(e)!.add(h) }
   off(e: string, h: Handler) { this.m.get(e)?.delete(h) }
-  emit(e: string, ...a: any[]) { this.m.get(e)?.forEach(h => { try { h(...a) } catch {} }) }
+  emit(e: string, ...a: any[]) { 
+    this.m.get(e)?.forEach(h => { 
+      try { 
+        h(...a) 
+      } catch (err) {
+        console.error(`Error in event handler for '${e}':`, err);
+      }
+    });
+  }
 }
 
 export class NIP46Controller extends Emitter {
@@ -27,6 +35,7 @@ export class NIP46Controller extends Emitter {
   private activeSessions: SignerSession[] = []
   private pendingSessions: SignerSession[] = []
   private promotionChains = new Map<string, Promise<void>>()
+  private zodLoggedOnce = false
 
   constructor(config: NIP46Config) {
     super()
@@ -60,8 +69,11 @@ export class NIP46Controller extends Emitter {
     this.agent.socket?.on?.('error', (e: any) => {
       const msg = e instanceof Error ? e.message : String(e)
       if (msg && msg.includes('_parse is not a function')) {
-        // swallow and let 'bounced' path handle it
-        console.warn('[NIP46] Ignored zod interop error:', msg)
+        // swallow and let 'bounced' path handle it; log once in development
+        if (!this.zodLoggedOnce && process.env.NODE_ENV !== 'production') {
+          this.zodLoggedOnce = true
+          try { console.debug('[NIP46] Ignored zod interop error:', msg) } catch {}
+        }
         return
       }
       this.emit('error', e instanceof Error ? e : new Error(String(e)))
@@ -70,12 +82,24 @@ export class NIP46Controller extends Emitter {
     this.agent.socket?.on?.('bounced', async (event: any, reason: any) => {
       try {
         const payload = await this.decryptEnvelope(event)
-        const msg = JSON.parse(payload)
+
+        // Add specific error handling for JSON parsing to prevent vulnerability
+        let msg;
+        try {
+          msg = JSON.parse(payload)
+        } catch (parseErr) {
+          console.error('[NIP46] Failed to parse decrypted payload:', parseErr)
+          return  // Exit early without triggering generic error handling
+        }
+
         // Normalize to request shape the rest of the controller expects
         const req = { id: msg?.id, method: msg?.method, params: msg?.params || [], env: { pubkey: event?.pubkey }, pubkey: event?.pubkey }
-        // CONNECT: ack + promote session
+        // CONNECT: echo provided secret when present; otherwise 'ack'
         if (req.method === 'connect') {
-          try { await this.agent.socket.send({ id: req.id, result: 'ack' }, event?.pubkey) } catch {}
+          let secret: string | undefined
+          try { secret = Array.isArray(req.params) && typeof req.params[1] === 'string' ? req.params[1] : undefined } catch {}
+          const result = secret && secret.length > 0 ? secret : 'ack'
+          try { await this.agent.socket.send({ id: req.id, result }, event?.pubkey) } catch {}
           const sess = this.sessionFromReq(req)
           const pub = this.getReqPubkey(req) || sess.pubkey
           await this.promoteToActive(pub, sess)
@@ -110,10 +134,13 @@ export class NIP46Controller extends Emitter {
           this.emit('session:pending')
         }
 
-        // CONNECT is auto-acked per NIP-46
+        // CONNECT: echo provided secret when present; otherwise 'ack'
         if (req.method === 'connect') {
-          try { await this.agent.socket.accept(req, 'ack') } catch {}
           const pub = this.getReqPubkey(req) || sess.pubkey
+          let secret: string | undefined
+          try { secret = Array.isArray(req.params) && typeof req.params[1] === 'string' ? req.params[1] : undefined } catch {}
+          const result = secret && secret.length > 0 ? secret : 'ack'
+          try { await this.agent.socket.send({ id: req.id, result }, pub) } catch {}
           await this.promoteToActive(pub, sess)
           return
         }
@@ -142,6 +169,12 @@ export class NIP46Controller extends Emitter {
   }
 
   getIdentityPubkey() { return this.identityPubkey }
+  getTransportPubkey(): string | null {
+    try {
+      const pk = this.transport?.get_pubkey?.()
+      return typeof pk === 'string' ? pk : null
+    } catch { return null }
+  }
 
   getPendingRequests(): PermissionRequest[] { return [...this.requests] }
   getActiveSessions(): SignerSession[] { return [...this.activeSessions] }
@@ -155,9 +188,7 @@ export class NIP46Controller extends Emitter {
     try {
       if (!this.lib || !this.agent) throw new Error('Signer not initialized')
       const original = this.reqById.get(id)
-      await this.processRequest(original)
-      const pubkey = this.getReqPubkey(original)
-      if (pubkey) this.autoGrantOnApprove(pubkey, req)
+      await this.processRequest(original) // single-serve approval only; does not modify policy
     } catch (e) {
       this.emit('error', e)
     } finally {
@@ -205,6 +236,15 @@ export class NIP46Controller extends Emitter {
     await this.loadLib()
     const { InviteEncoder } = this.lib as any
     if (!this.agent) throw new Error('Signer not initialized')
+
+    // Example nostrconnect:// URL with client metadata (per NIP-46):
+    // nostrconnect://83f3b2ae6aa368e8275397b9c26cf550101d63ebaab900d19dd4a4429f5ad8f5?
+    //   relay=wss%3A%2F%2Frelay.damus.io&
+    //   secret=abc123&
+    //   name=Damus&
+    //   url=https%3A%2F%2Fdamus.io&
+    //   image=https%3A%2F%2Fdamus.io%2Fimg%2Flogo.png
+
     // Decode separately so we can surface accurate errors
     let invite: any
     try {
@@ -213,17 +253,31 @@ export class NIP46Controller extends Emitter {
       const msg = e?.message || 'invalid'
       throw new Error(`Invalid nostrconnect string: ${msg}`)
     }
+
+    const requestedFromUri = this.parseRequestedFromUri(connectString, invite)
+
     // Attempt handshake: subscribe and send accept(secret)
     try {
       await this.agent.socket.subscribe(invite.relays)
       const accept = { id: invite.secret, result: invite.secret }
       await this.agent.socket.send(accept, invite.pubkey)
       // Track local pending session; will be promoted on first request
+      // Extract client's profile from the invite (the app that's connecting to us)
+      // The library parses NIP-46 client metadata (name, url, image) into invite.profile
+      const clientName = invite.profile?.name || invite.name || undefined
+      const clientUrl = invite.profile?.url || invite.url || undefined
+      const clientImage = invite.profile?.image || invite.image || undefined
+
       const pending: SignerSession = {
         pubkey: invite.pubkey,
         created_at: Math.floor(Date.now() / 1000),
-        profile: { name: invite.profile?.name, url: invite.profile?.url, image: invite.profile?.image },
+        profile: {
+          name: clientName,
+          url: clientUrl,
+          image: clientImage
+        },
         policy: this.config.policy,
+        requested: requestedFromUri || undefined,
         status: 'pending'
       }
       if (!this.pendingSessions.find(s => s.pubkey === pending.pubkey) && !this.activeSessions.find(s => s.pubkey === pending.pubkey)) {
@@ -234,6 +288,8 @@ export class NIP46Controller extends Emitter {
         })
         this.emit('session:pending')
       }
+      // Promote to active immediately after handshake; some clients don't send a follow-up request right away
+      try { await this.promoteToActive(invite.pubkey, pending) } catch {}
       return true
     } catch (e: any) {
       const msg = String(e?.message || e || 'unknown')
@@ -256,12 +312,90 @@ export class NIP46Controller extends Emitter {
   private sessionFromReq(req: any): SignerSession {
     const p = req?.session?.profile || req?.profile || {}
     const k = req?.session?.pubkey || req?.pubkey || req?.env?.pubkey || req?.client_pubkey || 'unknown'
-    return { pubkey: k, created_at: Math.floor(Date.now() / 1000), profile: { name: p?.name, url: p?.url, image: p?.image }, policy: this.config.policy }
+    const requested = this.parseRequestedFromConnectParams(req?.params)
+    return {
+      pubkey: k,
+      created_at: Math.floor(Date.now() / 1000),
+      profile: {
+        name: p?.name,
+        url: p?.url,
+        image: p?.image
+      },
+      policy: this.config.policy,
+      requested: requested || undefined
+    }
   }
   private sessionFromJoin(ev: any): SignerSession {
     const k = ev?.pubkey || ev?.client_pubkey || 'unknown'
     const p = ev?.profile || {}
-    return { pubkey: k, created_at: Math.floor(Date.now() / 1000), profile: { name: p?.name, url: p?.url, image: p?.image }, policy: this.config.policy, status: 'pending' }
+    return {
+      pubkey: k,
+      created_at: Math.floor(Date.now() / 1000),
+      profile: {
+        name: p?.name,
+        url: p?.url,
+        image: p?.image
+      },
+      policy: this.config.policy,
+      status: 'pending'
+    }
+  }
+
+  // Parse requested permissions from either a nostrconnect URI (perms or policy)
+  // or from connect() params[2] which may be a CSV string or policy object.
+  private parseRequestedFromUri(uri: string, invite?: any): PermissionPolicy | null {
+    // Prefer explicitly-provided policy on the invite if present
+    const fromInvite = this.normalizeRequested(invite?.policy)
+    if (fromInvite) return fromInvite
+    try {
+      if (typeof uri !== 'string' || !uri.startsWith('nostrconnect://')) return null
+      const httpish = 'http://' + uri.slice('nostrconnect://'.length)
+      const u = new URL(httpish)
+      const perms = u.searchParams.get('perms')
+      if (!perms) return null
+      return this.normalizeRequested(perms)
+    } catch { return null }
+  }
+
+  private parseRequestedFromConnectParams(params: any): PermissionPolicy | null {
+    try {
+      if (!Array.isArray(params)) return null
+      const maybe = params[2]
+      return this.normalizeRequested(maybe)
+    } catch { return null }
+  }
+
+  private normalizeRequested(input: any): PermissionPolicy | null {
+    const policy: PermissionPolicy = { methods: {}, kinds: {} }
+    if (!input) return null
+    // If object in { methods, kinds } shape
+    if (typeof input === 'object' && !Array.isArray(input)) {
+      if (input.methods && typeof input.methods === 'object') {
+        for (const k of Object.keys(input.methods)) if (input.methods[k]) policy.methods[k] = true
+      }
+      if (input.kinds && typeof input.kinds === 'object') {
+        for (const k of Object.keys(input.kinds)) if (input.kinds[k]) policy.kinds[k] = true
+      }
+      return (Object.keys(policy.methods).length || Object.keys(policy.kinds).length) ? policy : null
+    }
+    // If string (CSV like "nip44_encrypt,sign_event:1")
+    if (typeof input === 'string') {
+      const tokens = input.split(',').map(s => s.trim()).filter(Boolean)
+      for (const t of tokens) {
+        const [name, arg] = t.split(':')
+        if (!name) continue
+        if (name === 'sign_event') {
+          if (arg && /^\d+$/.test(arg)) policy.kinds[arg] = true
+          else policy.methods['sign_event'] = true // unspecified kinds; informational only
+        } else {
+          policy.methods[name] = true
+        }
+      }
+      return (Object.keys(policy.methods).length || Object.keys(policy.kinds).length) ? policy : null
+    }
+    // If array of strings
+    if (Array.isArray(input)) return this.normalizeRequested(input.join(','))
+    return null
   }
 
   private async loadLib() {
@@ -330,51 +464,62 @@ export class NIP46Controller extends Emitter {
     if (!this.agent) throw new Error('Signer not initialized')
     const method = original?.method
     this.ensureActive(this.getReqPubkey(original))
-    switch (method) {
-      case 'get_public_key': {
-        const pk = this.serverSigner.get_pubkey() || await this.serverSigner.loadPublicKey()
-        await this.agent.socket.send({ id: original.id, result: pk }, this.getReqPubkey(original))
-        await this.updateSessionActivity(this.getReqPubkey(original))
-        return
-      }
-      case 'sign_event': {
-        const tmpl = JSON.parse(original.params?.[0])
-        const signed = await this.serverSigner.sign_event(tmpl)
-        await this.agent.socket.send({ id: original.id, result: JSON.stringify(signed) }, this.getReqPubkey(original))
-        await this.updateSessionActivity(this.getReqPubkey(original))
-        return
-      }
-      case 'nip44_encrypt': {
-        const [peer, plaintext] = original.params || []
-        const ct = await this.serverSigner.nip44_encrypt(peer, plaintext)
-        await this.agent.socket.send({ id: original.id, result: ct }, this.getReqPubkey(original))
-        await this.updateSessionActivity(this.getReqPubkey(original))
-        return
-      }
-      case 'nip44_decrypt': {
-        const [peer, ciphertext] = original.params || []
-        const pt = await this.serverSigner.nip44_decrypt(peer, ciphertext)
-        await this.agent.socket.send({ id: original.id, result: pt }, this.getReqPubkey(original))
-        await this.updateSessionActivity(this.getReqPubkey(original))
-        return
-      }
-      case 'nip04_encrypt':
-      case 'nip04_decrypt': {
-        if (method === 'nip04_encrypt') {
-          const [peer, plaintext] = original.params || []
-          const ct = await this.serverSigner.nip04_encrypt(peer, plaintext)
-          await this.agent.socket.send({ id: original.id, result: ct }, this.getReqPubkey(original))
-        } else {
-          const [peer, ciphertext] = original.params || []
-          const pt = await this.serverSigner.nip04_decrypt(peer, ciphertext)
-          await this.agent.socket.send({ id: original.id, result: pt }, this.getReqPubkey(original))
+    try {
+      switch (method) {
+        case 'get_public_key': {
+          let pk;
+          try {
+            pk = this.serverSigner.get_pubkey();
+          } catch (e) {
+            pk = await this.serverSigner.loadPublicKey();
+          }
+          await this.agent.socket.send({ id: original.id, result: pk }, this.getReqPubkey(original))
+          await this.updateSessionActivity(this.getReqPubkey(original))
+          return
         }
-        await this.updateSessionActivity(this.getReqPubkey(original))
-        return
+        case 'sign_event': {
+          const tmpl = JSON.parse(original.params?.[0])
+          const signed = await this.serverSigner.sign_event(tmpl)
+          await this.agent.socket.send({ id: original.id, result: JSON.stringify(signed) }, this.getReqPubkey(original))
+          await this.updateSessionActivity(this.getReqPubkey(original))
+          return
+        }
+        case 'nip44_encrypt': {
+          const [peer, plaintext] = original.params || []
+          const ct = await this.serverSigner.nip44_encrypt(peer, plaintext)
+          await this.agent.socket.send({ id: original.id, result: ct }, this.getReqPubkey(original))
+          await this.updateSessionActivity(this.getReqPubkey(original))
+          return
+        }
+        case 'nip44_decrypt': {
+          const [peer, ciphertext] = original.params || []
+          const pt = await this.serverSigner.nip44_decrypt(peer, ciphertext)
+          await this.agent.socket.send({ id: original.id, result: pt }, this.getReqPubkey(original))
+          await this.updateSessionActivity(this.getReqPubkey(original))
+          return
+        }
+        case 'nip04_encrypt':
+        case 'nip04_decrypt': {
+          if (method === 'nip04_encrypt') {
+            const [peer, plaintext] = original.params || []
+            const ct = await this.serverSigner.nip04_encrypt(peer, plaintext)
+            await this.agent.socket.send({ id: original.id, result: ct }, this.getReqPubkey(original))
+          } else {
+            const [peer, ciphertext] = original.params || []
+            const pt = await this.serverSigner.nip04_decrypt(peer, ciphertext)
+            await this.agent.socket.send({ id: original.id, result: pt }, this.getReqPubkey(original))
+          }
+          await this.updateSessionActivity(this.getReqPubkey(original))
+          return
+        }
+        default: {
+          await this.agent.socket.send({ id: original.id, result: null }, this.getReqPubkey(original))
+        }
       }
-      default: {
-        await this.agent.socket.send({ id: original.id, result: null }, this.getReqPubkey(original))
-      }
+    } catch (e: any) {
+      const msg = e?.message || 'Operation failed'
+      try { await this.agent.socket.send({ id: original.id, error: msg }, this.getReqPubkey(original)) } catch {}
+      this.emit('error', e instanceof Error ? e : new Error(String(e)))
     }
   }
 
@@ -416,7 +561,9 @@ export class NIP46Controller extends Emitter {
       this.pendingSessions = this.pendingSessions.filter(s => s.pubkey !== pubkey)
 
       const existing = this.activeSessions.find(s => s.pubkey === pubkey)
-      const desiredPolicy = base.policy || this.config.policy
+      // Preserve any existing per-session policy when promoting again.
+      // Falling back only if we truly don't have one.
+      const desiredPolicy = existing?.policy || base.policy || this.config.policy
       if (existing) {
         // Compute if anything actually changed (status/policy/profile)
         const statusChanged = existing.status !== 'active'
@@ -454,15 +601,17 @@ export class NIP46Controller extends Emitter {
   private async withPromotionLock<T>(pubkey: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.promotionChains.get(pubkey) || Promise.resolve()
     const current = prev.then(() => fn())
-    // Set current so the next caller waits on this one
-    this.promotionChains.set(pubkey, current.then(() => {}).catch(() => {}))
+    // Create a chainPromise that will be stored in the map
+    const chainPromise = current.then(() => {}).catch(() => {})
+    // Set chainPromise so the next caller waits on this one
+    this.promotionChains.set(pubkey, chainPromise)
     try {
       const result = await current
       return result
     } finally {
       // Clean up if we're the latest in chain
       const stored = this.promotionChains.get(pubkey)
-      if (stored === current) this.promotionChains.delete(pubkey)
+      if (stored === chainPromise) this.promotionChains.delete(pubkey)
     }
   }
 
@@ -505,6 +654,7 @@ export class NIP46Controller extends Emitter {
     const sessions = Array.isArray(data.sessions) ? data.sessions : []
     const active: SignerSession[] = []
     const pending: SignerSession[] = []
+    const relaySet = new Set<string>()
     for (const s of sessions) {
       const sess: SignerSession = {
         pubkey: s.pubkey,
@@ -515,10 +665,21 @@ export class NIP46Controller extends Emitter {
       }
       if (sess.status === 'active') active.push(sess)
       else pending.push(sess)
+      if (Array.isArray(s.relays)) {
+        for (const r of s.relays) {
+          if (typeof r === 'string' && r.startsWith('ws')) relaySet.add(r)
+        }
+      }
     }
     this.activeSessions = active
     this.pendingSessions = pending
     if (active.length || pending.length) this.emit('session:updated')
+    // Subscribe to any relays saved with sessions to continue receiving requests after reload
+    if (relaySet.size > 0) {
+      try { await this.agent?.socket?.subscribe?.(Array.from(relaySet)) } catch (err) {
+        console.warn('[NIP46] Failed to subscribe to persisted session relays:', err)
+      }
+    }
   }
 
   private async saveSession(session: SignerSession, relays?: string[]) {

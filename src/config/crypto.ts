@@ -37,7 +37,8 @@ export const VALIDATION = {
   MAX_USERNAME_LENGTH: 50,
   MIN_USERNAME_LENGTH: 3,
   // Regex for password validation: uppercase, lowercase, digit, special char (length checked separately)
-  PASSWORD_REGEX: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])\S+$/,
+  // Restricts to safe character set: letters, digits, and specific special characters
+  PASSWORD_REGEX: /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[a-zA-Z\d@$!%*?&]+$/,
 } as const;
 
 // Export type-safe config objects

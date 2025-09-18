@@ -6,6 +6,7 @@ import { Copy, Check, X, HelpCircle, ChevronDown, ChevronRight, User } from "luc
 import { EventLog, type LogEntryData } from "./EventLog"
 import { Input } from "./ui/input"
 import PeerList from "./ui/peer-list"
+import Spinner from "./ui/spinner"
 // Import real igloo-core functions
 import { 
   validateShare, 
@@ -764,9 +765,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-center py-12">
-          <div className="text-blue-300">Loading signer configuration...</div>
-        </div>
+        <Spinner label="Loading signer configuration…" size="md" />
       </div>
     );
   }

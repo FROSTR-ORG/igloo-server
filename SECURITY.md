@@ -227,10 +227,12 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8002
 ```
 
 **Security Impact**:
-- **Without `ALLOWED_ORIGINS`**: Defaults to wildcard `*` (all origins allowed) - ⚠️ **Security Risk**
+- **Without `ALLOWED_ORIGINS`**:
+  - Development: Defaults to wildcard `*` (all origins allowed) for easier testing
+  - **Production: CORS requests are BLOCKED** - ✅ **Secure by default**
 - **With `ALLOWED_ORIGINS`**: Only specified domains can make API requests - ✅ **Secure**
 
-⚠️ **Note**: The server shows a warning in production if `ALLOWED_ORIGINS` is not configured.
+🔒 **Security Enforcement**: As of the latest version, the server will **block all CORS requests** in production if `ALLOWED_ORIGINS` is not configured. This prevents accidental security vulnerabilities from misconfiguration.
 
 **Common Configurations**:
 ```bash

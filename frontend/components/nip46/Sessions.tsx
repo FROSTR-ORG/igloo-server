@@ -51,7 +51,9 @@ export function Sessions({ controller }: SessionsProps) {
       const sessions: any[] = Array.isArray(data.sessions) ? data.sessions : []
       const map: Record<string, any> = {}
       for (const s of sessions) {
-        map[s.pubkey] = { recent_kinds: s.recent_kinds, recent_methods: s.recent_methods, last_active_at: s.last_active_at, status: s.status }
+        const uniqueKinds = Array.isArray(s.recent_kinds) ? Array.from(new Set(s.recent_kinds)) : []
+        const uniqueMethods = Array.isArray(s.recent_methods) ? Array.from(new Set(s.recent_methods)) : []
+        map[s.pubkey] = { recent_kinds: uniqueKinds, recent_methods: uniqueMethods, last_active_at: s.last_active_at, status: s.status }
       }
       setHistory(map)
     } catch {}
@@ -131,7 +133,7 @@ export function Sessions({ controller }: SessionsProps) {
                         {session.profile.image && isValidImageUrl(session.profile.image) && (
                           <img src={session.profile.image} alt={`${session.profile.name || 'Unknown'} icon`} className="session-icon" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
                         )}
-                        <span className="session-name">{session.profile.name ?? 'Unknown'}</span>
+                        <span className="session-name">{session.profile.name || 'Unknown Application'}</span>
                       </div>
                       {session.profile.url && (
                         <a href={session.profile.url} target="_blank" rel="noopener noreferrer" className="session-url">{new URL(session.profile.url).hostname}</a>
@@ -155,7 +157,7 @@ export function Sessions({ controller }: SessionsProps) {
                     </button>
                   </div>
 
-                  {(history[session.pubkey]?.recent_kinds?.length || history[session.pubkey]?.recent_methods?.length) && (
+                  {(((history[session.pubkey]?.recent_kinds?.length ?? 0) + (history[session.pubkey]?.recent_methods?.length ?? 0)) > 0) && (
                     <div className="mt-2 text-xs text-gray-400">
                       {history[session.pubkey]?.recent_kinds?.length ? (
                         <div>
@@ -181,6 +183,7 @@ export function Sessions({ controller }: SessionsProps) {
                       session={session}
                       editingPermissions={editingPermissions[session.pubkey] || session.policy || { methods: {}, kinds: {}}}
                       newEventKind={newEventKind[session.pubkey] || ''}
+                      requestedPermissions={session.requested}
                       onPermissionChange={(p) => handlePermissionChange(session.pubkey, p)}
                       onEventKindChange={(k) => handleEventKindChange(session.pubkey, k)}
                       onUpdateSession={() => handleUpdateSession(session.pubkey)}

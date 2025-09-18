@@ -91,6 +91,7 @@ wscat -c ws://localhost:8002/api/events
    - **Routes** (`src/routes/nip46.ts`): Session CRUD, policy updates, history
    - **Signing** (`src/routes/sign.ts`): Message and event signing endpoints
    - **Encryption** (`src/routes/nip44.ts`): NIP-44 encrypt/decrypt via Bifrost
+   - **Crypto Utils** (`src/routes/crypto-utils.ts`): Shared ECDH and key conversion utilities
 5. **Routes (`src/routes/index.ts`)**: Unified router handling all API endpoints (auth, env, peers, recovery, shares, status, user, onboarding, nip46, sign, nip44)
 6. **Frontend (`frontend/`)**: React TypeScript app with Tailwind CSS, esbuild bundling
 7. **Ephemeral Relay (`src/class/relay.ts`)**: In-memory Nostr relay for testing (not for production)
@@ -111,6 +112,7 @@ wscat -c ws://localhost:8002/api/events
   - `active`: Authenticated and processing requests
   - `revoked`: Deleted from database (not persisted)
 - **Permission Evaluation**: Per-session policies checked before request processing
+- **Rate Limiting**: Token bucket algorithm in `src/utils/rate-limiter.ts` with IP-based tracking
 
 ### Node Restart System
 
@@ -135,6 +137,7 @@ wscat -c ws://localhost:8002/api/events
   - Uses ephemeral keypair for probing
   - Immediate connection cleanup after probe
 - **Per-relay error isolation**: SimplePool.publish patched to catch per-relay rejections
+- **Node lock management**: Uses `src/utils/node-lock.ts` to prevent concurrent node operations
 - **Production-ready**: Minimal overhead, clear logging, resilient to edge cases
 
 ### Security Architecture
@@ -146,6 +149,11 @@ wscat -c ws://localhost:8002/api/events
 - Rate limiting (configurable via `RATE_LIMIT_*` env vars)
 - **Auto-generated SESSION_SECRET**: Automatically creates and persists in `data/.session-secret` if not provided
 - **Auth Factory Pattern**: (`src/routes/auth-factory.ts`) Secure ephemeral storage using WeakMaps to prevent secret leakage
+- **Crypto Configuration** (`src/config/crypto.ts`):
+  - PBKDF2: 200,000 iterations, SHA-256, 32-byte keys
+  - AES-256-GCM: 12-byte IV, 16-byte auth tag
+  - Argon2id: 64MB memory cost, 3 iterations for password hashing
+  - Password validation: 8-128 chars, must include uppercase, lowercase, digit, special char
 
 ### Dual-Mode Operation
 
@@ -240,6 +248,25 @@ CREATE TABLE nip46_session_events (
   detail TEXT,       -- method name or kind number
   value TEXT,        -- new status if relevant
   created_at DATETIME
+);
+
+-- User roles table (from migration 20250916_0002)
+CREATE TABLE user_roles (
+  id INTEGER PRIMARY KEY,
+  user_id INTEGER REFERENCES users(id),
+  role TEXT NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(user_id, role)
+);
+
+-- Rate limits table (from migration 20250916_0005)
+CREATE TABLE rate_limits (
+  id INTEGER PRIMARY KEY,
+  identifier TEXT NOT NULL UNIQUE,
+  tokens INTEGER NOT NULL,
+  last_refill DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 ```
 

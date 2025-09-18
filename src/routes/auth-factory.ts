@@ -1,7 +1,8 @@
 import type { RequestAuth } from './types.js';
+import { vaultGetOnce } from './auth.js';
 
 // WeakMap for storing sensitive data that won't be enumerable or serializable
-const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array }>();
+const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array; sessionId?: string; hasPassword?: boolean }>();
 
 /**
  * Creates a RequestAuth object with secure ephemeral storage for sensitive data.
@@ -9,9 +10,11 @@ const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array }>();
  * the data after first access to prevent leakage through spread/JSON/structuredClone.
  */
 export function createRequestAuth(params: {
-  userId?: string | number | bigint;
+  userId?: string | number; // Only JSON-serializable types
   authenticated: boolean;
   derivedKey?: Uint8Array | string | null; // Accept binary or hex string derived key
+  sessionId?: string; // Session ID for lazy vault retrieval
+  hasPassword?: boolean; // Flag indicating if password is available in vault
 }): RequestAuth {
   const auth: RequestAuth = {
     userId: params.userId,
@@ -19,8 +22,9 @@ export function createRequestAuth(params: {
   };
 
   // Store secrets in WeakMap if provided
+  const secrets: { derivedKey?: Uint8Array; sessionId?: string; hasPassword?: boolean } = {};
+
   if (params.derivedKey != null) {
-    const secrets: { derivedKey?: Uint8Array } = {};
     
     const input = params.derivedKey as Uint8Array | string;
     let bytes: Uint8Array;
@@ -47,37 +51,54 @@ export function createRequestAuth(params: {
     }
     secrets.derivedKey = bytes;
     
+  }
+
+  // Store sessionId for lazy retrieval if provided
+  if (params.sessionId) {
+    secrets.sessionId = params.sessionId;
+  }
+
+  // Store hasPassword flag if provided
+  if (params.hasPassword) {
+    secrets.hasPassword = params.hasPassword;
+  }
+
+  // Only store in WeakMap if we have secrets
+  if (secrets.derivedKey || secrets.sessionId || secrets.hasPassword) {
     secretStorage.set(auth, secrets);
-    
-    // Add secure getter for derivedKey that clears after access
+  }
+
+  // Add secure getter for derivedKey with lazy vault retrieval
+  // Only add if we have a direct key or password-based auth with sessionId
+  if (params.derivedKey != null || (params.sessionId && params.hasPassword)) {
     Object.defineProperty(auth, 'getDerivedKey', {
       enumerable: false,
       configurable: false,
       writable: false,
       value: (): Uint8Array | undefined => {
         const secrets = secretStorage.get(auth);
+
+        // First check if we have a direct derivedKey
         if (secrets?.derivedKey !== undefined) {
-          const originalKey = secrets.derivedKey;
-          
-          // Create a copy to return
-          const keyCopy = new Uint8Array(originalKey);
-          
-          // Zeroize the original key in memory before deletion
-          for (let i = 0; i < originalKey.length; i++) {
-            originalKey[i] = 0;
-          }
-          
-          // Remove from secrets and clean up WeakMap
-          delete secrets.derivedKey;
-          secretStorage.delete(auth);
-          
-          // Return the copy (original is now zeroized)
-          return keyCopy;
+          // Return a copy to prevent external modification
+          // Do NOT clear the key - it's valid for the duration of this request
+          return new Uint8Array(secrets.derivedKey);
         }
+
+        // If no direct key but we have a sessionId, try lazy retrieval from vault
+        if (secrets?.sessionId) {
+          const keyFromVault = vaultGetOnce(secrets.sessionId);
+          if (keyFromVault) {
+            // Cache it in the secrets for subsequent calls within this request
+            secrets.derivedKey = keyFromVault;
+            return new Uint8Array(keyFromVault);
+          }
+        }
+
         return undefined;
       },
     });
   }
-  
+
   return auth;
 }

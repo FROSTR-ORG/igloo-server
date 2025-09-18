@@ -20,7 +20,18 @@ function getAppliedSet(): Set<string> {
 export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { stopOnError?: boolean }): string[] {
   ensureMigrationsTable()
   const applied = getAppliedSet()
-  const dir = path.isAbsolute(migrationsDirRel) ? migrationsDirRel : path.join(process.cwd(), migrationsDirRel)
+
+  // Resolve and canonicalize the migrations directory path
+  const dir = path.resolve(
+    path.isAbsolute(migrationsDirRel) ? migrationsDirRel : path.join(process.cwd(), migrationsDirRel)
+  )
+
+  // Security: Ensure migrations directory is within project boundaries
+  const projectRoot = path.resolve(process.cwd())
+  if (!dir.startsWith(projectRoot + path.sep) && dir !== projectRoot) {
+    throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+  }
+
   if (!existsSync(dir)) return []
   const files = readdirSync(dir)
     .filter(f => f.toLowerCase().endsWith('.sql'))
@@ -42,10 +53,10 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
     const migrate = db.transaction(() => {
       db.exec(sql)
       db.prepare('INSERT INTO schema_migrations (name) VALUES (?)').run(file)
-      appliedNow.push(file)
     })
     try {
       migrate()
+      appliedNow.push(file)
     } catch (e) {
       console.error(`[migrations] Failed to apply ${file}:`, e)
       if (stopOnError) throw e

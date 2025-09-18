@@ -83,6 +83,7 @@ const ERROR_CIRCUIT_CONFIG = parseErrorCircuitConfig();
 // Unhandled error tracking state
 let unhandledErrorTimestamps: number[] = [];
 let isCircuitBreakerTripped = false;
+let circuitBreakerExitCode: number | null = null;
 
 function isBenignRelayErrorMessage(message: string | undefined): boolean {
   if (!message) return false;
@@ -104,7 +105,8 @@ function recordUnhandledErrorAndMaybeExit(source: string, message: string) {
       isCircuitBreakerTripped = true;
       const seconds = Math.round(ERROR_CIRCUIT_CONFIG.WINDOW_MS / 1000);
       addServerLog('error', `Unhandled error circuit breaker tripped (${count}/${ERROR_CIRCUIT_CONFIG.THRESHOLD} in ${seconds}s). Exiting with code ${ERROR_CIRCUIT_CONFIG.EXIT_CODE}.`);
-      setTimeout(() => process.exit(ERROR_CIRCUIT_CONFIG.EXIT_CODE), 10);
+      circuitBreakerExitCode = ERROR_CIRCUIT_CONFIG.EXIT_CODE;
+      setTimeout(() => process.kill(process.pid, 'SIGTERM'), 10);
     }
   } catch {
     // As a last resort, do not throw from the error handler
@@ -135,32 +137,8 @@ let peerStatuses = new Map<string, PeerStatus>();
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
 
-// Global nostr-tools SimplePool.patch: ensure per-relay publish rejections are caught everywhere
-try {
-  const nt: any = await import('nostr-tools');
-  const SP = nt?.SimplePool;
-  if (SP && SP.prototype && !SP.prototype.__iglooPatched) {
-    const original = SP.prototype.publish;
-    SP.prototype.publish = function(relays: string[], event: any, options?: any) {
-      try {
-        const results: Promise<any>[] = original.call(this, relays, event, options);
-        return results.map((p: Promise<any>, idx: number) => p.catch((err: any) => {
-          const reason = err instanceof Error ? err.message : String(err);
-          const url = Array.isArray(relays) ? relays[idx] : undefined;
-          addServerLog('warning', `Relay publish rejected${url ? ` (${url})` : ''}: ${reason}`);
-          return null;
-        }));
-      } catch (e) {
-        addServerLog('warning', 'SimplePool.publish shim encountered an error; returning empty result');
-        return [] as Promise<any>[];
-      }
-    };
-    Object.defineProperty(SP.prototype, '__iglooPatched', { value: true, enumerable: false });
-    addServerLog('system', 'Applied global SimplePool.publish shim');
-  }
-} catch (e) {
-  // Non-fatal; continue without global shim
-}
+// Removed global nostr-tools SimplePool monkey-patch in favor of proxy-based instrumentation
+// See: src/node/manager.ts createInstrumentedNode/createInstrumentedClient/createInstrumentedPool
 
 // Global error guards with circuit breaker
 process.on('unhandledRejection', (reason: any) => {
@@ -214,19 +192,24 @@ try {
 // Fail fast if forbidden env keys are accidentally exposed via utils configuration
 assertNoSessionSecretExposure();
 
-// Initialize database if not in headless mode
-if (!CONST.HEADLESS) {
+// Database initialization function with error propagation
+async function initializeDatabase(): Promise<void> {
+  if (CONST.HEADLESS) {
+    console.log('⚙️  Headless mode enabled - using environment variables for configuration');
+    return;
+  }
+
   // Attempt dynamic import of the database module with explicit error handling
   const validationErrors: string[] = [];
   let importedModule: any = null;
+
   try {
     importedModule = await import('./db/database.js');
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error('❌ Failed to import database module:', message);
     validationErrors.push(`dynamic import error: ${message}`);
   }
-  
+
   if (!importedModule) {
     validationErrors.push('module failed to load');
   } else {
@@ -239,44 +222,45 @@ if (!CONST.HEADLESS) {
   }
 
   if (validationErrors.length > 0) {
-    console.error('❌ Database module validation failed:');
-    for (const issue of validationErrors) console.error(`   - ${issue}`);
-    process.exit(1);
+    throw new Error(`Database module validation failed: ${validationErrors.join(', ')}`);
   }
 
   dbModule = importedModule as unknown as DatabaseModule;
-
   console.log('🗄️  Database mode enabled - using SQLite for user management');
 
   // Enforce ADMIN_SECRET only on first-run (when database is uninitialized)
-  // After initial setup, admin operations are protected by user authentication
-  // The ADMIN_SECRET is intentionally not required for normal operations to prevent
-  // it from being stored in production environments after setup
   const isSecretInvalid = !CONST.ADMIN_SECRET || CONST.ADMIN_SECRET === 'REQUIRED_ADMIN_SECRET_NOT_SET';
+
   try {
     if (!dbModule) {
       throw new Error('Database module is not loaded');
     }
-    // isDatabaseInitialized now returns boolean
+
     const initialized = dbModule.isDatabaseInitialized();
-    
-    if (!initialized) {
-      if (isSecretInvalid) {
-        console.error('❌ ADMIN_SECRET is not set or is invalid for initial setup.');
-        console.error('   A secure ADMIN_SECRET is required when the database is uninitialized.');
-        console.error('   1. Generate a secure secret: openssl rand -hex 32');
-        console.error('   2. Set it in your .env file or as an environment variable.');
-        process.exit(1);
-      }
+
+    if (!initialized && isSecretInvalid) {
+      throw new Error(
+        'ADMIN_SECRET is not set or is invalid for initial setup.\n' +
+        'A secure ADMIN_SECRET is required when the database is uninitialized.\n' +
+        '1. Generate a secure secret: openssl rand -hex 32\n' +
+        '2. Set it in your .env file or as an environment variable.'
+      );
     }
   } catch (err) {
-    console.error('❌ Error checking database initialization state:', err instanceof Error ? err.message : String(err));
-    // Treat errors as "not initialized" to enforce onboarding
-    if (isSecretInvalid) {
-      console.error('   Database check failed, and ADMIN_SECRET is not set or is invalid.');
-      console.error('   A secure ADMIN_SECRET is required for recovery or initial setup.');
-      process.exit(1);
+    if (err instanceof Error && err.message.includes('ADMIN_SECRET')) {
+      throw err; // Re-throw ADMIN_SECRET errors
     }
+
+    // Treat other errors as "not initialized" to enforce onboarding
+    if (isSecretInvalid) {
+      throw new Error(
+        'Database check failed, and ADMIN_SECRET is not set or is invalid.\n' +
+        'A secure ADMIN_SECRET is required for recovery or initial setup.'
+      );
+    }
+
+    // Log non-critical database errors but continue
+    console.error('⚠️  Database initialization check error:', err instanceof Error ? err.message : String(err));
   }
 
   // Initialize NIP-46 database migrations on startup (no side effects on import)
@@ -284,11 +268,28 @@ if (!CONST.HEADLESS) {
     const { initializeNip46DB } = await import('./db/nip46.js');
     await initializeNip46DB();
   } catch (e: any) {
-    console.error('❌ Failed to initialize NIP-46 database:', e?.message || e);
+    // Log but don't fail - NIP-46 is not critical for startup
+    console.error('⚠️  Failed to initialize NIP-46 database:', e?.message || e);
   }
-} else {
-  console.log('⚙️  Headless mode enabled - using environment variables for configuration');
+
+  // Initialize persistent rate limiter with database connection
+  try {
+    const dbDefault = await import('./db/database.js');
+    const { initializeRateLimiter } = await import('./utils/rate-limiter.js');
+    initializeRateLimiter(dbDefault.default);
+    console.log('✅ Persistent rate limiting initialized');
+  } catch (e: any) {
+    // Log but don't fail - fallback to in-memory rate limiting
+    console.error('⚠️  Failed to initialize persistent rate limiter, using in-memory fallback:', e?.message || e);
+  }
 }
+
+// Initialize database with single exit point
+initializeDatabase().catch((err) => {
+  console.error('❌ Fatal initialization error:');
+  console.error('  ', err instanceof Error ? err.message : String(err));
+  process.exit(1);
+});
 
 // Create the Nostr relay
 const relay = new NostrRelay();
@@ -522,12 +523,34 @@ const websocketHandler = {
   }
 };
 
-// HTTP Server
-serve({
+// Store server reference for graceful shutdown
+function buildJsonError(body: any, status = 500, requestId?: string): Response {
+  const payload = {
+    code: body?.code || 'INTERNAL_ERROR',
+    error: body?.error || 'Internal server error',
+    requestId,
+    ...(process.env.NODE_ENV !== 'production' && body?.detail ? { detail: body.detail } : {})
+  };
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(requestId ? { 'X-Request-ID': requestId } : {}),
+      'Cache-Control': 'no-store'
+    }
+  });
+}
+
+const server = serve({
   port: CONST.HOST_PORT,
   hostname: CONST.HOST_NAME,
   websocket: websocketHandler,
   fetch: async (req, server) => {
+    // Reject new requests during shutdown
+    if (isShuttingDown) {
+      return new Response('Server is shutting down', { status: 503 });
+    }
+
     const url = new URL(req.url);
     const requestId = randomUUID();
     const clientIp = server.requestIP(req)?.address;
@@ -629,7 +652,17 @@ serve({
     };
 
     // Handle the request using the unified router with appropriate context
-    return await handleRequest(req, url, baseContext, privilegedContext);
+    try {
+      const resp = await handleRequest(req, url, baseContext, privilegedContext);
+      return resp;
+    } catch (err: any) {
+      // Convert unhandled errors into a structured JSON error with correlation id
+      const message = err?.message || String(err);
+      try {
+        addServerLog('error', 'Unhandled route error', { requestId, path: url.pathname, method: req.method, message });
+      } catch {}
+      return buildJsonError({ error: 'Unexpected server error', code: 'UNHANDLED_EXCEPTION', detail: message }, 500, requestId);
+    }
   }
 });
 
@@ -639,6 +672,14 @@ addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
 // Note: Node event listeners are already set up in setupNodeEventListeners() if node exists
 if (!node) {
   addServerLog('info', 'Node not initialized - credentials not available. Server is ready for configuration.');
+}
+
+// Security validation for production deployments
+if (process.env.NODE_ENV === 'production' && !process.env.ALLOWED_ORIGINS) {
+  console.error('\n⚠️  SECURITY WARNING: Running in production without ALLOWED_ORIGINS configured!');
+  console.error('   CORS requests will be blocked. Set ALLOWED_ORIGINS environment variable to enable CORS.');
+  console.error('   Example: ALLOWED_ORIGINS=https://yourdomain.com,https://app.yourdomain.com\n');
+  addServerLog('warning', 'Production deployment without ALLOWED_ORIGINS - CORS will be blocked');
 }
 
 // Shared database cleanup function
@@ -658,37 +699,56 @@ async function cleanupDatabase(): Promise<void> {
   }
 }
 
-// Graceful shutdown handling
-process.on('SIGTERM', async () => {
-  addServerLog('system', 'Received SIGTERM, shutting down gracefully');
-  
-  // Clear any pending restart timeout
-  if (restartTimeout) {
-    clearTimeout(restartTimeout);
-    restartTimeout = null;
-  }
-  
-  cleanupMonitoring();
-  clearCleanupTimers();
-  
-  await cleanupDatabase();
-  
-  process.exit(0);
-});
+// Shutdown state to prevent new requests during cleanup
+let isShuttingDown = false;
 
-process.on('SIGINT', async () => {
-  addServerLog('system', 'Received SIGINT, shutting down gracefully');
-  
+// Unified shutdown handler for both SIGTERM and SIGINT
+async function handleShutdown(signal: string): Promise<void> {
+  if (isShuttingDown) return; // Prevent duplicate shutdown
+  isShuttingDown = true;
+
+  addServerLog('system', `Received ${signal}, shutting down gracefully`);
+
+  // Stop accepting new connections
+  try {
+    server.stop();
+    addServerLog('system', 'Server stopped accepting new connections');
+  } catch (err) {
+    addServerLog('error', 'Error stopping server', err);
+  }
+
   // Clear any pending restart timeout
   if (restartTimeout) {
     clearTimeout(restartTimeout);
     restartTimeout = null;
   }
-  
+
   cleanupMonitoring();
   clearCleanupTimers();
-  
+
+  // Clean up rate limiter
+  try {
+    const { cleanupRateLimiter } = await import('./utils/rate-limiter.js');
+    cleanupRateLimiter();
+    addServerLog('system', 'Rate limiter cleaned up');
+  } catch (err) {
+    addServerLog('error', 'Error cleaning up rate limiter', err);
+  }
+
+  // Clean up auth timers and vault
+  try {
+    const { stopAuthCleanup } = await import('./routes/auth.js');
+    stopAuthCleanup();
+    addServerLog('system', 'Auth cleanup completed');
+  } catch (err) {
+    addServerLog('error', 'Error cleaning up auth', err);
+  }
+
   await cleanupDatabase();
-  
-  process.exit(0);
-});
+
+  process.exit(circuitBreakerExitCode ?? 0);
+}
+
+// Graceful shutdown handling
+process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+process.on('SIGINT', () => handleShutdown('SIGINT'));

@@ -9,6 +9,8 @@ interface QRScannerProps {
 export function QRScanner({ onResult, onError }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
+  const scanningRef = useRef<boolean>(false)
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [hasPermission, setHasPermission] = useState<boolean | null>(null)
 
@@ -29,9 +31,15 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
         scanner = new QrScanner(
           videoRef.current,
           (result: QrScanner.ScanResult) => {
+            if (scanningRef.current) return
             if (result.data && result.data.startsWith('nostrconnect://')) {
+              scanningRef.current = true
               onResult(result.data)
-              scanner?.stop()
+              scannerRef.current?.destroy()
+              scannerRef.current = null
+              timeoutRef.current = setTimeout(() => {
+                scanningRef.current = false
+              }, 1000)
             }
           },
           { returnDetailedScanResult: true, highlightScanRegion: true, highlightCodeOutline: true }
@@ -45,12 +53,21 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
         const e = err instanceof Error ? err : new Error('Failed to initialize scanner')
         setError(e.message)
         setHasPermission(false)
-        onError ? onError(e) : console.error('Failed to start QR scanner:', e)
+        if (onError) {
+            onError(e)
+        } else {
+            console.error('Failed to start QR scanner:', e)
+        }
+        scannerRef.current?.destroy()
+        scannerRef.current = null
       }
     }
 
     initializeScanner()
     return () => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current)
+      }
       scannerRef.current?.stop()
       scannerRef.current?.destroy()
       scannerRef.current = null
@@ -72,4 +89,3 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
     </div>
   )
 }
-

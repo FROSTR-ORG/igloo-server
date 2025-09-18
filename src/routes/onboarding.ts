@@ -1,9 +1,12 @@
 import { timingSafeEqual } from 'crypto';
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { RouteContext } from './types.js';
 import { VALIDATION } from '../config/crypto.js';
+import { getRateLimiter } from '../utils/rate-limiter.js';
 
 // Fixed delay to prevent timing attacks (milliseconds)
 const UNIFORM_DELAY_MS = 150;
@@ -15,46 +18,38 @@ const ROUTE_METHODS: Record<string, string[]> = {
   '/api/onboarding/setup': ['POST']
 };
 
-// Simple rate limiter for admin validation endpoints
-const adminLimiter = new Map<string, { count: number; resetAt: number }>();
+// Rate limiting configuration for admin validation endpoints
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
 const MAX_ATTEMPTS_PER_WINDOW = 5;
 
-// Periodic cleanup to bound memory for adminLimiter
-const ADMIN_LIMITER_CLEANUP_INTERVAL_MS = 120000; // 2 minutes
-let adminLimiterCleanupTimer: ReturnType<typeof setInterval> | null = null;
+// Stable client identifier cache (maps canonical fingerprint input -> stable ID)
+const clientIdCache = new Map<string, { id: string; expiresAt: number }>();
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, parseInt(process.env.CLIENT_ID_TTL_MS || '86400000')));
+const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
+const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
+let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
 
 /**
- * Removes expired entries from the admin limiter Map.
- * Deletes any entry where resetAt is in the past.
- * @param now - Epoch ms used for comparison; defaults to current time
+ * Removes expired entries from the client identifier cache to bound memory.
  */
-function removeExpiredAdminLimiterEntries(now: number = Date.now()): void {
-  for (const [ip, entry] of adminLimiter) {
-    if (entry.resetAt <= now) adminLimiter.delete(ip);
+function removeExpiredClientIds(now: number = Date.now()): void {
+  for (const [key, entry] of clientIdCache) {
+    if (entry.expiresAt <= now) clientIdCache.delete(key);
   }
 }
 
-/**
- * Starts periodic cleanup of expired admin limiter entries.
- * Stores the timer so it can be cleared on shutdown.
- */
-function startAdminLimiterCleanup(): void {
-  if (adminLimiterCleanupTimer) return;
-  adminLimiterCleanupTimer = setInterval(() => removeExpiredAdminLimiterEntries(), ADMIN_LIMITER_CLEANUP_INTERVAL_MS);
-}
-
-/**
- * Stops the periodic cleanup interval for admin limiter entries.
- */
-export function stopAdminLimiterCleanup(): void {
-  if (!adminLimiterCleanupTimer) return;
-  clearInterval(adminLimiterCleanupTimer);
-  adminLimiterCleanupTimer = null;
+// Start periodic cleanup for client ID cache
+function startClientIdCleanup(): void {
+  if (clientIdCleanupTimer) return;
+  clientIdCleanupTimer = setInterval(() => removeExpiredClientIds(), Math.min(CLIENT_ID_TTL_MS, 5 * 60_000));
 }
 
 // Initialize cleanup when onboarding routes are active
-if (!HEADLESS) startAdminLimiterCleanup();
+if (!HEADLESS) {
+  startClientIdCleanup();
+}
 
 // Helper function to add uniform delay to responses
 async function addUniformDelay(): Promise<void> {
@@ -86,66 +81,81 @@ function getClientIp(req: Request): string {
     if (xRealIp) {
       return xRealIp.trim();
     }
-  }
 
-  // When not trusting proxy or no proxy headers available,
-  // use a combination of headers as a fingerprint for rate limiting
-  // This prevents simple header spoofing attacks
-  const userAgent = req.headers.get('user-agent') || '';
-  const acceptLang = req.headers.get('accept-language') || '';
-  const acceptEnc = req.headers.get('accept-encoding') || '';
-
-  // Create a consistent fingerprint for rate limiting
-  // Not perfect IP detection, but prevents trivial bypasses
-  if (userAgent || acceptLang || acceptEnc) {
-    // Use a simple hash to create a consistent identifier
-    const fingerprint = `${userAgent}|${acceptLang}|${acceptEnc}`;
-    // Simple hash to create shorter consistent ID
-    let hash = 0;
-    for (let i = 0; i < fingerprint.length; i++) {
-      hash = ((hash << 5) - hash) + fingerprint.charCodeAt(i);
-      hash = hash & hash; // Convert to 32-bit integer
+    const cfConnectingIp = req.headers.get('cf-connecting-ip');
+    if (cfConnectingIp) {
+      return cfConnectingIp.trim();
     }
-    return `fp_${Math.abs(hash).toString(36)}`;
   }
 
-  return 'unknown';
+  // Stronger fallback: build canonical fingerprint input from multiple headers
+  // and compute a stable, truncated HMAC-SHA256/SHA-256 identifier.
+  const headerKeys = [
+    'user-agent', 'accept-language', 'accept-encoding', 'accept', 'dnt',
+    'sec-ch-ua', 'sec-ch-ua-platform', 'sec-ch-ua-mobile', 'sec-ch-ua-arch', 'sec-ch-ua-model',
+    'x-forwarded-proto', 'cf-ipcountry', 'cf-ray', 'x-tls-fingerprint', 'x-ja3', 'ja3'
+  ];
+
+  const parts: Array<[string, string]> = [];
+  for (const key of headerKeys) {
+    const val = req.headers.get(key);
+    if (val) parts.push([key, val]);
+  }
+
+  if (parts.length === 0) {
+    // Nothing to fingerprint with
+    if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
+      console.warn('[onboarding] Fingerprint fallback has no usable headers. Configure a trusted proxy (set TRUST_PROXY=true) to propagate client IPs.');
+    }
+    return 'unknown';
+  }
+
+  // Canonicalize by sorting keys
+  parts.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  const canonical = JSON.stringify(parts);
+
+  // Cache to provide stability across slightly varying requests within TTL
+  const now = Date.now();
+  const cached = clientIdCache.get(canonical);
+  if (cached && cached.expiresAt > now) return cached.id;
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(canonical);
+  const digest = FINGERPRINT_SECRET
+    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), data)
+    : sha256(data);
+  const hex = Buffer.from(digest).toString('hex');
+  // Truncate to 32 hex chars (128-bit) for brevity while maintaining collision resistance
+  const id = `fp_${hex.slice(0, 32)}`;
+
+  clientIdCache.set(canonical, { id, expiresAt: now + CLIENT_ID_TTL_MS });
+
+  if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
+    console.warn('[onboarding] Using fingerprint fallback for client identification. For stronger attribution, enable a trusted proxy (TRUST_PROXY=true) and ensure X-Forwarded-For / CF headers are passed.');
+  }
+
+  return id;
 }
 
 /**
  * Checks if the request should be rate limited based on client IP.
- * Uses the adminLimiter Map to track attempts per IP.
+ * Uses persistent SQLite-backed rate limiting that survives server restarts.
  * @param context - RouteContext (included for consistency, uses local state)
  * @param req - The incoming request
  * @returns true if the request should be rate limited, false otherwise
  */
-async function checkPerIpRateLimit(context: RouteContext, req: Request): Promise<boolean> {
+async function checkPerIpRateLimit(_context: RouteContext, req: Request): Promise<boolean> {
   const clientIp = getClientIp(req);
-  const now = Date.now();
-  
-  // Prune expired entries proactively
-  removeExpiredAdminLimiterEntries(now);
+  const rateLimiter = getRateLimiter();
 
-  let limiterEntry = adminLimiter.get(clientIp);
-  
-  if (limiterEntry) {
-    if (now >= limiterEntry.resetAt) {
-      // Window expired on access: delete the stale entry, then treat as first attempt
-      adminLimiter.delete(clientIp);
-      limiterEntry = undefined;
-    } else if (limiterEntry.count >= MAX_ATTEMPTS_PER_WINDOW) {
-      // Rate limit exceeded
-      return true;
-    } else {
-      // Still within the window, increment count
-      limiterEntry.count++;
-      return false;
-    }
-  }
-  
-  // First attempt from this IP or expired entry was deleted
-  adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-  return false;
+  const result = await rateLimiter.checkLimit(clientIp, {
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    maxAttempts: MAX_ATTEMPTS_PER_WINDOW,
+    bucket: 'onboarding_admin'
+  });
+
+  // Return true if rate limited (not allowed)
+  return !result.allowed;
 }
 
 // Uniform error response for all authentication failures

@@ -15,6 +15,8 @@ export interface SignerSession {
   profile: SessionProfile
   policy?: PermissionPolicy
   status?: 'active' | 'pending'
+  // Not persisted: requested permissions parsed from nostrconnect URI or connect params
+  requested?: PermissionPolicy
 }
 
 export interface PermissionRequest {
@@ -49,4 +51,3 @@ export interface NIP46Config {
   profile: SessionProfile
   timeout?: number
 }
-

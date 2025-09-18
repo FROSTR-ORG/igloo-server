@@ -11,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
 import { PageLayout } from "./components/ui/page-layout"
 import { AppHeader } from "./components/ui/app-header"
 import { ContentCard } from "./components/ui/content-card"
+import Spinner from "./components/ui/spinner"
 
 interface SignerData {
   share: string;
@@ -36,6 +37,8 @@ const App: React.FC = () => {
   const [signerData, setSignerData] = useState<SignerData | null>(null);
   const [activeTab, setActiveTab] = useState("signer");
   const [initializing, setInitializing] = useState(true);
+  // Loading gate used after login to prevent Configure flash
+  const [loadingAppData, setLoadingAppData] = useState(false);
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     authEnabled: false
@@ -317,6 +320,8 @@ const App: React.FC = () => {
   };
   
   const handleLogin = async (sessionId: string | undefined, userId: string | number, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => {
+    // Set loading before kicking off data fetch to avoid Configure flash
+    setLoadingAppData(true);
     setAuthState({
       isAuthenticated: true,
       sessionId: sessionId || undefined,
@@ -338,7 +343,11 @@ const App: React.FC = () => {
     }
     
     // Now load the app data with the correct headers
-    await loadAppData(authHeaders);
+    try {
+      await loadAppData(authHeaders);
+    } finally {
+      setLoadingAppData(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -401,9 +410,7 @@ const App: React.FC = () => {
         <AppHeader subtitle="Frostr keyset manager and remote signer." />
         
         <ContentCard>
-          <div className="flex items-center justify-center py-12">
-            <div className="text-blue-300">Loading...</div>
-          </div>
+          <Spinner label="Loading…" size="md" />
         </ContentCard>
       </PageLayout>
     );
@@ -417,6 +424,22 @@ const App: React.FC = () => {
   // Show login screen if authentication is required and user is not authenticated
   if (authState.authEnabled && !authState.isAuthenticated) {
     return <Login onLogin={handleLogin} authEnabled={authState.authEnabled} />;
+  }
+
+  // After login, while fetching user data, show loading (prevents Configure flash)
+  if (authState.authEnabled && authState.isAuthenticated && loadingAppData) {
+    return (
+      <PageLayout>
+        <AppHeader 
+          authEnabled={authState.authEnabled}
+          userId={authState.userId}
+          onLogout={authState.authEnabled ? handleLogout : undefined}
+        />
+        <ContentCard>
+          <Spinner label="Loading your signer…" size="md" />
+        </ContentCard>
+      </PageLayout>
+    );
   }
 
   // Show signer view when share is loaded

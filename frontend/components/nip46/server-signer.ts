@@ -62,6 +62,36 @@ export class ServerSigner {
     return this.groupPubkey
   }
 
+  private validateAndNormalizeEvent(template: any): {
+    pubkey: string
+    created_at: number
+    kind: number
+    tags: string[][]
+    content: string
+  } {
+    // Validate and normalize pubkey (64 hex chars)
+    const pubkey = template.pubkey.replace(/^0x/i, '').toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(pubkey)) {
+      throw new Error('Invalid pubkey format: must be 64 hex characters')
+    }
+
+    // Ensure Unix seconds timestamp (not milliseconds)
+    const created_at = Math.floor(Number(template.created_at))
+    if (!Number.isInteger(created_at) || created_at <= 0) {
+      throw new Error('Invalid timestamp: must be positive Unix seconds')
+    }
+
+    // Normalize tags to string arrays, filtering out null/undefined
+    const tags = (template.tags || []).map((tag: any[]) =>
+      Array.isArray(tag) ? tag.map(item => String(item || '')) : []
+    )
+
+    // Validate content is string
+    const content = typeof template.content === 'string' ? template.content : ''
+
+    return { pubkey, created_at, kind: template.kind, tags, content }
+  }
+
   async sign_event(event: EventTemplate): Promise<SignedEvent> {
     if (!this.groupPubkey) await this.loadPublicKey()
     const pubkey = this.convertToNostrPubkey(this.groupPubkey!)
@@ -72,7 +102,10 @@ export class ServerSigner {
       created_at: event.created_at || Math.floor(Date.now() / 1000)
     }
 
-    const serialized = JSON.stringify([0, template.pubkey, template.created_at, template.kind, template.tags || [], template.content || ''])
+    // Validate and normalize event data for NIP-01 compliance
+    const normalized = this.validateAndNormalizeEvent(template)
+
+    const serialized = JSON.stringify([0, normalized.pubkey, normalized.created_at, normalized.kind, normalized.tags, normalized.content])
     const encoder = new TextEncoder()
     const idBytes = await crypto.subtle.digest('SHA-256', encoder.encode(serialized))
     const id = Array.from(new Uint8Array(idBytes)).map(b => b.toString(16).padStart(2, '0')).join('')
@@ -83,11 +116,23 @@ export class ServerSigner {
       body: JSON.stringify({ message: id })
     })
     if (!res.ok) {
-      const body = await res.text().catch(() => '[unable to read response]')
-      throw new Error(`Server signing failed: ${res.status} ${res.statusText} - ${body}`)
+      const requestId = res.headers.get('X-Request-ID') || undefined
+      let msg = `${res.status} ${res.statusText}`
+      try {
+        const data = await res.json()
+        if (data?.code === 'SIGN_TIMEOUT' || res.status === 504) {
+          msg = `Signing timed out${data?.error ? `: ${data.error}` : ''}`
+        } else if (data?.error) {
+          msg = data.error
+        }
+        throw new Error(`Server signing failed${requestId ? ` [${requestId}]` : ''}: ${msg}`)
+      } catch {
+        const body = await res.text().catch(() => '[unable to read response]')
+        throw new Error(`Server signing failed${requestId ? ` [${requestId}]` : ''}: ${res.status} ${res.statusText} - ${body}`)
+      }
     }
     const { signature } = await res.json()
-    return { ...template, id, sig: signature }
+    return { ...normalized, id, sig: signature }
   }
 
   async nip44_encrypt(peer_pubkey: string, plaintext: string): Promise<string> {

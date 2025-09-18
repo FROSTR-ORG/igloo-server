@@ -212,11 +212,23 @@ The server will be available at **http://localhost:8002**
 This mode provides user management with secure credential storage in a SQLite database.
 
 ##### Initial Setup (First Time Only)
+
+> ⚠️ **Security Note**: Never store secrets directly in files. Use environment variables or proper secret management tools.
+
 1. Set the `ADMIN_SECRET` environment variable:
    ```bash
-   echo "ADMIN_SECRET=$(openssl rand -hex 32)" >> .env
+   # Option 1: Export to current shell session (recommended for development)
+   export ADMIN_SECRET=$(openssl rand -hex 32)
+   echo "Your admin secret: $ADMIN_SECRET" # Save this securely!
+
+   # Option 2: Pass directly when starting the server
+   ADMIN_SECRET=$(openssl rand -hex 32) bun run start
+
+   # Option 3: For persistent non-production use, create .env (already gitignored)
+   # ⚠️ Only use this method if you understand the security implications
+   # echo "ADMIN_SECRET=$(openssl rand -hex 32)" >> .env
    ```
-2. Start the server: `bun run start`
+2. Start the server: `bun run start` (or with the env var as shown above)
 3. Open http://localhost:8002 in your browser
 4. Enter the admin secret when prompted
 5. Create your admin username and password
@@ -298,17 +310,25 @@ Ownership should be assigned to the user that runs the `igloo-server` process. F
 For simple deployments or automation, you can use traditional environment variable configuration:
 
 ```bash
-# Create .env file for headless mode
-cat > .env << EOF
-HEADLESS=true  # Enable headless mode
-GROUP_CRED=bfgroup1qqsqp...your-group-credential
-SHARE_CRED=bfshare1qqsqp...your-share-credential
-RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
-GROUP_NAME=my-signing-group
-EOF
+# Set configuration via environment variables (recommended)
+export HEADLESS=true
+export GROUP_CRED="bfgroup1qqsqp...your-group-credential"
+export SHARE_CRED="bfshare1qqsqp...your-share-credential"
+export RELAYS='["wss://relay.primal.net","wss://relay.damus.io"]'
+export GROUP_NAME="my-signing-group"
 
 # Start server (node will start automatically with valid credentials)
 bun run start
+
+# Alternative: For development/testing only, you can use .env file
+# ⚠️ Remember: .env files are gitignored but still risky for secrets
+# cat > .env << EOF
+# HEADLESS=true
+# GROUP_CRED=bfgroup1qqsqp...your-group-credential
+# SHARE_CRED=bfshare1qqsqp...your-share-credential
+# RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
+# GROUP_NAME=my-signing-group
+# EOF
 ```
 
 **Note**: In headless mode, credentials are read from environment variables and the frontend is disabled. Use API endpoints only.
@@ -578,33 +598,32 @@ sudo chmod +x /usr/local/bin/docker-compose
 ```
 
 #### 3. Deploy with Docker Compose
+
+> 🔒 **Production Security**: Use Docker secrets or environment variables for sensitive data. Never commit credentials to version control.
+
 ```bash
 # Clone the repository
 git clone https://github.com/FROSTR-ORG/igloo-server.git
 cd igloo-server
 
-# Create production environment file
-cat > .env << EOF
-NODE_ENV=production
-HOST_NAME=0.0.0.0
-GROUP_CRED=bfgroup1qqsqp...your-group-credential
-SHARE_CRED=bfshare1qqsqp...your-share-credential
-RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
-GROUP_NAME=my-signing-group
+# Copy example configuration
+cp .env.example .env
 
-# Security settings (REQUIRED for production)
-AUTH_ENABLED=true
-API_KEY=your-secure-api-key-here
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASS=your-strong-password
-# SESSION_SECRET is auto-generated if not provided
-# SESSION_SECRET=your-custom-secret-here  # Optional override
-RATE_LIMIT_ENABLED=true
-ALLOWED_ORIGINS=https://yourdomain.com
-EOF
+# Edit .env for non-sensitive configuration
+nano .env  # Configure HOST_NAME, ALLOWED_ORIGINS, etc.
 
-# Deploy with Docker Compose
+# Set sensitive environment variables (don't store in files!)
+export GROUP_CRED="bfgroup1qqsqp...your-group-credential"
+export SHARE_CRED="bfshare1qqsqp...your-share-credential"
+export API_KEY="$(openssl rand -hex 32)"
+export BASIC_AUTH_USER="admin"
+export BASIC_AUTH_PASS="$(openssl rand -base64 32)"
+
+# Deploy with Docker Compose using environment variables
 docker-compose up -d
+
+# Alternative: Use Docker secrets (recommended for production)
+# See Docker documentation for setting up secrets management
 ```
 
 #### 4. Configure Firewall
@@ -822,10 +841,15 @@ If you're currently using headless mode and want to switch to database mode for 
 
 2. **Switch to database mode**:
    ```bash
-   # Update your .env file
-   HEADLESS=false
-   ADMIN_SECRET=$(openssl rand -hex 32)
+   # Update your .env file (non-sensitive config only)
+   echo "HEADLESS=false" > .env
+
+   # Set admin secret via environment variable
+   export ADMIN_SECRET=$(openssl rand -hex 32)
+   echo "Save this admin secret securely: $ADMIN_SECRET"
+
    # Remove GROUP_CRED and SHARE_CRED from env
+   unset GROUP_CRED SHARE_CRED
    ```
 
 3. **Complete onboarding**:
@@ -941,13 +965,40 @@ See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 
 ## Security Notes
 
+### Secret Management Best Practices
+
+**Never store secrets in files that could be committed to version control:**
+- ❌ Don't put secrets directly in `.env` files (even if gitignored)
+- ❌ Don't hardcode secrets in your code
+- ✅ Use environment variables for development
+- ✅ Use proper secret management tools for production (Docker Secrets, Kubernetes Secrets, AWS Secrets Manager, etc.)
+
+**Recommended approach for different environments:**
+
+```bash
+# Development - Use environment variables
+export ADMIN_SECRET="dev-secret-here"
+export API_KEY="dev-api-key"
+bun run start
+
+# Docker - Use secrets or env vars
+docker run -e ADMIN_SECRET="$ADMIN_SECRET" igloo-server
+
+# Production - Use secret management service
+# Example with AWS Secrets Manager
+ADMIN_SECRET=$(aws secretsmanager get-secret-value --secret-id prod/igloo/admin --query SecretString --output text)
+```
+
+### General Security Guidelines
+
 - **Share credentials are sensitive**: Store `SHARE_CRED` securely - it's part of your nsec fragments
-- **Network security**: Use WSS (secure WebSocket) relays in production  
+- **Network security**: Use WSS (secure WebSocket) relays in production
 - **Authentication required**: Configure authentication for any non-local deployment
 - **CORS security**: Set `ALLOWED_ORIGINS` to specific domains in production (avoid wildcard `*`)
 - **SESSION_SECRET auto-generated**: Automatically generates and persists a secure `SESSION_SECRET` if not provided
 - **Memory management**: The relay auto-purges events to prevent memory leaks
 - **HTTPS recommended**: Use a reverse proxy with TLS for production deployments
+- **File permissions**: Ensure proper permissions on data directory (700) and database files (600)
 
 ## License
 

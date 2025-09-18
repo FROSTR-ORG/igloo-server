@@ -40,7 +40,7 @@ info:
     url: https://github.com/FROSTR-ORG/igloo-server
   license:
     name: MIT
-    url: https://github.com/FROSTR-ORG/igloo-server/blob/main/LICENSE
+    url: https://github.com/FROSTR-ORG/igloo-server/blob/master/LICENSE
 
 servers:
   - url: https://your-domain.com
@@ -1472,7 +1472,11 @@ components:
           pattern: '^[0-9a-fA-F]{64}$|^[0-9a-fA-F]{66}$'
         content:
           type: string
-          description: Payload to process (plaintext for encrypt, ciphertext for decrypt). Maximum plaintext length: 65,535 bytes; encrypted/padded blob may reach 65,536 bytes. Minimum plaintext: 1 byte (padded to 32 bytes). Implementations should split messages larger than 65,535 bytes.
+          description: |
+            Payload to process (plaintext for encrypt, ciphertext for decrypt).
+            Maximum plaintext length: 65,535 bytes; encrypted/padded blob may reach 65,536 bytes.
+            Minimum plaintext: 1 byte (padded to 32 bytes).
+            Implementations should split messages larger than 65,535 bytes.
       required: [peer_pubkey, content]
 
     Nip04Request:
@@ -1521,7 +1525,8 @@ components:
           $ref: '#/components/schemas/Nip46Policy'
         created_at: { type: string }
         updated_at: { type: string }
-        last_active_at: { type: string }
+        last_active_at:
+          type: [string, "null"]
 
     Nip46SessionSummary:
       type: object
@@ -1529,7 +1534,8 @@ components:
       properties:
         pubkey: { type: string }
         status: { type: string }
-        last_active_at: { type: string }
+        last_active_at:
+          type: [string, "null"]
         profile: { $ref: '#/components/schemas/Nip46Profile' }
         recent_kinds:
           type: array

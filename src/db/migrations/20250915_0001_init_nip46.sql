@@ -24,7 +24,7 @@ WHEN NEW.updated_at = OLD.updated_at
 BEGIN
   UPDATE nip46_sessions
   SET updated_at = CURRENT_TIMESTAMP
-  WHERE id = OLD.id;
+  WHERE id = NEW.id;
 END;
 
 CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id);

@@ -44,6 +44,9 @@ export async function cleanupNodeSynchronized(context: PrivilegedRouteContext): 
     if (context.node) {
       context.addServerLog('info', 'Credentials deleted, cleaning up Bifrost node...');
       // updateNode(null) will handle all cleanup atomically
+      // NOTE: updateNode is SYNCHRONOUS (returns void, not Promise<void>)
+      // It synchronously calls cleanupBifrostNode() from @frostr/igloo-core
+      // No await needed here - adding await would cause a TypeScript error
       context.updateNode(null);
       context.addServerLog('info', 'Bifrost node cleaned up successfully');
     }

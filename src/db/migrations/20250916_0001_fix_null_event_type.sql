@@ -1,5 +1,6 @@
--- Backward-compatible enforcement for existing installations where CHECK might not exist
--- Validate event_type on INSERT/UPDATE
+-- Fix NULL handling in event_type validation triggers
+-- Previous triggers would allow NULL event_type to pass through
+-- because "NULL NOT IN (...)" evaluates to NULL, not FALSE
 
 DROP TRIGGER IF EXISTS nip46_events_check_insert;
 CREATE TRIGGER nip46_events_check_insert
@@ -18,4 +19,3 @@ BEGIN
   SELECT CASE WHEN NEW.event_type IS NULL OR NEW.event_type NOT IN ('created','status_change','grant_method','grant_kind','revoke_method','revoke_kind','upsert')
     THEN RAISE(ABORT, 'invalid event_type') END;
 END;
-

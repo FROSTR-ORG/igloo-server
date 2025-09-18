@@ -11,7 +11,7 @@ import {
 import { HEADLESS } from '../const.js';
 import { getUserCredentials } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
-import { createAndStartNode } from './node-manager.js';
+import { createNodeWithCredentials } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 
 // Helper function to validate relay URLs
@@ -62,13 +62,13 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
   if (!relayValidation.valid) {
     throw new Error(relayValidation.error);
   }
-  
-  return await createAndStartNode({
-    group_cred: env.GROUP_CRED,
-    share_cred: env.SHARE_CRED,
-    relays: relayValidation.urls,
-    group_name: env.GROUP_NAME
-  }, context);
+
+  await createNodeWithCredentials(
+    env.GROUP_CRED,
+    env.SHARE_CRED,
+    env.RELAYS, // Pass the raw relay string, function will parse it
+    context.addServerLog
+  );
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext, auth?: RequestAuth | null): Promise<Response | null> {
@@ -101,8 +101,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
       const isAdmin = await validateAdminSecret(adminSecret);
       if (!isAdmin) {
         // Also allow the first user (admin user) to modify environment
-        const validUserId = (typeof auth.userId === 'number' && auth.userId === 1) || 
-                           (typeof auth.userId === 'bigint' && auth.userId === 1n);
+        const validUserId = (typeof auth.userId === 'number' && auth.userId === 1) ||
+                           (typeof auth.userId === 'string' && auth.userId === '1');
         if (!validUserId) {
           return Response.json(
             { error: 'Admin privileges required for environment modifications' },
@@ -129,8 +129,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
       );
     }
     
-    const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) || 
-                       (typeof auth.userId === 'bigint' && auth.userId > 0n);
+    const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) ||
+                       (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId) && BigInt(auth.userId) > 0n);
     if (!validUserId) {
       return Response.json(
         { error: 'Invalid user authentication' },
@@ -160,7 +160,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             return Response.json(publicEnv, { headers });
           } else {
             // Database mode - return empty or user's credentials if available
-            if (auth?.authenticated && (typeof auth.userId === 'number' || typeof auth.userId === 'bigint')) {
+            if (auth?.authenticated && (typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)))) {
               // Use secure getters to access sensitive data
               let secret: string | Uint8Array | null = null;
               let isDerivedKey = false;
@@ -182,8 +182,10 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               if (!secret) return Response.json({}, { headers });
               let credentials;
               try {
+                // Convert string userId to bigint for database operation
+                const dbUserId = typeof auth.userId === 'string' ? BigInt(auth.userId) : auth.userId;
                 credentials = getUserCredentials(
-                  auth.userId,
+                  dbUserId,
                   secret,
                   isDerivedKey
                 );
@@ -254,6 +256,15 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
+            // Hot-apply a subset of safe settings without restart
+            try {
+              if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
+                process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
+              }
+              if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
+                process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
+              }
+            } catch {}
             // If credentials or relays were updated, recreate the node (with lock)
             if (updatingCredentials || updatingRelays) {
               try {
@@ -297,8 +308,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           const isAdmin = await validateAdminSecret(adminSecret);
           if (!isAdmin) {
             // Also allow the first user (admin user) to delete environment vars
-            const validUserId = (auth && ((typeof auth.userId === 'number' && auth.userId === 1) || 
-                               (typeof auth.userId === 'bigint' && auth.userId === 1n)));
+            const validUserId = (auth && ((typeof auth.userId === 'number' && auth.userId === 1) ||
+                               (typeof auth.userId === 'string' && auth.userId === '1')));
             if (!validUserId) {
               return Response.json(
                 { error: 'Admin privileges required for deleting environment variables' },

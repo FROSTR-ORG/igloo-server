@@ -97,6 +97,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
   // Advanced settings - server configuration
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -117,6 +118,7 @@ const PUBLIC_ENV_KEYS = new Set([
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
   // Advanced settings - safe to expose for configuration UI
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -424,6 +426,9 @@ export function safeStringify(obj: any, maxDepth = 3): string {
   }
 }
 
+// Track if we've already shown the CORS warning this session
+let corsWarningShown = false;
+
 // Utility function to get secure CORS headers based on request origin
 export function getSecureCorsHeaders(req: Request): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -451,12 +456,20 @@ export function getSecureCorsHeaders(req: Request): Record<string, string> {
     }
     // If origin is not allowed, don't set the header (CORS will block the request)
   } else if (!allowedOriginsEnv) {
-    // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
-    // In production, ALLOWED_ORIGINS should always be configured
-    headers['Access-Control-Allow-Origin'] = '*';
-    // Wildcard doesn't need Vary: Origin since response is the same for all origins
+    // Fail safe in production - CORS must be explicitly configured
     if (process.env.NODE_ENV === 'production') {
-      console.warn('SECURITY WARNING: ALLOWED_ORIGINS not configured in production. Using wildcard (*) for CORS.');
+      // SECURITY: Block all CORS requests in production without explicit configuration
+      console.error('SECURITY ERROR: ALLOWED_ORIGINS must be configured in production. CORS requests will be blocked.');
+      // Don't set Access-Control-Allow-Origin header - browsers will block the request
+    } else {
+      // Allow wildcard only in development for easier testing
+      headers['Access-Control-Allow-Origin'] = '*';
+      // No Vary header needed for wildcard since response is identical for all origins
+      // Only show this warning once per server session
+      if (!corsWarningShown) {
+        console.info('Development mode: Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS before deploying to production.');
+        corsWarningShown = true;
+      }
     }
   }
 
@@ -493,7 +506,11 @@ export function mergeVaryHeaders(corsHeaders: Record<string, string>): string {
  * Number.MAX_SAFE_INTEGER, bigint for larger numeric strings, or null on any
  * parse/validation failure.
  */
-export function parseUserId(input: unknown): number | bigint | null {
+/**
+ * Parses user ID from various input types and returns a JSON-serializable format.
+ * Returns number for IDs within safe integer range, string for larger values.
+ */
+export function parseUserId(input: unknown): number | string | null {
   try {
     if (input === null || input === undefined) return null;
 
@@ -506,7 +523,8 @@ export function parseUserId(input: unknown): number | bigint | null {
 
     if (typeof input === 'bigint') {
       if (input <= 0n) return null;
-      return input;
+      // Convert bigint to string for JSON safety
+      return input.toString();
     }
 
     if (typeof input === 'string') {
@@ -514,13 +532,25 @@ export function parseUserId(input: unknown): number | bigint | null {
       if (!/^\d+$/.test(trimmed)) return null;
       const asBigInt = BigInt(trimmed);
       if (asBigInt <= 0n) return null;
-      return asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : asBigInt;
+      // Return as number if it fits, otherwise keep as string
+      return asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : trimmed;
     }
 
     return null;
   } catch {
     return null;
   }
+}
+
+/**
+ * Converts a parsed user ID to bigint format for database operations.
+ * This is used at the database boundary where bigint is still supported.
+ */
+export function userIdToBigInt(userId: number | string): bigint {
+  if (typeof userId === 'number') {
+    return BigInt(userId);
+  }
+  return BigInt(userId);
 }
 
 // Timeout helpers for route handlers

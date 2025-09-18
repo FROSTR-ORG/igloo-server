@@ -77,7 +77,7 @@ export async function handleRequest(
     // Only rate limit validation and setup endpoints, not the status endpoint
     if (url.pathname === '/api/onboarding/validate-admin' || 
         url.pathname === '/api/onboarding/setup') {
-      const rateLimit = checkRateLimit(req);
+      const rateLimit = await checkRateLimit(req);
       if (!rateLimit.allowed) {
         return Response.json({ 
           error: 'Rate limit exceeded. Try again later.' 
@@ -208,7 +208,9 @@ export async function handleRequest(
     authInfo = createRequestAuth({
       userId: authResult.userId,
       authenticated: true,
-      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
+      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+      sessionId: authResult.sessionId,
+      hasPassword: authResult.hasPassword
     });
   } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
     // Special handling for /api/status: attempt authentication if headers are present
@@ -222,7 +224,9 @@ export async function handleRequest(
         authInfo = createRequestAuth({
           userId: authResult.userId,
           authenticated: true,
-          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
+          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+          sessionId: authResult.sessionId,
+          hasPassword: authResult.hasPassword
         });
       }
       // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
@@ -242,20 +246,6 @@ export async function handleRequest(
 
   // Handle admin routes (database mode only, requires ADMIN_SECRET)
   if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
-    // Apply rate limiting to protect ADMIN_SECRET from brute-force
-    const rateLimit = checkRateLimit(req);
-    if (!rateLimit.allowed) {
-      return Response.json({ 
-        error: 'Rate limit exceeded. Try again later.' 
-      }, { 
-        status: 429,
-        headers: {
-          ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
-        }
-      });
-    }
-    
     const adminResult = await handleAdminRoute(req, url, baseContext);
     if (adminResult) return adminResult;
   }

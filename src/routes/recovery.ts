@@ -7,7 +7,7 @@ import {
 } from '@frostr/igloo-core';
 import { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
-import { authenticate, AUTH_CONFIG } from './auth.js';
+import { authenticate, AUTH_CONFIG, checkRateLimit } from './auth.js';
 
 export async function handleRecoveryRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/recover')) return null;
@@ -44,6 +44,22 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
         { status: 401, headers }
       );
     }
+  }
+
+  // Check rate limit for recovery operations
+  const rate = await checkRateLimit(req);
+  if (!rate.allowed) {
+    context.addServerLog('warn', `Rate limit exceeded for key recovery from ${req.headers.get('x-forwarded-for') || 'unknown'}`);
+    return Response.json(
+      { error: 'Too many recovery attempts. Please try again later.' },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+        }
+      }
+    );
   }
 
   try {

@@ -5,6 +5,7 @@ import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getRateLimiter } from '../utils/rate-limiter.js';
 
 // Session secret persistence configuration
 // Properly handle DB_PATH whether it's a file or directory
@@ -20,15 +21,13 @@ function getSessionSecretDir(): string {
   } catch {
     // If path doesn't exist, infer more robustly
     const normalized = path.normalize(dbPath);
-    const endsWithSep = normalized.endsWith(path.sep) || normalized.endsWith(path.win32.sep);
+    const endsWithSep = normalized.endsWith(path.sep);
     if (endsWithSep) return normalized;
 
     const base = path.basename(normalized);
-    // Treat as file only if basename contains a non-leading dot (e.g., "file.ext")
-    const firstDot = base.indexOf('.');
-    const isHidden = firstDot === 0; // leading dot like .config
-    const hasNonLeadingDot = firstDot > 0; // any dot not at position 0
-    if (hasNonLeadingDot && !isHidden) {
+    // Check for common database file extensions
+    const dbExtensions = ['.db', '.sqlite', '.sqlite3'];
+    if (dbExtensions.some(ext => base.toLowerCase().endsWith(ext))) {
       return path.dirname(normalized);
     }
     // Default to directory in ambiguous cases
@@ -239,7 +238,8 @@ export const AUTH_CONFIG = {
   // Rate limiting
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED !== 'false',
   RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW || '900') * 1000, // 15 minutes
-  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '100'), // 100 requests per window
+  // Loosen default a bit for local testing (300 per 15m); override via env for prod
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '300'),
 };
 
 // Use centralized crypto constants for consistency
@@ -279,20 +279,30 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uin
   return new Uint8Array(key);
 }
 
-// In-memory stores (consider Redis for production clustering)
-const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
-const sessionStore = new Map<string, { 
+// In-memory session store (consider Redis for production clustering)
+// Note: Rate limiting now uses persistent SQLite storage via rate-limiter.ts
+const sessionStore = new Map<string, {
   userId: string | number | bigint; // Support string (env auth), number, and bigint (database user id)
-  createdAt: number; 
+  createdAt: number;
   lastAccess: number;
   ipAddress: string;
   salt?: string; // Store salt as hex string for non-database users (env auth)
+  hasPassword?: boolean; // Flag indicating if password-based derived key is available in vault
   // Note: for database users, salt comes from the database
 }>();
 
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
 const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
-const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(10, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '3')));
+const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
+
+// Configurable cleanup interval for vault entries (default 2 minutes)
+const VAULT_CLEANUP_INTERVAL_MS = Math.max(
+  30_000,  // minimum 30 seconds
+  Math.min(
+    10 * 60_000,  // maximum 10 minutes
+    parseInt(process.env.VAULT_CLEANUP_INTERVAL_MS || '120000')  // default 2 minutes
+  )
+);
 
 type VaultEntry = { key: Uint8Array; expiresAt: number; remainingReads: number };
 const derivedKeyVault = new Map<string, VaultEntry>();
@@ -311,7 +321,7 @@ function zeroizeAndDelete(sessionId: string) {
   }
 }
 
-function vaultGetOnce(sessionId: string): Uint8Array | undefined {
+export function vaultGetOnce(sessionId: string): Uint8Array | undefined {
   const entry = derivedKeyVault.get(sessionId);
   if (!entry) return undefined;
   const now = Date.now();
@@ -326,12 +336,25 @@ function vaultGetOnce(sessionId: string): Uint8Array | undefined {
   return out;
 }
 
+// Clean up expired vault entries proactively to prevent memory accumulation
+function cleanupExpiredVaultEntries(): void {
+  const now = Date.now();
+  for (const [sessionId, entry] of Array.from(derivedKeyVault.entries())) {
+    if (now > entry.expiresAt) {
+      // Reuse existing zeroization logic
+      zeroizeAndDelete(sessionId);
+    }
+  }
+}
+
 export interface AuthResult {
   authenticated: boolean;
-  userId?: string | number | bigint; // Support string, number, and bigint IDs
+  userId?: string | number; // Only JSON-serializable types
   error?: string;
   rateLimited?: boolean;
   derivedKey?: Uint8Array; // Derived key for decryption operations (ephemeral - cleared after extraction)
+  sessionId?: string; // Session ID for lazy vault retrieval
+  hasPassword?: boolean; // Flag indicating if password-based derived key is available
 }
 
 // Get client IP address from various headers
@@ -349,32 +372,29 @@ function getClientIP(req: Request): string {
   return 'unknown';
 }
 
-// Rate limiting implementation
-export function checkRateLimit(req: Request): { allowed: boolean; remaining: number } {
+// Rate limiting implementation using persistent SQLite storage
+export async function checkRateLimit(
+  req: Request,
+  bucket: string = 'auth',
+  opts?: { windowMs?: number; max?: number }
+): Promise<{ allowed: boolean; remaining: number }> {
   if (!AUTH_CONFIG.RATE_LIMIT_ENABLED) {
     return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX };
   }
 
   const clientIP = getClientIP(req);
-  const now = Date.now();
-  const key = `rate_limit:${clientIP}`;
-  
-  const current = rateLimitStore.get(key);
-  
-  if (!current || now > current.resetTime) {
-    rateLimitStore.set(key, {
-      count: 1,
-      resetTime: now + AUTH_CONFIG.RATE_LIMIT_WINDOW
-    });
-    return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX - 1 };
-  }
-  
-  if (current.count >= AUTH_CONFIG.RATE_LIMIT_MAX) {
-    return { allowed: false, remaining: 0 };
-  }
-  
-  current.count++;
-  return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX - current.count };
+  const rateLimiter = getRateLimiter();
+
+  const result = await rateLimiter.checkLimit(clientIP, {
+    windowMs: opts?.windowMs ?? AUTH_CONFIG.RATE_LIMIT_WINDOW,
+    maxAttempts: opts?.max ?? AUTH_CONFIG.RATE_LIMIT_MAX,
+    bucket
+  });
+
+  return {
+    allowed: result.allowed,
+    remaining: result.remaining
+  };
 }
 
 // API Key authentication
@@ -459,9 +479,11 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   session.lastAccess = now;
-  // One-time ephemeral access to derived key (if present in the vault)
-  const keyOnce = vaultGetOnce(sessionId);
-  return { authenticated: true, userId: session.userId, derivedKey: keyOnce };
+  // Don't consume vault reads during authentication - pass sessionId for lazy retrieval
+  // Convert bigint to string for JSON safety (handles legacy sessions)
+  const userId = typeof session.userId === 'bigint' ? session.userId.toString() : session.userId;
+  // Include hasPassword flag to indicate if password-based derived key is available
+  return { authenticated: true, userId, sessionId, hasPassword: session.hasPassword };
 }
 
 // Extract session ID from cookie header
@@ -480,8 +502,8 @@ function extractSessionFromCookie(req: Request): string | null {
 
 // Create new session
 export function createSession(
-  userId: string | number | bigint, 
-  ipAddress: string, 
+  userId: string | number, // Only JSON-serializable types
+  ipAddress: string,
   password?: string,
   dbSalt?: string  // Optional database salt for database users
 ): string | null {
@@ -489,15 +511,17 @@ export function createSession(
   if (!AUTH_CONFIG.SESSION_SECRET) {
     return null;
   }
-  
+
   const sessionId = randomBytes(32).toString('hex');
   const now = Date.now();
-  
+
   // Generate derived key if password is provided
   let derivedKey: Uint8Array | undefined;
   let sessionSalt: string | undefined; // Salt to store for non-database users
-  
+  let hasPassword = false; // Track if password-based auth is available
+
   if (password) {
+    hasPassword = true;
     if (dbSalt) {
       // Database users: Use persistent salt from database
       // This ensures the derived key can be recreated consistently across sessions
@@ -530,22 +554,15 @@ export function createSession(
     createdAt: now,
     lastAccess: now,
     ipAddress,
-    salt: sessionSalt // Store salt for non-database users
+    salt: sessionSalt, // Store salt for non-database users
+    hasPassword // Flag to indicate password-based auth
   });
   
   cleanupExpiredSessions();
   return sessionId;
 }
 
-// Cleanup expired rate limit entries periodically
-function cleanupExpiredRateLimits(): void {
-  const now = Date.now();
-  for (const [key, entry] of Array.from(rateLimitStore.entries())) {
-    if (now > entry.resetTime) {
-      rateLimitStore.delete(key);
-    }
-  }
-}
+// Note: Rate limit cleanup is now handled by the persistent rate limiter in rate-limiter.ts
 
 // Cleanup expired sessions periodically
 function cleanupExpiredSessions(): void {
@@ -561,11 +578,38 @@ function cleanupExpiredSessions(): void {
 
 // Set up periodic cleanup to prevent memory leaks from expired entries
 // Run cleanup every 10 minutes (600,000 ms)
+// Note: Rate limit cleanup is now handled by persistent rate limiter
 const CLEANUP_INTERVAL = 10 * 60 * 1000;
-setInterval(() => {
-  cleanupExpiredRateLimits();
+let sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
+let vaultCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
+// Start session cleanup timer
+sessionCleanupTimer = setInterval(() => {
   cleanupExpiredSessions();
 }, CLEANUP_INTERVAL);
+
+// Start vault cleanup timer
+vaultCleanupTimer = setInterval(() => {
+  cleanupExpiredVaultEntries();
+}, VAULT_CLEANUP_INTERVAL_MS);
+
+// Export cleanup function for graceful shutdown
+export function stopAuthCleanup(): void {
+  // Clear timers
+  if (sessionCleanupTimer) {
+    clearInterval(sessionCleanupTimer);
+    sessionCleanupTimer = null;
+  }
+  if (vaultCleanupTimer) {
+    clearInterval(vaultCleanupTimer);
+    vaultCleanupTimer = null;
+  }
+
+  // Zeroize all remaining vault entries on shutdown
+  for (const sessionId of Array.from(derivedKeyVault.keys())) {
+    zeroizeAndDelete(sessionId);
+  }
+}
 
 // Main authentication function
 export async function authenticate(req: Request): Promise<AuthResult> {
@@ -593,7 +637,7 @@ export async function authenticate(req: Request): Promise<AuthResult> {
     }
   }
 
-  const rateLimit = checkRateLimit(req);
+  const rateLimit = await checkRateLimit(req);
   if (!rateLimit.allowed) {
     return { authenticated: false, error: 'Rate limit exceeded', rateLimited: true };
   }
@@ -684,12 +728,29 @@ export async function handleLogin(req: Request): Promise<Response> {
       }
     }
     if (!authenticated && !HEADLESS && username && password && dbInitialized) {
+      // Check rate limit for database authentication attempts
+      const rate = await checkRateLimit(req);
+      if (!rate.allowed) {
+        return Response.json(
+          { error: 'Too many login attempts. Please try again later.' },
+          {
+            status: 429,
+            headers: {
+              ...baseHeaders,
+              'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString(),
+              'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+            }
+          }
+        );
+      }
+
       try {
         const dbResult = await authenticateUser(username, password);
         // authenticateUser returns a structured result, not throwing for auth failures
         if (dbResult && typeof dbResult === 'object' && dbResult.success === true && dbResult.user && dbResult.user.id != null) {
           authenticated = true;
-          userId = dbResult.user.id;
+          // Convert bigint to string for JSON-safe userId
+          userId = typeof dbResult.user.id === 'bigint' ? dbResult.user.id.toString() : dbResult.user.id;
           userPassword = password; // Store for later decryption needs
           userSalt = dbResult.user.salt; // Store user's salt for key derivation
         }
@@ -753,7 +814,9 @@ export async function handleLogin(req: Request): Promise<Response> {
     }
 
     const clientIP = getClientIP(req);
-    const sessionId = createSession(userId, clientIP, userPassword, userSalt);
+    // Convert bigint to string for JSON-safe storage
+    const sessionUserId = typeof userId === 'bigint' ? userId.toString() : userId;
+    const sessionId = createSession(sessionUserId, clientIP, userPassword, userSalt);
 
     if (!sessionId) {
       // Session creation failed (no SESSION_SECRET configured)
@@ -847,23 +910,24 @@ export function requireAuth(handler: Function) {
     
     // Note: Auth should be passed as explicit parameter, not mutating context
     // Create auth info to pass to handler
-    // Store sensitive values that will be cleared after first access
-    let derivedKey = authResult.derivedKey;
-    
+    // Store derived key for the duration of this request only
+    // The vault read has already been consumed by authenticate()
+    const requestScopedDerivedKey = authResult.derivedKey;
+
     const authInfo = {
       userId: authResult.userId,
       authenticated: true,
       // Removed direct storage of sensitive data to prevent exposure
       // Use secure getter functions instead
-      
-      // Secure getter function that clears sensitive data after first access
+
+      // Secure getter function that returns the key for this request
+      // Key is available for multiple calls within the same request
+      // but vault read has already been consumed
       getDerivedKey(): Uint8Array | undefined {
-        const value = derivedKey;
-        derivedKey = undefined; // Clear after access
-        return value;
+        return requestScopedDerivedKey;
       }
     };
-    
+
     return handler(req, url, context, authInfo);
   };
 }

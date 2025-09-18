@@ -1,11 +1,17 @@
 import type { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, withTimeout } from './utils.js';
 import { checkRateLimit } from './auth.js';
-import { getEventHash, type EventTemplate } from 'nostr-tools';
+import { getEventHash, type EventTemplate, type UnsignedEvent } from 'nostr-tools';
 
 type SignRequestBody = {
   message?: string; // 32-byte hex event id
-  event?: Partial<EventTemplate> & { kind: number; created_at: number; content: string; tags: any[] };
+  event?: Partial<EventTemplate> & {
+    kind: number;
+    created_at: number;
+    content: string;
+    tags: any[];
+    pubkey?: string; // Optional pubkey for event hashing
+  };
 };
 
 function normalizeHex(input: string): string | null {
@@ -23,16 +29,49 @@ function computeEventId(body: SignRequestBody): { id: string } | { error: string
   if (body.event) {
     try {
       // Validate required pubkey for event hashing
-      const pk = typeof (body.event as any).pubkey === 'string' ? (body.event as any).pubkey.trim() : ''
+      const pk = typeof body.event.pubkey === 'string' ? body.event.pubkey.trim() : ''
       if (!/^[0-9a-fA-F]{64}$/.test(pk)) {
         return { error: 'Invalid event: 64-hex pubkey required' };
       }
-      const template: any = {
+
+      // Validate kind (must be non-negative integer)
+      const kind = Number(body.event.kind);
+      if (!Number.isInteger(kind) || kind < 0) {
+        return { error: 'Invalid event: kind must be a non-negative integer' };
+      }
+
+      // Validate created_at (must be positive integer timestamp)
+      const created_at = Number(body.event.created_at);
+      if (!Number.isInteger(created_at) || created_at <= 0) {
+        return { error: 'Invalid event: created_at must be a positive integer timestamp' };
+      }
+
+      // Validate tags structure (array of arrays of strings)
+      if (!Array.isArray(body.event.tags)) {
+        return { error: 'Invalid event: tags must be an array' };
+      }
+
+      const validatedTags: string[][] = [];
+      for (const tag of body.event.tags) {
+        if (!Array.isArray(tag)) {
+          return { error: 'Invalid event: each tag must be an array' };
+        }
+        const validatedTag: string[] = [];
+        for (const element of tag) {
+          if (typeof element !== 'string') {
+            return { error: 'Invalid event: tag elements must be strings' };
+          }
+          validatedTag.push(element);
+        }
+        validatedTags.push(validatedTag);
+      }
+
+      const template: UnsignedEvent = {
         pubkey: pk.toLowerCase(),
-        kind: body.event.kind,
-        created_at: body.event.created_at,
+        kind,
+        created_at,
         content: body.event.content ?? '',
-        tags: Array.isArray(body.event.tags) ? body.event.tags : [],
+        tags: validatedTags,
       };
       const id = getEventHash(template);
       return { id };
@@ -55,48 +94,66 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
+    ...(context.requestId ? { 'X-Request-ID': context.requestId } : {}),
   };
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers });
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
 
+  // Defense-in-depth: Validate authentication even though router already enforces it
+  if (!_auth || !_auth.authenticated) {
+    return Response.json({ code: 'AUTH_REQUIRED', error: 'Authentication required' }, { status: 401, headers });
+  }
+
   if (!context.node) {
-    return Response.json({ error: 'Node not available' }, { status: 503, headers });
+    return Response.json({ code: 'NODE_UNAVAILABLE', error: 'Node not available' }, { status: 503, headers });
   }
 
   // Basic rate limit to protect signing endpoint
-  const rate = checkRateLimit(req);
+  // Use a separate bucket so signing traffic doesn't compete with auth/login
+  const rate = await checkRateLimit(req, 'sign');
   if (!rate.allowed) {
-    return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
+    return Response.json({ code: 'RATE_LIMITED', error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
       headers: { ...headers, 'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString() }
     });
+  }
+
+  const contentLength = req.headers.get('content-length');
+  if (contentLength && parseInt(contentLength) > 1024 * 100) { // 100KB limit
+    return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
   }
 
   let body: SignRequestBody;
   try {
     body = await req.json();
   } catch {
-    return Response.json({ error: 'Invalid JSON' }, { status: 400, headers });
+    return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
   }
 
-  const { id, error } = computeEventId(body) as any;
-  if (error) return Response.json({ error }, { status: 400, headers });
+  const result = computeEventId(body);
+  if ('error' in result) return Response.json({ code: 'BAD_REQUEST', error: result.error }, { status: 400, headers });
+  const { id } = result;
 
   try {
     // Bifrost sign request returns { ok, data: SignatureEntry[] }
     const timeoutMs = getOpTimeoutMs();
-    const result: any = await withTimeout((context.node as any).req.sign(id), timeoutMs, 'SIGN_TIMEOUT');
+    const result = await withTimeout(context.node!.req.sign(id), timeoutMs, 'SIGN_TIMEOUT');
     if (!result || result.ok !== true) {
-      const reason = (result && (result.err || result.error)) || 'signing failed';
-      return Response.json({ error: reason }, { status: 502, headers });
+      const reason = (result && (result.err ?? (result as any).error)) || 'signing failed';
+      if (typeof reason === 'string' && reason.toLowerCase().includes('timeout')) {
+        try { context.addServerLog('warning', 'Signing operation timed out', { id, timeoutMs }); } catch {}
+        return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${timeoutMs}ms` }, { status: 504, headers: { ...headers, 'Retry-After': Math.ceil(timeoutMs / 1000).toString() } });
+      }
+      try { context.addServerLog('error', 'Signing operation failed', { id, reason }); } catch {}
+      return Response.json({ code: 'SIGN_FAILED', error: String(reason) }, { status: 502, headers });
     }
 
     // Expect an array like: [[sighash, pubkey, signature]]
     let signatureHex: string | null = null;
     try {
       if (Array.isArray(result.data)) {
-        const entry = result.data.find((e: any) => Array.isArray(e) && e[0] === id) || result.data[0];
+        const entry = result.data.find((e) => Array.isArray(e) && e[0] === id) || result.data[0];
         signatureHex = Array.isArray(entry) ? entry[2] : null;
       }
     } catch (error) {
@@ -111,7 +168,7 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     }
 
     if (!signatureHex || typeof signatureHex !== 'string') {
-      return Response.json({ error: 'invalid signature response from node' }, { status: 502, headers });
+      return Response.json({ code: 'INVALID_NODE_RESPONSE', error: 'invalid signature response from node' }, { status: 502, headers });
     }
 
     return Response.json({ id, signature: signatureHex }, { status: 200, headers });
@@ -119,8 +176,8 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     const message = e?.message || 'Internal error during sign';
     if (message === 'SIGN_TIMEOUT') {
       try { context.addServerLog('warning', `FROSTR signing timeout`, { id }); } catch {}
-      return Response.json({ error: `Signing timed out after ${getOpTimeoutMs()}ms` }, { status: 504, headers });
+      return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${getOpTimeoutMs()}ms` }, { status: 504, headers });
     }
-    return Response.json({ error: message }, { status: 500, headers });
+    return Response.json({ code: 'SIGN_ERROR', error: message }, { status: 500, headers });
   }
 }

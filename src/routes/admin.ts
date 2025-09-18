@@ -3,6 +3,7 @@ import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { RouteContext } from './types.js';
 import { getAllUsers, deleteUserSafely, isDatabaseInitialized } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
+import { checkRateLimit } from './auth.js';
 
 /**
  * Shape of the request body for deleting a user via the admin API.
@@ -84,6 +85,21 @@ export async function handleAdminRoute(
     return new Response(null, { status: 200, headers });
   }
 
+  // Check rate limit before admin authentication to prevent brute force attacks
+  const rate = await checkRateLimit(req);
+  if (!rate.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+        }
+      }
+    );
+  }
+
   // Database must be initialized for admin operations
   try {
     const initialized = isDatabaseInitialized();
@@ -162,12 +178,18 @@ export async function handleAdminRoute(
           }
 
           // Perform atomic delete with last-admin guard inside a DB transaction
-          const { success, error } = deleteUserSafely(normalizedUserId);
-          if (!success) {
-            const status = error === 'User not found' ? 404 : (error === 'Cannot delete the last admin user' ? 400 : 500);
-            return Response.json({ error: error || 'Deletion failed' }, { status, headers });
+          try {
+            const { success, error } = deleteUserSafely(normalizedUserId);
+            if (!success) {
+              const status = error === 'User not found' ? 404 : (error === 'Cannot delete the last admin user' ? 400 : 500);
+              return Response.json({ error: error || 'Deletion failed' }, { status, headers });
+            }
+            return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
+          } catch (err: any) {
+              console.error(`[admin] Error during user deletion for userId ${normalizedUserId}:`, err.message);
+              const status = err.message === 'User not found' ? 404 : (err.message === 'Cannot delete the last admin user' ? 400 : 500);
+              return Response.json({ error: err.message || 'Deletion failed' }, { status, headers });
           }
-          return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
         }
         break;
 

@@ -47,8 +47,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
             if (parsedUserId == null) {
               hasStoredCredentials = false;
             } else {
-              const isValid = typeof parsedUserId === 'bigint'
-                ? parsedUserId > 0n
+              // parseUserId now returns only number | string, both JSON-safe
+              const isValid = typeof parsedUserId === 'string'
+                ? /^\d+$/.test(parsedUserId) && BigInt(parsedUserId) > 0n
                 : (Number.isFinite(parsedUserId) && Number.isSafeInteger(parsedUserId) && parsedUserId > 0);
 
               if (!isValid) {
@@ -57,7 +58,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
               } else {
                 // Lazy-load DB only in non-headless, authenticated path
                 const { userHasStoredCredentials } = await import('../db/database.js');
-                hasStoredCredentials = userHasStoredCredentials(parsedUserId);
+                // Convert to bigint for database operation
+                const dbUserId = typeof parsedUserId === 'string' ? BigInt(parsedUserId) : parsedUserId;
+                hasStoredCredentials = userHasStoredCredentials(dbUserId);
               }
             }
           } catch (unexpectedError) {

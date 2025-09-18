@@ -143,7 +143,7 @@ jobs:
         body: |
           ## Changes in ${{ steps.new_version.outputs.new_version }}
           
-          See [CHANGELOG.md](https://github.com/FROSTR-ORG/igloo-server/blob/main/CHANGELOG.md) for full details.
+          See [CHANGELOG.md](https://github.com/FROSTR-ORG/igloo-server/blob/master/CHANGELOG.md) for full details.
           
           ### Installation
           

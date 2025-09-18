@@ -4,6 +4,7 @@ import { Input } from "./ui/input"
 import { Tooltip } from "./ui/tooltip"
 import { Alert } from "./ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card"
+import Spinner from "./ui/spinner"
 import { HelpCircle, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { InputWithValidation } from "./ui/input-with-validation"
 
@@ -38,6 +39,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [advancedSettings, setAdvancedSettings] = useState({
     RELAYS: '["wss://relay.primal.net"]',
     SESSION_TIMEOUT: '3600',
+    FROSTR_SIGN_TIMEOUT: '30000',
     RATE_LIMIT_ENABLED: 'true',
     RATE_LIMIT_WINDOW: '900',
     RATE_LIMIT_MAX: '100',
@@ -50,6 +52,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   });
   const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<typeof advancedSettings>({...advancedSettings});
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
+  // Initial load gate to prevent empty form flash
+  const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [advancedError, setAdvancedError] = useState<string | undefined>(undefined);
   const loadAdvancedSettingsRef = useRef<AbortController | null>(null);
 
@@ -95,8 +99,23 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
-        const newSettings: any = {
+        interface AdvancedSettingsData {
+          SESSION_TIMEOUT: string;
+          FROSTR_SIGN_TIMEOUT: string;
+          RATE_LIMIT_ENABLED: string;
+          RATE_LIMIT_WINDOW: string;
+          RATE_LIMIT_MAX: string;
+          NODE_RESTART_DELAY: string;
+          NODE_MAX_RETRIES: string;
+          NODE_BACKOFF_MULTIPLIER: string;
+          NODE_MAX_RETRY_DELAY: string;
+          INITIAL_CONNECTIVITY_DELAY: string;
+          ALLOWED_ORIGINS: string;
+          RELAYS?: string;
+        }
+        const newSettings: AdvancedSettingsData = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
+          FROSTR_SIGN_TIMEOUT: coerceEnvValueToString(envVars.FROSTR_SIGN_TIMEOUT, '30000'),
           RATE_LIMIT_ENABLED: coerceEnvValueToString(envVars.RATE_LIMIT_ENABLED, 'true'),
           RATE_LIMIT_WINDOW: coerceEnvValueToString(envVars.RATE_LIMIT_WINDOW, '900'),
           RATE_LIMIT_MAX: coerceEnvValueToString(envVars.RATE_LIMIT_MAX, '100'),
@@ -133,6 +152,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   useEffect(() => {
     const loadExistingData = async () => {
       try {
+        setIsLoadingConfig(true);
         // Check if we're in headless mode
         const statusResponse = await fetch('/api/onboarding/status');
         
@@ -220,6 +240,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         }
       } catch (error) {
         console.error('Error loading existing data:', error);
+      } finally {
+        setIsLoadingConfig(false);
       }
     };
     loadExistingData();
@@ -332,6 +354,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       // Validate numeric fields
       const numericFields = [
         { key: 'SESSION_TIMEOUT', label: 'Session Timeout', min: 60, max: 86400 },
+        { key: 'FROSTR_SIGN_TIMEOUT', label: 'Signing Timeout (ms)', min: 1000, max: 120000 },
         { key: 'RATE_LIMIT_WINDOW', label: 'Rate Limit Window', min: 1, max: 3600 },
         { key: 'RATE_LIMIT_MAX', label: 'Rate Limit Max', min: 1, max: 10000 },
         { key: 'NODE_RESTART_DELAY', label: 'Node Restart Delay', min: 1000, max: 3600000 },
@@ -549,6 +572,19 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     groupCredential !== originalGroupCredential
   );
 
+  if (isLoadingConfig) {
+    return (
+      <Card className="bg-gray-900/30 border-blue-900/30 backdrop-blur-sm shadow-lg">
+        <CardHeader>
+          <CardTitle className="text-xl text-blue-200">Loading Configuration…</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Spinner label="Fetching saved credentials…" size="md" />
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="bg-gray-900/30 border-blue-900/30 backdrop-blur-sm shadow-lg">
       <CardHeader>
@@ -714,7 +750,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             {showAdvanced && (
               <div className="mt-4 space-y-4 p-4 bg-gray-900/20 rounded-lg border border-gray-700/30">
                 {isLoadingAdvanced && (
-                  <div className="text-blue-300 text-sm">Loading settings...</div>
+                  <Spinner label="Loading settings…" size="sm" inline />
                 )}
                 {/* Relays Configuration - Only show in headless mode */}
                 {isHeadlessMode && (
@@ -787,6 +823,31 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
                     placeholder="3600"
                     value={advancedSettings.SESSION_TIMEOUT}
                     onChange={(e) => setAdvancedSettings({...advancedSettings, SESSION_TIMEOUT: e.target.value})}
+                    disabled={isLoadingAdvanced}
+                    className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
+                  />
+                </div>
+                
+                {/* Signing Timeout */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-blue-200 flex items-center gap-1">
+                    <span>Signing Timeout (ms)</span>
+                    <Tooltip
+                      trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                      content={
+                        <>
+                          <p className="mb-2 font-semibold">FROSTR signing timeout:</p>
+                          <p>Maximum time the server waits for a signature before failing. Default: 30000ms (30s). Min 1000, Max 120000.</p>
+                        </>
+                      }
+                      width="w-60"
+                    />
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="30000"
+                    value={advancedSettings.FROSTR_SIGN_TIMEOUT}
+                    onChange={(e) => setAdvancedSettings({...advancedSettings, FROSTR_SIGN_TIMEOUT: e.target.value})}
                     disabled={isLoadingAdvanced}
                     className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                   />

@@ -24,7 +24,7 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
     };
   } else {
     // Database mode - get from authenticated user's stored credentials
-    if (!auth?.authenticated || (typeof auth.userId !== 'number' && typeof auth.userId !== 'bigint')) {
+    if (!auth?.authenticated || (typeof auth.userId !== 'number' && (typeof auth.userId !== 'string' || !/^\d+$/.test(auth.userId)))) {
       return null;
     }
     
@@ -60,8 +60,10 @@ async function getCredentials(auth?: RequestAuth | null): Promise<{ group_cred?:
       const { getUserCredentials } = await import('../db/database.js');
       
       // Await the call to support both sync and async implementations
+      // Convert string userId to bigint for database operation
+      const dbUserId = typeof auth.userId === 'string' ? BigInt(auth.userId) : auth.userId;
       const credentials = await getUserCredentials(
-        auth.userId,
+        dbUserId,
         secret,
         isDerivedKey
       );
@@ -96,6 +98,11 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
   };
+
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { status: 204, headers });
+  }
 
   try {
     switch (url.pathname) {

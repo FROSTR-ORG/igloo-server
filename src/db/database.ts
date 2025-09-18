@@ -20,14 +20,33 @@ if (!existsSync(DB_DIR)) {
   chmodSync(DB_DIR, 0o700);
 }
 
-// Initialize database
-// SECURITY NOTE: Bun's SQLite implementation doesn't support the safeIntegers option
-// that's available in better-sqlite3. This means INTEGER values exceeding JavaScript's
-// Number.MAX_SAFE_INTEGER (2^53-1 = 9,007,199,254,740,991) may lose precision.
-// For our use case with AUTOINCREMENT IDs, this is unlikely to be an issue as we'd need
-// over 9 quadrillion users. If precision is critical for large integers in the future,
-// consider using TEXT columns or implementing custom BigInt serialization.
+/**
+ * @security
+ * Bun's SQLite implementation does not support the `safeIntegers` option
+ * available in `better-sqlite3`. This means that `INTEGER` values exceeding
+ * `Number.MAX_SAFE_INTEGER` (2^53 - 1) may suffer from precision loss.
+ *
+ * For our primary use case with `AUTOINCREMENT` IDs, this is unlikely to be an
+ * issue, as it would require over 9 quadrillion records. However, to mitigate
+ * potential risks, we have introduced a `MAX_SAFE_ID` constant and an
+ * `isSafeId` helper function.
+ *
+ * If high-precision large integers are required in the future, consider storing
+ * them as `TEXT` and implementing custom `BigInt` serialization/deserialization.
+ */
+// Check for potential integer overflow when retrieving IDs
+const MAX_SAFE_ID = Number.MAX_SAFE_INTEGER;
+
 const db = new Database(DB_FILE);
+
+// Add a helper to check ID safety
+export const isSafeId = (id: number | bigint): boolean => {
+  // For numbers: check if they're within safe bounds (could have precision loss if > MAX_SAFE_INTEGER)
+  // For bigints: check if they could be safely converted to number if needed
+  return typeof id === 'number'
+    ? id <= Number.MAX_SAFE_INTEGER
+    : id <= BigInt(Number.MAX_SAFE_INTEGER);
+};
 
 // Enable foreign keys
 db.exec('PRAGMA foreign_keys = ON');
@@ -60,33 +79,31 @@ createUserTable();
 // This is used to perform a constant-time verification when user is not found
 const TIMING_SAFE_DUMMY_HASH = '$argon2id$v=19$m=65536,t=3,p=1$2JaKMgrWFzQ8TqnYPmqM8r8I8B3zgc5mz0IFadteOTw$XrSyLD/x6h8N+jnve8Sr0hODpCEUVmQ+qqyfGGXz+JI';
 
-// Close database connection (for graceful shutdown)
-export const closeDatabase = async (): Promise<void> => {
-  db.close();
+// Shutdown state flag to prevent new operations during cleanup
+let isShuttingDown = false;
+
+// Helper function to check shutdown state
+const checkShutdown = (): void => {
+  if (isShuttingDown) {
+    throw new Error('Database is shutting down');
+  }
 };
 
-// Register graceful shutdown handlers
-process.on('SIGINT', async () => {
-  console.log('[db] Received SIGINT. Closing database...');
+// Close database connection (for graceful shutdown)
+export const closeDatabase = async (): Promise<void> => {
+  isShuttingDown = true;
+  console.log('[db] Closing database connection...');
   try {
-    await closeDatabase();
+    db.close();
     console.log('[db] Database closed successfully');
   } catch (error) {
     console.error('[db] Error closing database:', error);
+    throw error;
   }
-  // Let the process terminate naturally after cleanup
-});
+};
 
-process.on('SIGTERM', async () => {
-  console.log('[db] Received SIGTERM. Closing database...');
-  try {
-    await closeDatabase();
-    console.log('[db] Database closed successfully');
-  } catch (error) {
-    console.error('[db] Error closing database:', error);
-  }
-  // Let the process terminate naturally after cleanup
-});
+// Note: Signal handlers removed - server.ts handles graceful shutdown
+// to avoid duplicate handlers and ensure proper cleanup order
 
 // Use centralized crypto constants (AES_CONFIG.IV_LENGTH recommended: 12 bytes for GCM)
 
@@ -207,15 +224,17 @@ export interface AdminUserListItem {
 
 // Check if database is initialized (has at least one user)
 export const isDatabaseInitialized = (): boolean => {
+  checkShutdown();
   const result = db.query('SELECT COUNT(*) as count FROM users').get() as { count: number } | null;
   return result ? result.count > 0 : false;
 };
 
 // Create a new user
 export const createUser = async (
-  username: string, 
+  username: string,
   password: string
 ): Promise<{ success: boolean; error?: string; userId?: number | bigint }> => {
+  checkShutdown();
   try {
     // Hash password using Bun's built-in password API with configured Argon2id parameters
     const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
@@ -238,6 +257,10 @@ export const createUser = async (
     // Get the last inserted ID (returns number or bigint based on size)
     const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
     
+    if (!isSafeId(lastId.id)) {
+      console.warn(`[db] Warning: New user ID ${lastId.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+    }
+
     return {
       success: true,
       userId: lastId.id
@@ -256,8 +279,13 @@ export const authenticateUser = async (
   username: string,
   password: string
 ): Promise<{ success: boolean; user?: User; error?: string }> => {
+  checkShutdown();
   try {
     const user = db.query('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
+
+    if (user && !isSafeId(user.id)) {
+      console.warn(`[db] Warning: Authenticated user ID ${user.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+    }
     
     if (!user) {
       // Perform dummy verification to prevent timing attacks
@@ -303,8 +331,12 @@ export const authenticateUser = async (
 
 // Get user by ID
 export const getUserById = (userId: number | bigint): User | null => {
+  checkShutdown();
   try {
     const user = db.query('SELECT * FROM users WHERE id = ?').get(userId) as User | undefined;
+    if (user && !isSafeId(user.id)) {
+      console.warn(`[db] Warning: Fetched user ID ${user.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+    }
     return user || null;
   } catch (error) {
     console.error('Error getting user by ID:', error);
@@ -314,8 +346,12 @@ export const getUserById = (userId: number | bigint): User | null => {
 
 // Get user by username
 export const getUserByUsername = (username: string): User | null => {
+  checkShutdown();
   try {
     const user = db.query('SELECT * FROM users WHERE username = ?').get(username) as User | undefined;
+    if (user && !isSafeId(user.id)) {
+      console.warn(`[db] Warning: Fetched user ID ${user.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+    }
     return user || null;
   } catch (error) {
     console.error('Error getting user by username:', error);
@@ -330,6 +366,7 @@ export const updateUserCredentials = (
   passwordOrKey: string | Uint8Array | Buffer, // User's password or derived key for encryption
   isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key (accepts hex string or binary)
 ): boolean => {
+  checkShutdown();
   try {
     const user = getUserById(userId);
     if (!user) return false;
@@ -411,6 +448,7 @@ export const getUserCredentials = (
   passwordOrKey: string | Uint8Array | Buffer, // User's password or derived key for decryption
   isDerivedKey: boolean = false // If true, passwordOrKey is already a derived key (accepts hex string or binary)
 ): UserCredentials | null => {
+  checkShutdown();
   try {
     const user = getUserById(userId);
     if (!user) return null;
@@ -459,6 +497,7 @@ export const getUserCredentials = (
 
 // Check if a user has stored credentials (without needing password)
 export const userHasStoredCredentials = (userId: number | bigint): boolean => {
+  checkShutdown();
   try {
     const user = getUserById(userId);
     if (!user) return false;
@@ -473,6 +512,7 @@ export const userHasStoredCredentials = (userId: number | bigint): boolean => {
 
 // Check if ANY user has stored credentials (for status endpoint in DB mode)
 export const anyUserHasStoredCredentials = (): boolean => {
+  checkShutdown();
   try {
     const result = db.query(`
       SELECT COUNT(*) as count FROM users 
@@ -488,6 +528,7 @@ export const anyUserHasStoredCredentials = (): boolean => {
 
 // Delete user credentials
 export const deleteUserCredentials = (userId: number | bigint): boolean => {
+  checkShutdown();
   try {
     const stmt = db.query(`
       UPDATE users 
@@ -512,6 +553,7 @@ export const deleteUserCredentials = (userId: number | bigint): boolean => {
  * @returns Array of users with basic info and credential status
  */
 export const getAllUsers = (): AdminUserListItem[] => {
+  checkShutdown();
   try {
     const rows = db.prepare(`
       SELECT 
@@ -521,14 +563,19 @@ export const getAllUsers = (): AdminUserListItem[] => {
         (group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL) AS hasCredentials
       FROM users
       ORDER BY created_at ASC, id ASC
-    `).all() as { id: number; username: string; created_at: string; hasCredentials: 0 | 1 }[];
+    `).all() as { id: number | bigint; username: string; created_at: string; hasCredentials: 0 | 1 }[];
     
-    return rows.map(r => ({ 
-      id: r.id,
-      username: r.username,
-      createdAt: r.created_at,
-      hasCredentials: !!r.hasCredentials 
-    }));
+    return rows.map(r => {
+      if (!isSafeId(r.id)) {
+        console.warn(`[db] Warning: User ID ${r.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+      }
+      return { 
+        id: r.id,
+        username: r.username,
+        createdAt: r.created_at,
+        hasCredentials: !!r.hasCredentials 
+      };
+    });
   } catch (error) {
     console.error('Error fetching all users:', error);
     return [];
@@ -541,12 +588,11 @@ export const getAllUsers = (): AdminUserListItem[] => {
  * @returns true if the user was deleted, false otherwise
  */
 export const deleteUser = (userId: number | bigint): boolean => {
+  checkShutdown();
   try {
     const stmt = db.prepare('DELETE FROM users WHERE id = ?');
-    stmt.run(userId);
-    // Use SQLite changes() to determine affected rows to avoid relying on run() return shape
-    const result = db.query('SELECT changes() as changes').get() as { changes: number } | null;
-    return !!result && result.changes > 0;
+    const res = stmt.run(userId);
+    return !!res && res.changes > 0;
   } catch (error) {
     console.error('Error deleting user:', error);
     return false;
@@ -561,6 +607,7 @@ export const deleteUser = (userId: number | bigint): boolean => {
 export const deleteUserSafely = (
   userId: number | bigint
 ): { success: boolean; error?: string } => {
+  checkShutdown();
   try {
     db.exec('BEGIN IMMEDIATE');
 
@@ -569,7 +616,11 @@ export const deleteUserSafely = (
         `SELECT id, (group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL) AS isAdmin
          FROM users WHERE id = ?`
       )
-      .get(userId) as { id: number; isAdmin: 0 | 1 } | undefined;
+      .get(userId) as { id: number | bigint; isAdmin: 0 | 1 } | undefined;
+
+    if (row && !isSafeId(row.id)) {
+      console.warn(`[db] Warning: User ID ${row.id} in deleteUserSafely exceeds Number.MAX_SAFE_INTEGER.`);
+    }
 
     if (!row) {
       db.exec('ROLLBACK');
@@ -588,9 +639,8 @@ export const deleteUserSafely = (
       return { success: false, error: 'Cannot delete the last admin user' };
     }
 
-    db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-    const changes = db.query('SELECT changes() as changes').get() as { changes: number } | null;
-    if (!changes || changes.changes === 0) {
+    const res = db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+    if (!res || res.changes === 0) {
       db.exec('ROLLBACK');
       return { success: false, error: 'User not found or deletion failed' };
     }

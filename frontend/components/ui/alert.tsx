@@ -1,4 +1,4 @@
-import React, { ReactNode } from 'react';
+import React, { ReactNode, useEffect } from 'react';
 import { cn } from "../../lib/utils";
 import { AlertCircle, CheckCircle, Info, XCircle } from 'lucide-react';
 
@@ -10,6 +10,8 @@ interface AlertProps {
   children: ReactNode;
   className?: string;
   icon?: ReactNode;
+  onClose?: () => void;
+  dismissAfterMs?: number; // auto-dismiss after a delay when provided
 }
 
 const variantStyles = {
@@ -36,8 +38,16 @@ const Alert: React.FC<AlertProps> = ({
   title,
   children,
   className,
-  icon
+  icon,
+  onClose,
+  dismissAfterMs
 }) => {
+  useEffect(() => {
+    if (!onClose || !dismissAfterMs || dismissAfterMs <= 0) return;
+    const t = setTimeout(() => onClose(), dismissAfterMs);
+    return () => clearTimeout(t);
+  }, [onClose, dismissAfterMs]);
+
   return (
     <div className={cn(
       "p-3 rounded-lg border",
@@ -48,10 +58,20 @@ const Alert: React.FC<AlertProps> = ({
         <div className="flex-shrink-0 mr-2 mt-0.5">
           {icon || variantStyles[variant].icon}
         </div>
-        <div>
+        <div className="flex-1">
           {title && <div className="font-medium mb-1">{title}</div>}
           <div className="text-sm">{children}</div>
         </div>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Dismiss alert"
+            className="ml-3 text-xs text-gray-400 hover:text-gray-200"
+          >
+            ×
+          </button>
+        )}
       </div>
     </div>
   );

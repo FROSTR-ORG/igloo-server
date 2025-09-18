@@ -2,23 +2,46 @@
 
 /**
  * Shared type for user IDs across different auth methods.
- * 
- * IMPORTANT: BigInt Serialization Warning
- * ----------------------------------------
- * The bigint type is included for flexibility but requires careful handling:
- * - JSON.stringify() does NOT natively support BigInt and will throw TypeError
- * - Before JSON serialization, convert bigint to string or number:
- *   - Use toString() for preserving large values: userId.toString()
- *   - Use Number() if value fits in safe integer range: Number(userId)
- * 
- * Current usage patterns in codebase:
- * - status.ts: Converts bigint to number after validation (lines 59-63)
- * - app-header.tsx: Converts to string for display: String(userId)
- * - No direct JSON serialization of raw userId found in Response.json() calls
- * 
- * Recommended: Always validate and convert bigint before serialization.
+ *
+ * Type Safety: Only JSON-serializable types
+ * ------------------------------------------
+ * This type excludes bigint to prevent JSON serialization errors.
+ * - string: For large IDs that exceed Number.MAX_SAFE_INTEGER
+ * - number: For standard numeric IDs within safe integer range
+ *
+ * For BigInt conversion, use the helper functions below:
+ * - userIdFromBigInt(): Converts bigint to string representation
+ * - parseUserIdSafe(): Parses input and returns serializable type
  */
-export type UserId = string | number | bigint;
+export type UserId = string | number;
+
+/**
+ * Converts a bigint user ID to a JSON-serializable string format.
+ * Use this when receiving bigint from database or other sources.
+ */
+export function userIdFromBigInt(id: bigint): UserId {
+  return id.toString();
+}
+
+/**
+ * Type guard to check if a value can be safely used as a UserId
+ */
+export function isValidUserId(value: unknown): value is UserId {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && Number.isSafeInteger(value) && value > 0;
+  }
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!/^\d+$/.test(trimmed)) return false;
+    try {
+      const asBigInt = BigInt(trimmed);
+      return asBigInt > 0n;
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
 
 export interface PeerStatus {
   pubkey: string;
@@ -100,6 +123,8 @@ export interface RouteContext {
 
 // Privileged context for trusted/authenticated routes that need node management
 export interface PrivilegedRouteContext extends RouteContext {
+  // Synchronously updates the node reference and performs cleanup
+  // Note: This is NOT async - it returns void, not Promise<void>
   updateNode: (newNode: ServerBifrostNode | null) => void;
 }
 

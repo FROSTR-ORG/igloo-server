@@ -39,24 +39,140 @@ export async function initializeNip46DB(): Promise<void> {
       if (applied.length > 0) {
         console.log(`[nip46] Applied ${applied.length} migration(s):`, applied.join(', '))
       }
+
+      // Defensive check: Verify critical tables exist and recreate if missing
+      // This handles cases where migrations partially failed
+      verifyAndCreateMissingTables()
     })
   }
   return initializationPromise
 }
 
+// Defensive function to ensure critical NIP46 tables exist
+function verifyAndCreateMissingTables(): void {
+  const requiredTables = [
+    {
+      name: 'nip46_sessions',
+      sql: `CREATE TABLE IF NOT EXISTS nip46_sessions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_pubkey TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','active','revoked')) DEFAULT 'pending',
+        profile_name TEXT,
+        profile_url TEXT,
+        profile_image TEXT,
+        relays TEXT,
+        policy_methods TEXT,
+        policy_kinds TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_active_at DATETIME,
+        UNIQUE(user_id, client_pubkey)
+      )`
+    },
+    {
+      name: 'nip46_session_events',
+      sql: `CREATE TABLE IF NOT EXISTS nip46_session_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_pubkey TEXT NOT NULL,
+        event_type TEXT NOT NULL CHECK (event_type IN ('created','status_change','grant_method','grant_kind','revoke_method','revoke_kind','upsert')),
+        detail TEXT,
+        value TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'nip46_transport_keys',
+      sql: `CREATE TABLE IF NOT EXISTS nip46_transport_keys (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        transport_sk TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    }
+  ]
+
+  for (const table of requiredTables) {
+    try {
+      // Check if table exists
+      const exists = db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?"
+      ).get(table.name)
+
+      if (!exists) {
+        console.log(`[nip46] Creating missing table: ${table.name}`)
+        db.exec(table.sql)
+
+        // Create associated indexes
+        if (table.name === 'nip46_sessions') {
+          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id)')
+        } else if (table.name === 'nip46_session_events') {
+          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
+        }
+      }
+    } catch (error) {
+      console.error(`[nip46] Failed to verify/create table ${table.name}:`, error)
+      // Don't throw - let the application continue with degraded functionality
+    }
+  }
+}
+
+// Maximum size for JSON fields to prevent memory exhaustion
+// Increased from 10KB to 50KB to accommodate larger relay lists and policies
+const MAX_JSON_FIELD_SIZE = 50000 // 50KB per field
+
 function rowToSession(row: any): Nip46Session {
   let relays: string[] | null = null
+
   if (row.relays) {
-    try { relays = JSON.parse(row.relays) } catch { relays = null }
+    // Check size before parsing to prevent DoS and ensure data integrity
+    if (row.relays.length > MAX_JSON_FIELD_SIZE) {
+      // Generic error message to prevent information disclosure
+      throw new Error('[nip46] Data integrity violation: Relay data exceeds maximum size')
+    }
+    try {
+      relays = JSON.parse(row.relays)
+    } catch (e) {
+      // Log for debugging but don't expose error details to client
+      console.error('[nip46] Failed to parse relays JSON, using null:', e)
+      relays = null
+    }
   }
+
   let methods: Record<string, boolean> | undefined
   let kinds: Record<string, boolean> | undefined
+
   if (row.policy_methods) {
-    try { methods = JSON.parse(row.policy_methods) } catch {}
+    // Check size before parsing
+    if (row.policy_methods.length > MAX_JSON_FIELD_SIZE) {
+      // Generic error message to prevent information disclosure
+      throw new Error('[nip46] Data integrity violation: Policy methods data exceeds maximum size')
+    }
+    try {
+      methods = JSON.parse(row.policy_methods)
+    } catch (e) {
+      // Log for debugging but don't expose error details to client
+      console.error('[nip46] Failed to parse policy_methods JSON, using empty:', e)
+      methods = {}
+    }
   }
+
   if (row.policy_kinds) {
-    try { kinds = JSON.parse(row.policy_kinds) } catch {}
+    // Check size before parsing
+    if (row.policy_kinds.length > MAX_JSON_FIELD_SIZE) {
+      // Generic error message to prevent information disclosure
+      throw new Error('[nip46] Data integrity violation: Policy kinds data exceeds maximum size')
+    }
+    try {
+      kinds = JSON.parse(row.policy_kinds)
+    } catch (e) {
+      // Log for debugging but don't expose error details to client
+      console.error('[nip46] Failed to parse policy_kinds JSON, using empty:', e)
+      kinds = {}
+    }
   }
+
   return {
     id: row.id,
     user_id: row.user_id,
@@ -81,6 +197,27 @@ export function listSessions(userId: number | bigint, opts?: { includeRevoked?: 
   return rows.map(rowToSession)
 }
 
+// Transport key persistence (per-user)
+export function getTransportKey(userId: number | bigint): string | null {
+  const row = db.prepare('SELECT transport_sk FROM nip46_transport_keys WHERE user_id = ?').get(userId) as { transport_sk?: string } | undefined
+  if (!row || typeof row.transport_sk !== 'string') return null
+  const sk = row.transport_sk.trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(sk) ? sk : null
+}
+
+export function setTransportKey(userId: number | bigint, sk: string): string {
+  const key = (sk || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(key)) {
+    throw new Error('Invalid transport key format')
+  }
+  db.prepare(`
+    INSERT INTO nip46_transport_keys (user_id, transport_sk)
+    VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET transport_sk = excluded.transport_sk, updated_at = CURRENT_TIMESTAMP
+  `).run(userId, key)
+  return key
+}
+
 export function upsertSession(params: {
   userId: number | bigint
   client_pubkey: string
@@ -93,9 +230,26 @@ export function upsertSession(params: {
   const { userId, client_pubkey } = params
   const status = params.status || 'pending'
   const profile = params.profile || {}
-  const relays = params.relays ? JSON.stringify(params.relays) : null
+
+  // Validate and stringify JSON fields with size limits
+  let relays: string | null = null
+  if (params.relays) {
+    relays = JSON.stringify(params.relays)
+    if (relays.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Relay data too large (${relays.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    }
+  }
+
   const policy_methods = JSON.stringify(params.policy?.methods || {})
+  if (policy_methods.length > MAX_JSON_FIELD_SIZE) {
+    throw new Error(`Policy methods data too large (${policy_methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+  }
+
   const policy_kinds = JSON.stringify(params.policy?.kinds || {})
+  if (policy_kinds.length > MAX_JSON_FIELD_SIZE) {
+    throw new Error(`Policy kinds data too large (${policy_kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+  }
+
   const now = new Date().toISOString()
 
   db.exec('BEGIN')
@@ -107,12 +261,15 @@ export function upsertSession(params: {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
       ON CONFLICT(user_id, client_pubkey) DO UPDATE SET
         status = excluded.status,
-        profile_name = excluded.profile_name,
-        profile_url = excluded.profile_url,
-        profile_image = excluded.profile_image,
-        relays = excluded.relays,
-        policy_methods = excluded.policy_methods,
-        policy_kinds = excluded.policy_kinds,
+        -- Preserve existing profile fields when the incoming value is NULL
+        profile_name = COALESCE(excluded.profile_name, nip46_sessions.profile_name),
+        profile_url = COALESCE(excluded.profile_url, nip46_sessions.profile_url),
+        profile_image = COALESCE(excluded.profile_image, nip46_sessions.profile_image),
+        -- Preserve existing relays when not provided
+        relays = COALESCE(excluded.relays, nip46_sessions.relays),
+        -- Policies are explicit; always update with provided JSON
+        policy_methods = COALESCE(excluded.policy_methods, nip46_sessions.policy_methods),
+        policy_kinds = COALESCE(excluded.policy_kinds, nip46_sessions.policy_kinds),
         updated_at = CURRENT_TIMESTAMP,
         last_active_at = COALESCE(excluded.last_active_at, nip46_sessions.last_active_at)
     `).run(
@@ -129,9 +286,14 @@ export function upsertSession(params: {
     )
 
     const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    // Convert row to session object BEFORE committing transaction
+    // This ensures any errors in rowToSession will properly rollback
+    const session = rowToSession(row)
     db.exec('COMMIT')
+
+    // Log event after successful commit (non-critical, failures ignored)
     try { logSessionEvent(userId, client_pubkey, 'upsert') } catch {}
-    return rowToSession(row)
+    return session
   } catch (e) {
     db.exec('ROLLBACK')
     throw e
@@ -139,51 +301,109 @@ export function upsertSession(params: {
 }
 
 export function updatePolicy(userId: number | bigint, client_pubkey: string, policy: Nip46Policy): Nip46Session | null {
-  // Diff against existing to record grants/revocations
-  const existing = db.prepare('SELECT policy_methods, policy_kinds FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey) as { policy_methods: string | null, policy_kinds: string | null } | undefined
-  const prevMethods = existing?.policy_methods ? safeParseJSON(existing.policy_methods, {}) as Record<string, boolean> : {}
-  const prevKinds = existing?.policy_kinds ? safeParseJSON(existing.policy_kinds, {}) as Record<string, boolean> : {}
-  const nextMethods = policy.methods || {}
-  const nextKinds = policy.kinds || {}
-  const methods = JSON.stringify(nextMethods)
-  const kinds = JSON.stringify(nextKinds)
-  db.prepare(`
-    UPDATE nip46_sessions
-    SET policy_methods = ?, policy_kinds = ?, updated_at = CURRENT_TIMESTAMP
-    WHERE user_id = ? AND client_pubkey = ?
-  `).run(methods, kinds, userId, client_pubkey)
-  // Log changes (grants/revokes)
+  // Use transaction to ensure atomicity between UPDATE and SELECT
+  db.exec('BEGIN')
   try {
-    for (const k of Object.keys({ ...prevMethods, ...nextMethods })) {
-      const before = !!prevMethods[k]
-      const after = !!nextMethods[k]
-      if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_method' : 'revoke_method', k)
+    // Diff against existing to record grants/revocations
+    const existing = db.prepare('SELECT policy_methods, policy_kinds FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey) as { policy_methods: string | null, policy_kinds: string | null } | undefined
+
+    // Return early if session doesn't exist (prevents orphan audit records)
+    if (!existing) {
+      db.exec('ROLLBACK')
+      return null;
     }
-    for (const k of Object.keys({ ...prevKinds, ...nextKinds })) {
-      const before = !!prevKinds[k]
-      const after = !!nextKinds[k]
-      if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_kind' : 'revoke_kind', k)
+
+    const prevMethods = existing.policy_methods ? safeParseJSON(existing.policy_methods, {}) as Record<string, boolean> : {}
+    const prevKinds = existing.policy_kinds ? safeParseJSON(existing.policy_kinds, {}) as Record<string, boolean> : {}
+    const nextMethods = policy.methods || {}
+    const nextKinds = policy.kinds || {}
+
+    // Validate size before storing
+    const methods = JSON.stringify(nextMethods)
+    if (methods.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy methods data too large (${methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
     }
-  } catch {}
-  const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
-  return row ? rowToSession(row) : null
+
+    const kinds = JSON.stringify(nextKinds)
+    if (kinds.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy kinds data too large (${kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    }
+
+    // Update the session
+    db.prepare(`
+      UPDATE nip46_sessions
+      SET policy_methods = ?, policy_kinds = ?, updated_at = CURRENT_TIMESTAMP
+      WHERE user_id = ? AND client_pubkey = ?
+    `).run(methods, kinds, userId, client_pubkey)
+
+    // Fetch the updated session within the transaction to ensure consistency
+    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    const session = row ? rowToSession(row) : null
+
+    // Commit the transaction
+    db.exec('COMMIT')
+
+    // Log changes (grants/revokes) after successful commit
+    // This is non-critical so we do it outside the transaction
+    try {
+      for (const k of Object.keys({ ...prevMethods, ...nextMethods })) {
+        const before = !!prevMethods[k]
+        const after = !!nextMethods[k]
+        if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_method' : 'revoke_method', k)
+      }
+      for (const k of Object.keys({ ...prevKinds, ...nextKinds })) {
+        const before = !!prevKinds[k]
+        const after = !!nextKinds[k]
+        if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_kind' : 'revoke_kind', k)
+      }
+    } catch {}
+
+    return session
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
 }
 
 export function updateStatus(userId: number | bigint, client_pubkey: string, status: Nip46Status, touchActive = false): Nip46Session | null {
-  db.prepare(`
-    UPDATE nip46_sessions
-    SET status = ?, updated_at = CURRENT_TIMESTAMP, last_active_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_active_at END
-    WHERE user_id = ? AND client_pubkey = ?
-  `).run(status, touchActive ? 1 : 0, userId, client_pubkey)
-  try { logSessionEvent(userId, client_pubkey, 'status_change', undefined, status) } catch {}
-  const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
-  return row ? rowToSession(row) : null
+  // Use transaction to ensure atomicity between UPDATE and SELECT
+  db.exec('BEGIN')
+  try {
+    // Update the session status
+    const res = db.prepare(`
+      UPDATE nip46_sessions
+      SET status = ?, updated_at = CURRENT_TIMESTAMP, last_active_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_active_at END
+      WHERE user_id = ? AND client_pubkey = ?
+    `).run(status, touchActive ? 1 : 0, userId, client_pubkey)
+
+    // Check if UPDATE affected any rows before logging events
+    if (!res || res.changes === 0) {
+      db.exec('ROLLBACK')
+      return null; // No session was updated
+    }
+
+    // Fetch the updated session within the transaction to ensure consistency
+    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    const session = row ? rowToSession(row) : null
+
+    // Commit the transaction
+    db.exec('COMMIT')
+
+    // Log the status change after successful commit (non-critical)
+    try { logSessionEvent(userId, client_pubkey, 'status_change', undefined, status) } catch {}
+
+    return session
+  } catch (e) {
+    db.exec('ROLLBACK')
+    throw e
+  }
 }
 
 export function deleteSession(userId: number | bigint, client_pubkey: string): boolean {
-  db.prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').run(userId, client_pubkey)
-  const changed = db.query('SELECT changes() as c').get() as { c: number } | null
-  return !!changed && changed.c > 0
+  const res = db
+    .prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?')
+    .run(userId, client_pubkey)
+  return !!res && res.changes > 0
 }
 
 /**

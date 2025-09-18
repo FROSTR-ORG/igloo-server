@@ -179,7 +179,7 @@ The script performs these checks in sequence:
 
 ### 3. Manual Steps (Developer Action Required)
 
-After the script pushes the release branch, you must create a pull request to merge the changes into the `main` branch.
+After the script pushes the release branch, you must create a pull request to merge the changes into the `master` branch.
 
 1.  **Create a Pull Request**
 
@@ -189,16 +189,16 @@ After the script pushes the release branch, you must create a pull request to me
     ```bash
     # Optional: Create the pull request using the GitHub CLI
     # Replace <VERSION> with the new version number from the script's output
-    gh pr create --base main --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
+    gh pr create --base master --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
     ```
 
 2.  **Review and Merge PR**
     - Get approvals if required.
-    - Merge the pull request to `main` to trigger the automated release workflow.
+    - Merge the pull request to `master` to trigger the automated release workflow.
 
 ### 4. GitHub Actions Automation
 
-When the PR is merged to main:
+When the PR is merged to master:
 
 1. **Release Creation**
    - GitHub automatically creates a release
@@ -325,7 +325,7 @@ Apply appropriate labels for changelog categorization:
 ## Release Artifacts
 
 Each release produces:
-1. **Git Tag**: `v{version}` on main branch
+1. **Git Tag**: `v{version}` on master branch
 2. **GitHub Release**: With auto-generated changelog
 3. **Updated package.json**: New version number
 4. **Release Branch**: Archived as `release/prepare-v{version}`
@@ -336,9 +336,9 @@ If a release needs to be rolled back:
 
 1. **Revert on Master**
    ```bash
-   git checkout main
+   git checkout master
    git revert <merge-commit-hash>
-   git push origin main
+   git push origin master
    ```
 
 2. **Create Hotfix**
@@ -346,7 +346,7 @@ If a release needs to be rolled back:
    git checkout -b hotfix/v{version}-rollback
    # Make fixes
    git push origin hotfix/v{version}-rollback
-   # Create PR to main
+   # Create PR to master
    ```
 
 ## Monitoring Post-Release
