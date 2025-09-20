@@ -158,6 +158,16 @@ function createInstrumentedPool(
 
   const cache = new Map<string | symbol, any>();
 
+  const isBenignPublishError = (reason: string | undefined): boolean => {
+    if (!reason) return false;
+    const lower = reason.toLowerCase();
+    return (
+      lower.includes('policy violated') ||
+      lower.includes('web of trust') ||
+      lower.includes('blocked:')
+    );
+  };
+
   const handler: ProxyHandler<any> = {
     get(target, prop, receiver) {
       if (cache.has(prop)) return cache.get(prop);
@@ -173,6 +183,15 @@ function createInstrumentedPool(
               const reason = err instanceof Error ? err.message : String(err);
               const url = Array.isArray(relays) ? relays[idx] : undefined;
               trackPublishFailure(url, reason, addServerLog);
+              if (isBenignPublishError(reason)) {
+                if (addServerLog) {
+                  addServerLog('warning', 'Relay publish rejected (benign)', {
+                    relay: url,
+                    reason
+                  });
+                }
+                return false;
+              }
               throw err;
             }));
           } catch (err: any) {

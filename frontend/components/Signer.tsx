@@ -1153,6 +1153,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           isSignerRunning={isSignerRunning}
           disabled={!isGroupValid || !isShareValid}
           authHeaders={authHeaders}
+          defaultExpanded={isDatabaseMode()}
         />
 
         <EventLog

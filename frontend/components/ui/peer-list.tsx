@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
 import { Badge } from './badge';
@@ -36,6 +36,7 @@ interface PeerListProps {
   disabled?: boolean;
   className?: string;
   authHeaders?: Record<string, string>;
+  defaultExpanded?: boolean;
 }
 
 // Utility function to parse date values safely
@@ -149,9 +150,10 @@ const PeerList: React.FC<PeerListProps> = ({
   isSignerRunning,
   disabled = false,
   className,
-  authHeaders = {}
+  authHeaders = {},
+  defaultExpanded = false
 }) => {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
   const [peers, setPeers] = useState<PeerStatus[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -162,6 +164,13 @@ const PeerList: React.FC<PeerListProps> = ({
   const [policyPanelPeer, setPolicyPanelPeer] = useState<string | null>(null);
   const [policySavingPeers, setPolicySavingPeers] = useState<Set<string>>(new Set());
   const [policyPeerErrors, setPolicyPeerErrors] = useState<Map<string, string>>(new Map());
+  const hasUserToggledRef = useRef(false);
+
+  useEffect(() => {
+    if (defaultExpanded && !hasUserToggledRef.current) {
+      setIsExpanded(true);
+    }
+  }, [defaultExpanded]);
 
   const setPolicyBusyState = useCallback((key: string, busy: boolean) => {
     setPolicySavingPeers(prev => {
@@ -539,6 +548,7 @@ const PeerList: React.FC<PeerListProps> = ({
   }, [isSignerRunning, fetchPeers, pingAllPeers]);
 
   const handleToggle = () => {
+    hasUserToggledRef.current = true;
     setIsExpanded(prev => !prev);
   };
 

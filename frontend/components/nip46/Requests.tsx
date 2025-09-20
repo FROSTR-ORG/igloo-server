@@ -96,10 +96,10 @@ export function Requests({ controller }: RequestsProps) {
     }
   }, [controller])
 
-  const handleApprove = async (id: string) => {
+  const handleApprove = async (id: string, options?: { autoGrant?: boolean }) => {
     setActionById(s => ({ ...s, [id]: 'approving' }))
     try {
-      await controller?.approveRequest(id)
+      await controller?.approveRequest(id, options)
       setActionById(s => ({ ...s, [id]: 'approved' }))
       setFlash({ kind: 'success', text: 'Request approved' })
       setTimeout(() => setFlash(null), 1500)
@@ -154,7 +154,7 @@ export function Requests({ controller }: RequestsProps) {
     try {
       for (const r of pendingRequests) {
         if (r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind) {
-          await handleApprove(r.id)
+          await handleApprove(r.id, { autoGrant: true })
         }
       }
       setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'success' } }))

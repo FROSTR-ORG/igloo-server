@@ -18,7 +18,7 @@ interface PermissionsDropdownProps {
   newEventKind: string
   onPermissionChange: (permissions: PermissionPolicy) => void
   onEventKindChange: (eventKind: string) => void
-  onUpdateSession: () => void
+  onUpdateSession: (policyOverride?: PermissionPolicy, options?: { keepOpen?: boolean }) => void
   requestedPermissions?: PermissionPolicy
 }
 
@@ -84,6 +84,7 @@ export function PermissionsDropdown({
       kinds: { ...(editingPermissions.kinds || {}), ...(requestedPermissions?.kinds || {}) }
     }
     onPermissionChange(merged)
+    onUpdateSession(merged, { keepOpen: true })
   }
 
   return (
@@ -158,7 +159,7 @@ export function PermissionsDropdown({
       </div>
 
       <div className="permissions-actions">
-        <Button onClick={onUpdateSession} className="permissions-update-btn bg-blue-600 hover:bg-blue-700 text-blue-100">
+        <Button onClick={() => onUpdateSession()} className="permissions-update-btn bg-blue-600 hover:bg-blue-700 text-blue-100">
           Update Permissions
         </Button>
       </div>

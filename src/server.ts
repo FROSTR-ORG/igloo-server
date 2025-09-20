@@ -97,7 +97,10 @@ function isBenignRelayErrorMessage(message: string | undefined): boolean {
     lower.includes('socket closed') ||
     lower.includes('econnreset') ||
     lower.includes('network error') ||
-    lower.includes('temporarily unavailable')
+    lower.includes('temporarily unavailable') ||
+    lower.includes('policy violated') ||
+    lower.includes('web of trust') ||
+    lower.includes('policy violation')
   );
 }
 

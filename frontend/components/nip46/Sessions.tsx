@@ -21,6 +21,25 @@ export function Sessions({ controller }: SessionsProps) {
   const [isScanning, setIsScanning] = useState(false)
   const [history, setHistory] = useState<Record<string, { recent_kinds?: string[]; recent_methods?: string[]; last_active_at?: string; status?: string }>>({})
 
+  const normalizePolicy = (policy?: PermissionPolicy | null): PermissionPolicy => {
+    const normalized: PermissionPolicy = { methods: {}, kinds: {} }
+    if (!policy) return normalized
+    if (policy.methods && typeof policy.methods === 'object') {
+      for (const [key, value] of Object.entries(policy.methods)) {
+        if (value === true) normalized.methods[key] = true
+        else if (value === false) normalized.methods[key] = false
+      }
+    }
+    if (policy.kinds && typeof policy.kinds === 'object') {
+      for (const [key, value] of Object.entries(policy.kinds)) {
+        const safeKey = String(key)
+        if (value === true) normalized.kinds[safeKey] = true
+        else if (value === false) normalized.kinds[safeKey] = false
+      }
+    }
+    return normalized
+  }
+
   useEffect(() => {
     if (!controller) return
     let lastA = 0, lastP = 0
@@ -86,20 +105,27 @@ export function Sessions({ controller }: SessionsProps) {
     } else {
       s.add(pubkey)
       const session = [...activeSessions, ...pendingSessions].find(s => s.pubkey === pubkey)
-      if (session) setEditingPermissions(prev => ({ ...prev, [pubkey]: { ...(session.policy || { methods: {}, kinds: {} }) } }))
+      if (session) setEditingPermissions(prev => ({ ...prev, [pubkey]: normalizePolicy(session.policy || { methods: {}, kinds: {} }) }))
     }
     setExpandedPermissions(s)
   }
 
   const handlePermissionChange = (pubkey: string, permissions: PermissionPolicy) => {
-    setEditingPermissions(prev => ({ ...prev, [pubkey]: permissions }))
+    setEditingPermissions(prev => ({ ...prev, [pubkey]: normalizePolicy(permissions) }))
   }
   const handleEventKindChange = (pubkey: string, kind: string) => setNewEventKind(prev => ({ ...prev, [pubkey]: kind }))
-  const handleUpdateSession = async (pubkey: string) => {
+  const handleUpdateSession = async (pubkey: string, policyOverride?: PermissionPolicy, options?: { keepOpen?: boolean }) => {
     const session = [...activeSessions, ...pendingSessions].find(s => s.pubkey === pubkey)
     if (!controller || !session) return
-    const updated = editingPermissions[pubkey] || { methods: {}, kinds: {} }
-    controller.updateSession(pubkey, updated)
+    const policyToPersist = normalizePolicy(policyOverride || editingPermissions[pubkey] || session.policy || { methods: {}, kinds: {} })
+    controller.updateSession(pubkey, policyToPersist)
+
+    if (options?.keepOpen) {
+      setEditingPermissions(prev => ({ ...prev, [pubkey]: policyToPersist }))
+      setNewEventKind(prev => ({ ...prev, [pubkey]: '' }))
+      return
+    }
+
     const s = new Set(expandedPermissions); s.delete(pubkey); setExpandedPermissions(s)
     const e = { ...editingPermissions }; delete e[pubkey]; setEditingPermissions(e)
     const n = { ...newEventKind }; delete n[pubkey]; setNewEventKind(n)
@@ -181,12 +207,12 @@ export function Sessions({ controller }: SessionsProps) {
                   {expandedPermissions.has(session.pubkey) && (
                     <PermissionsDropdown
                       session={session}
-                      editingPermissions={editingPermissions[session.pubkey] || session.policy || { methods: {}, kinds: {}}}
+                      editingPermissions={editingPermissions[session.pubkey] || normalizePolicy(session.policy || { methods: {}, kinds: {} })}
                       newEventKind={newEventKind[session.pubkey] || ''}
                       requestedPermissions={session.requested}
                       onPermissionChange={(p) => handlePermissionChange(session.pubkey, p)}
                       onEventKindChange={(k) => handleEventKindChange(session.pubkey, k)}
-                      onUpdateSession={() => handleUpdateSession(session.pubkey)}
+                      onUpdateSession={(policy, options) => handleUpdateSession(session.pubkey, policy, options)}
                     />
                   )}
 

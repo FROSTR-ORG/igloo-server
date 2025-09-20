@@ -206,7 +206,7 @@ export class NIP46Controller extends Emitter {
   getActiveSessions(): SignerSession[] { return [...this.activeSessions] }
   getPendingSessions(): SignerSession[] { return [...this.pendingSessions] }
 
-  async approveRequest(id: string) {
+  async approveRequest(id: string, options?: { autoGrant?: boolean }) {
     const idx = this.requests.findIndex(r => r.id === id)
     if (idx === -1) return
     const req = this.requests[idx]
@@ -215,6 +215,10 @@ export class NIP46Controller extends Emitter {
       if (!this.lib || !this.agent) throw new Error('Signer not initialized')
       const original = this.reqById.get(id)
       await this.processRequest(original) // single-serve approval only; does not modify policy
+      if (options?.autoGrant) {
+        const pubkey = this.getReqPubkey(original) || req.session?.pubkey
+        if (pubkey) this.autoGrantOnApprove(pubkey, req)
+      }
     } catch (e) {
       this.emit('error', e)
     } finally {
