@@ -50,6 +50,18 @@ const App: React.FC = () => {
     initializeApp();
   }, []);
 
+  // Global handler for authentication/credentials expiry from child components
+  useEffect(() => {
+    const onAuthExpired = () => {
+      // If already unauthenticated, ignore; otherwise trigger logout to show login screen
+      if (authState.isAuthenticated) {
+        handleLogout().catch(console.error);
+      }
+    };
+    window.addEventListener('authExpired', onAuthExpired as EventListener);
+    return () => window.removeEventListener('authExpired', onAuthExpired as EventListener);
+  }, [authState.isAuthenticated]);
+
   const initializeApp = async () => {
     try {
       // Check onboarding status first with retry logic

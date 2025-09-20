@@ -88,7 +88,17 @@ let circuitBreakerExitCode: number | null = null;
 function isBenignRelayErrorMessage(message: string | undefined): boolean {
   if (!message) return false;
   const lower = message.toLowerCase();
-  return lower.includes('blocked:');
+  return (
+    lower.includes('blocked:') ||
+    lower.includes('relay connection closed') ||
+    lower.includes('connection closed') ||
+    lower.includes('websocket is not open') ||
+    lower.includes('socket not open') ||
+    lower.includes('socket closed') ||
+    lower.includes('econnreset') ||
+    lower.includes('network error') ||
+    lower.includes('temporarily unavailable')
+  );
 }
 
 function recordUnhandledErrorAndMaybeExit(source: string, message: string) {

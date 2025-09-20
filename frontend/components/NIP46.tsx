@@ -94,10 +94,31 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
       if (groupCred && shareCred) {
         setInitializing(true)
         const stableSk = await fetchTransportKey()
-        if (!cancelled) await initializeController(stableSk, authHeaders)
+        // Fetch server relays to align NIP-46 with backend
+        let serverRelays: string[] = []
+        try {
+          const res = await fetch('/api/status', { headers: { ...(authHeaders || {}) } })
+          if (res.ok) {
+            const data = await res.json()
+            if (Array.isArray(data?.relays)) {
+              serverRelays = data.relays.filter((r: any) => typeof r === 'string' && r.startsWith('ws'))
+            }
+          }
+        } catch {}
+        if (!cancelled) await initializeController(stableSk, authHeaders, serverRelays)
       } else if (privateKey) {
         setInitializing(true)
-        if (!cancelled) await initializeController(privateKey, authHeaders)
+        let serverRelays: string[] = []
+        try {
+          const res = await fetch('/api/status', { headers: { ...(authHeaders || {}) } })
+          if (res.ok) {
+            const data = await res.json()
+            if (Array.isArray(data?.relays)) {
+              serverRelays = data.relays.filter((r: any) => typeof r === 'string' && r.startsWith('ws'))
+            }
+          }
+        } catch {}
+        if (!cancelled) await initializeController(privateKey, authHeaders, serverRelays)
       } else {
         setInitializing(false)
       }
@@ -114,7 +135,7 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [privateKey, groupCred, shareCred, authHeaders])
 
-  const initializeController = async (key?: string, auth?: Record<string, string>) => {
+  const initializeController = async (key?: string, auth?: Record<string, string>, serverRelays?: string[]) => {
     try {
       setError(null)
       const nip46Controller = new NIP46Controller(defaultConfig)
@@ -143,7 +164,7 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
 
       // Initialize transport (derive deterministic key only if explicitly provided)
       // Use the provided key for deterministic identity, or ephemeral if undefined
-      await nip46Controller.initialize(key, auth)
+      await nip46Controller.initialize(key, auth, Array.isArray(serverRelays) ? serverRelays : [])
 
       // Prime counts immediately
       updateCounts()

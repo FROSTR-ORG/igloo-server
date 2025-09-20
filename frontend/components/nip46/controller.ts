@@ -37,13 +37,19 @@ export class NIP46Controller extends Emitter {
   private promotionChains = new Map<string, Promise<void>>()
   private zodLoggedOnce = false
 
+  // Connectivity resilience
+  private knownRelays = new Set<string>()
+  private reconnectAttempts = 0
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
+  private destroyed = false
+
   constructor(config: NIP46Config) {
     super()
     this.config = config
     this.serverSigner = new ServerSigner()
   }
 
-  async initialize(hexPrivateKey?: string, authHeaders?: Record<string, string>) {
+  async initialize(hexPrivateKey?: string, authHeaders?: Record<string, string>, serverRelays: string[] = []) {
     if (authHeaders) {
       this.authHeaders = authHeaders
       this.serverSigner = new ServerSigner(authHeaders)
@@ -57,14 +63,22 @@ export class NIP46Controller extends Emitter {
       policy: this.config.policy,
       profile: this.config.profile,
       timeout: this.config.timeout ?? 30,
-      // pass through socket timeouts
-      sub_timeout: Math.min(Math.max((this.config.timeout ?? 30) / 2, 10), 30),
-      req_timeout: Math.min(Math.max((this.config.timeout ?? 30) / 3, 8), 20)
+      // Pass through socket timeouts (allow a bit more headroom for slow relays)
+      sub_timeout: Math.min(Math.max((this.config.timeout ?? 30) * 0.75, 12), 45),
+      req_timeout: Math.min(Math.max((this.config.timeout ?? 30) * 0.5, 10), 30)
     })
 
     // Map socket lifecycle to controller events
-    this.agent.socket?.on?.('ready', () => this.emit('connected'))
-    this.agent.socket?.on?.('closed', () => this.emit('disconnected'))
+    this.agent.socket?.on?.('ready', () => {
+      this.reconnectAttempts = 0
+      this.emit('connected')
+      // Re-subscribe to any relays we know about (persisted or default)
+      this.resubscribeKnownRelays().catch(() => {})
+    })
+    this.agent.socket?.on?.('closed', () => {
+      this.emit('disconnected')
+      this.scheduleReconnect()
+    })
     // Filter noisy zod interop errors; 'bounced' handler will take over
     this.agent.socket?.on?.('error', (e: any) => {
       const msg = e instanceof Error ? e.message : String(e)
@@ -77,6 +91,7 @@ export class NIP46Controller extends Emitter {
         return
       }
       this.emit('error', e instanceof Error ? e : new Error(String(e)))
+      this.scheduleReconnect()
     })
     // When schema validation fails inside the lib, we decrypt + handle manually
     this.agent.socket?.on?.('bounced', async (event: any, reason: any) => {
@@ -157,7 +172,11 @@ export class NIP46Controller extends Emitter {
       }
     })
 
-    await this.agent.connect(this.config.relays)
+    // Seed known relays with defaults + server relays (union, cap to 12)
+    this.addKnownRelays(serverRelays)
+    this.addKnownRelays(this.config.relays)
+    const bootRelays = Array.from(this.knownRelays).slice(0, 12)
+    await this.agent.connect(bootRelays)
     try { this.identityPubkey = await this.serverSigner.loadPublicKey().then(() => this.serverSigner.get_pubkey()) } catch {}
     // Load any persisted sessions
     try { await this.loadPersistedSessions() } catch {}
@@ -165,7 +184,14 @@ export class NIP46Controller extends Emitter {
   }
 
   async disconnect() {
-    try { this.agent?.close?.() } finally { this.agent = null; this.emit('disconnected') }
+    try {
+      this.destroyed = true
+      if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null }
+      this.agent?.close?.()
+    } finally {
+      this.agent = null
+      this.emit('disconnected')
+    }
   }
 
   getIdentityPubkey() { return this.identityPubkey }
@@ -259,6 +285,7 @@ export class NIP46Controller extends Emitter {
     // Attempt handshake: subscribe and send accept(secret)
     try {
       await this.agent.socket.subscribe(invite.relays)
+      this.addKnownRelays(Array.isArray(invite.relays) ? invite.relays : [])
       const accept = { id: invite.secret, result: invite.secret }
       await this.agent.socket.send(accept, invite.pubkey)
       // Track local pending session; will be promoted on first request
@@ -286,6 +313,13 @@ export class NIP46Controller extends Emitter {
         this.saveSession(pending, Array.isArray(invite.relays) ? invite.relays : undefined).catch((err) => {
           console.error('[NIP46] Failed to persist session from connect string:', err)
         })
+        // Merge invite relays into signer defaults (backend) as well
+        try {
+          const relaysToMerge: string[] = Array.isArray(invite.relays) ? invite.relays.filter((r: any) => typeof r === 'string' && r.startsWith('ws')) : []
+          if (relaysToMerge.length) {
+            await this.persistRelaysUnion(relaysToMerge)
+          }
+        } catch {}
         this.emit('session:pending')
       }
       // Promote to active immediately after handshake; some clients don't send a follow-up request right away
@@ -307,6 +341,101 @@ export class NIP46Controller extends Emitter {
       console.error('[NIP46] Failed to delete revoked session:', err)
     })
     this.emit('session:updated')
+  }
+
+  // Relay management
+  private addKnownRelays(relays?: string[] | null) {
+    if (!Array.isArray(relays)) return
+    for (const r of relays) {
+      if (typeof r === 'string' && r.startsWith('ws')) this.knownRelays.add(r)
+    }
+  }
+  private async resubscribeKnownRelays() {
+    if (!this.agent?.socket || this.knownRelays.size === 0) return
+    try {
+      await this.agent.socket.subscribe(Array.from(this.knownRelays))
+    } catch (err) {
+      console.debug('[NIP46] Re-subscribe failed:', err)
+    }
+  }
+
+  // Reconnect with exponential backoff + jitter
+  private scheduleReconnect() {
+    if (this.destroyed) return
+    if (this.reconnectTimer) return
+    const base = 1000
+    const max = 30000
+    const attempt = this.reconnectAttempts++
+    const backoff = Math.min(base * Math.pow(2, attempt), max)
+    const jitter = Math.floor(Math.random() * 1000)
+    const delay = backoff + jitter
+    this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null
+      if (this.destroyed) return
+      try {
+        await this.agent?.connect?.(Array.from(this.knownRelays.size ? this.knownRelays : new Set(this.config.relays)))
+      } catch (err) {
+        // Try again later
+        this.scheduleReconnect()
+      }
+    }, delay)
+  }
+
+  // Persist merged relays to backend so the signer (Bifrost) uses them too
+  private async persistRelaysUnion(newRelays: string[]) {
+    const clean = (arr: string[]) =>
+      Array.from(
+        new Set(
+          arr
+            .filter(r => typeof r === 'string')
+            .map(r => r.trim())
+            .filter(r => r.startsWith('ws'))
+        )
+      )
+
+    const cap = (arr: string[], max = 12) => arr.slice(0, max)
+
+    try {
+      // Try user credentials path first (DB mode)
+      const getRes = await this.api('/api/user/relays', { method: 'GET' })
+      let merged: string[]
+      if (getRes.ok) {
+        const data = await getRes.json().catch(() => ({ relays: [] }))
+        const current: string[] = Array.isArray(data?.relays) ? data.relays : []
+        merged = cap(clean([...current, ...newRelays]))
+        await this.api('/api/user/relays', {
+          method: 'POST',
+          body: JSON.stringify({ relays: merged })
+        })
+        this.addKnownRelays(merged)
+        return
+      }
+      // Fallback to headless env path
+      const status = getRes.status
+      if (status === 401 || status === 404 || status === 405) {
+        // Pull current env, merge, then POST
+        const envRes = await fetch('/api/env', { headers: { 'Content-Type': 'application/json', ...this.authHeaders } })
+        let current: string[] = []
+        if (envRes.ok) {
+          const env = await envRes.json().catch(() => ({}))
+          // RELAYS may be array or JSON string; normalize
+          const raw = env?.RELAYS
+          if (Array.isArray(raw)) current = raw.filter((r: any) => typeof r === 'string')
+          else if (typeof raw === 'string') {
+            try { const parsed = JSON.parse(raw); if (Array.isArray(parsed)) current = parsed.filter((r: any) => typeof r === 'string') } catch {}
+          }
+        }
+        const mergedEnv = cap(clean([...current, ...newRelays]))
+        await fetch('/api/env', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...this.authHeaders },
+          body: JSON.stringify({ RELAYS: mergedEnv })
+        })
+        this.addKnownRelays(mergedEnv)
+      }
+    } catch {
+      // Non-fatal; controller will still use its knownRelays locally
+    }
   }
 
   private sessionFromReq(req: any): SignerSession {
@@ -654,7 +783,6 @@ export class NIP46Controller extends Emitter {
     const sessions = Array.isArray(data.sessions) ? data.sessions : []
     const active: SignerSession[] = []
     const pending: SignerSession[] = []
-    const relaySet = new Set<string>()
     for (const s of sessions) {
       const sess: SignerSession = {
         pubkey: s.pubkey,
@@ -665,18 +793,14 @@ export class NIP46Controller extends Emitter {
       }
       if (sess.status === 'active') active.push(sess)
       else pending.push(sess)
-      if (Array.isArray(s.relays)) {
-        for (const r of s.relays) {
-          if (typeof r === 'string' && r.startsWith('ws')) relaySet.add(r)
-        }
-      }
+      if (Array.isArray(s.relays)) this.addKnownRelays(s.relays)
     }
     this.activeSessions = active
     this.pendingSessions = pending
     if (active.length || pending.length) this.emit('session:updated')
     // Subscribe to any relays saved with sessions to continue receiving requests after reload
-    if (relaySet.size > 0) {
-      try { await this.agent?.socket?.subscribe?.(Array.from(relaySet)) } catch (err) {
+    if (this.knownRelays.size > 0) {
+      try { await this.agent?.socket?.subscribe?.(Array.from(this.knownRelays)) } catch (err) {
         console.warn('[NIP46] Failed to subscribe to persisted session relays:', err)
       }
     }
@@ -691,6 +815,8 @@ export class NIP46Controller extends Emitter {
       relays: relays
     }
     await this.api('/api/nip46/sessions', { method: 'POST', body: JSON.stringify(body) })
+    // Track relays for future reconnects
+    this.addKnownRelays(relays)
   }
 
   private async updateSessionStatus(pubkey: string, status: 'pending' | 'active' | 'revoked', touch = false) {

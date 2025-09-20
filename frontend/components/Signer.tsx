@@ -44,6 +44,67 @@ const pulseStyle = `
 `;
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
+const LOG_STORAGE_KEY = "igloo:event-log";
+const MAX_LOG_ENTRIES = 500;
+
+const canUseSessionStorage = () => typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
+
+const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
+  if (!entry || typeof entry !== "object") return null;
+  const log = entry as Partial<LogEntryData>;
+
+  if (typeof log.id !== "string" || typeof log.timestamp !== "string" || typeof log.type !== "string" || typeof log.message !== "string") {
+    return null;
+  }
+
+  return {
+    id: log.id,
+    timestamp: log.timestamp,
+    type: log.type,
+    message: log.message,
+    data: log.data
+  };
+};
+
+const readStoredLogs = (): LogEntryData[] => {
+  if (!canUseSessionStorage()) return [];
+
+  try {
+    const raw = window.sessionStorage.getItem(LOG_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map(sanitizeLogEntry)
+      .filter((entry): entry is LogEntryData => entry !== null)
+      .slice(-MAX_LOG_ENTRIES);
+  } catch (error) {
+    console.warn("Failed to parse stored event logs:", error);
+    return [];
+  }
+};
+
+const writeStoredLogs = (entries: LogEntryData[]) => {
+  if (!canUseSessionStorage()) return;
+
+  if (entries.length === 0) {
+    window.sessionStorage.removeItem(LOG_STORAGE_KEY);
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries));
+  } catch (error) {
+    console.warn("Failed to persist event logs:", error);
+  }
+};
+
+const clearStoredLogs = () => {
+  if (!canUseSessionStorage()) return;
+  window.sessionStorage.removeItem(LOG_STORAGE_KEY);
+};
 
 // Reusable deep validation helpers to avoid duplication
 function performDeepShareValidation(shareCredential: string): boolean {
@@ -137,7 +198,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     group: false,
     share: false
   });
-  const [logs, setLogs] = useState<LogEntryData[]>([]);
+  const [logs, setLogs] = useState<LogEntryData[]>(() => readStoredLogs());
   const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
 
   // Reference for compatibility with parent component
@@ -291,6 +352,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         if (response.ok) {
           const data = await response.json();
           setRealSelfPubkey(data.pubkey);
+        } else if (response.status === 401) {
+          // Notify app to re-auth; keep UI stable.
+          try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
         }
       } catch (error) {
         // Silently ignore errors fetching self pubkey
@@ -381,7 +445,24 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
             }
             
             // Add all other server log entries to our local logs (original Igloo Desktop events)
-            setLogs(prev => [...prev, logEntry]);
+            setLogs(prev => {
+              const nextLog = sanitizeLogEntry(logEntry);
+              if (!nextLog) {
+                return prev;
+              }
+
+              // Skip duplicates by ID or matching payloads in recent history
+              const isDuplicateId = prev.some(existing => existing.id === nextLog.id);
+              if (isDuplicateId || isDuplicateLog(nextLog.data, prev.slice(-25))) {
+                return prev;
+              }
+
+              const updated = [...prev, nextLog];
+              if (updated.length > MAX_LOG_ENTRIES) {
+                return updated.slice(updated.length - MAX_LOG_ENTRIES);
+              }
+              return updated;
+            });
           } catch (error) {
             console.error('Error parsing WebSocket event:', error);
           }
@@ -761,6 +842,16 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     // Signer is managed by the server - no manual stop needed
   };
 
+  // Persist logs in session storage while component stays mounted
+  useEffect(() => {
+    writeStoredLogs(logs);
+  }, [logs]);
+
+  const handleClearLogs = useCallback(() => {
+    clearStoredLogs();
+    setLogs([]);
+  }, []);
+
   // Show loading state while fetching environment variables
   if (isLoading) {
     return (
@@ -1067,7 +1158,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         <EventLog
           logs={logs}
           isSignerRunning={isSignerRunning}
-          onClearLogs={() => setLogs([])}
+          onClearLogs={handleClearLogs}
         />
       </div>
     </div>
