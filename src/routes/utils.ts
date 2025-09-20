@@ -95,6 +95,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - server configuration
   'SESSION_TIMEOUT',    // Session timeout in seconds
   'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
@@ -116,6 +117,7 @@ const PUBLIC_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - safe to expose for configuration UI
   'SESSION_TIMEOUT',    // Session timeout in seconds
   'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds

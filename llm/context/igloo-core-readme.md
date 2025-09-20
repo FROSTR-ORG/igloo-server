@@ -633,6 +633,9 @@ if (!await canSendToPeer(node, 'npub1example...')) {
 if (!await canReceiveFromPeer(node, 'npub1example...')) {
   console.warn('Incoming requests from peer will be rejected');
 }
+
+// Headless deployments can preload the same structure via the PEER_POLICIES
+// environment variable (JSON array) so policies apply as soon as the node starts.
 ```
 
 ## Validation

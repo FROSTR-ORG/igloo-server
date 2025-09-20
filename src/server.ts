@@ -357,7 +357,8 @@ async function restartNode(reason: string = 'health check failure', forceRestart
         CONST.GROUP_CRED!,
         CONST.SHARE_CRED!,
         process.env.RELAYS,
-        addServerLog
+        addServerLog,
+        process.env.PEER_POLICIES
       );
       
       if (newNode) {
@@ -426,7 +427,8 @@ if (CONST.hasCredentials()) {
       CONST.GROUP_CRED!,
       CONST.SHARE_CRED!,
       process.env.RELAYS,
-      addServerLog
+      addServerLog,
+      process.env.PEER_POLICIES
     );
     
     if (node) {

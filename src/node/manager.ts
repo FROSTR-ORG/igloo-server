@@ -2,8 +2,10 @@ import {
   createAndConnectNode, 
   createConnectedNode,
   normalizePubkey,
-  extractSelfPubkeyFromCredentials
+  extractSelfPubkeyFromCredentials,
+  normalizeNodePolicies
 } from '@frostr/igloo-core';
+import type { NodePolicyInput } from '@frostr/igloo-core';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
@@ -1279,14 +1281,72 @@ export function setupNodeEventListeners(
   addServerLog('system', 'Health monitoring and enhanced event listeners configured');
 }
 
+interface ParsedEnvPolicies {
+  policies: NodePolicyInput[];
+  requestedCount: number;
+}
+
+function parseEnvPeerPolicies(
+  policiesRaw: string | undefined,
+  addServerLog?: ReturnType<typeof createAddServerLog>
+): ParsedEnvPolicies | null {
+  if (!policiesRaw) return null;
+  const trimmed = policiesRaw.trim();
+  if (!trimmed) return null;
+
+  try {
+    const parsed = JSON.parse(trimmed);
+    const policyEntries = Array.isArray(parsed) ? parsed : [parsed];
+    const normalized = normalizeNodePolicies(policyEntries as any);
+    const policies: NodePolicyInput[] = normalized.map(policy => ({
+      pubkey: policy.pubkey,
+      allowSend: policy.allowSend,
+      allowReceive: policy.allowReceive,
+      label: policy.label,
+      roles: policy.roles,
+      metadata: policy.metadata,
+      note: policy.note,
+      source: policy.source ?? 'config'
+    }));
+
+    return {
+      policies,
+      requestedCount: policyEntries.length
+    };
+  } catch (error) {
+    if (addServerLog) {
+      addServerLog('warning', 'Failed to parse PEER_POLICIES env value', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } else {
+      console.warn('[node] Failed to parse PEER_POLICIES env value', error);
+    }
+    return null;
+  }
+}
+
 // Enhanced node creation with better error handling and retry logic
 export async function createNodeWithCredentials(
   groupCred: string,
   shareCred: string,
   relaysEnv?: string,
-  addServerLog?: ReturnType<typeof createAddServerLog>
+  addServerLog?: ReturnType<typeof createAddServerLog>,
+  peerPoliciesRaw?: string
 ): Promise<ServerBifrostNode | null> {
   let relays = getValidRelays(relaysEnv);
+
+  const parsedPolicies = parseEnvPeerPolicies(peerPoliciesRaw, addServerLog);
+  const configPolicies = parsedPolicies && parsedPolicies.policies.length > 0
+    ? parsedPolicies.policies
+    : undefined;
+
+  if (parsedPolicies) {
+    if (configPolicies && addServerLog) {
+      addServerLog('info', `Applying ${configPolicies.length} peer polic${configPolicies.length === 1 ? 'y' : 'ies'} from environment configuration`);
+    } else if (parsedPolicies.requestedCount > 0 && addServerLog) {
+      addServerLog('warn', 'PEER_POLICIES env value provided no valid entries after normalization');
+    }
+  }
 
   // Minimal startup self-test: drop relays that reject kind 20004 (Bifrost)
   try {
@@ -1324,7 +1384,8 @@ export async function createNodeWithCredentials(
           share: shareCred,
           relays,
           connectionTimeout: 30000,  // Increased to 30 seconds
-          autoReconnect: true        // Enable auto-reconnection
+          autoReconnect: true,       // Enable auto-reconnection
+          ...(configPolicies ? { policies: configPolicies } : {})
         }, {
           enableLogging: false,      // Disable internal logging to avoid duplication
           logLevel: 'error'          // Only log errors from igloo-core
@@ -1430,7 +1491,8 @@ export async function createNodeWithCredentials(
             const basicNode = await createAndConnectNode({
               group: groupCred,
               share: shareCred,
-              relays
+              relays,
+              ...(configPolicies ? { policies: configPolicies } : {})
             });
             if (basicNode) {
               const node = basicNode as unknown as ServerBifrostNode;

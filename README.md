@@ -113,10 +113,20 @@ Best for:
 
 Features:
 - ✅ Direct environment variable configuration
+- ✅ Directional peer policies via `PEER_POLICIES` env var
 - ✅ No database dependencies
 - ✅ Simpler deployment model
 - ✅ Compatible with existing automation
 - ❌ Frontend/UI disabled (API-only)
+
+#### Headless Peer Policies
+Use the `PEER_POLICIES` environment variable to pre-load directional allow/deny rules when the server boots. Provide a JSON array (or single JSON object) with `pubkey`, `allowSend`, and `allowReceive` fields. Example:
+
+```
+PEER_POLICIES=[{"pubkey":"abcdef...","allowSend":false,"allowReceive":true}]
+```
+
+Entries default missing flags to `true`, so you can flip only one direction if needed. Policies are applied during node creation and are treated as config-sourced in the peer UI.
 
 ### Mode Selection Guide
 
@@ -785,6 +795,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share | - | ✅ (Headless) |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for signing group | - | ❌ |
+| `PEER_POLICIES` | JSON array of peer policy objects applied on startup (headless) | - | ❌ |
 | **Server Configuration** | | | |
 | `HOST_NAME` | Server bind address | `localhost` | ❌ |
 | `HOST_PORT` | Server port | `8002` | ❌ |
