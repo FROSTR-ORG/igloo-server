@@ -1,5 +1,5 @@
 import type { RequestAuth } from './types.js';
-import { vaultGetOnce } from './auth.js';
+import { vaultGetOnce, refreshSessionDerivedKey, rehydrateSessionDerivedKey } from './auth.js';
 
 // WeakMap for storing sensitive data that won't be enumerable or serializable
 const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array; sessionId?: string; hasPassword?: boolean }>();
@@ -89,9 +89,18 @@ export function createRequestAuth(params: {
         if (secrets?.sessionId) {
           const keyFromVault = vaultGetOnce(secrets.sessionId);
           if (keyFromVault) {
-            // Cache it in the secrets for subsequent calls within this request
+            // Refresh vault TTL/read counters and update session cache
+            refreshSessionDerivedKey(secrets.sessionId, keyFromVault);
             secrets.derivedKey = keyFromVault;
             return new Uint8Array(keyFromVault);
+          }
+
+          if (secrets?.hasPassword) {
+            const rehydrated = rehydrateSessionDerivedKey(secrets.sessionId);
+            if (rehydrated) {
+              secrets.derivedKey = rehydrated;
+              return new Uint8Array(rehydrated);
+            }
           }
         }
 

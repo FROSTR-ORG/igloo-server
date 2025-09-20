@@ -291,6 +291,10 @@ const sessionStore = new Map<string, {
   // Note: for database users, salt comes from the database
 }>();
 
+// Cache of session-scoped derived keys to support rehydration after vault expiry
+// Values are kept in-memory only for the lifespan of the session and wiped on cleanup/logout
+const sessionDerivedKeyCache = new Map<string, Uint8Array>();
+
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
 const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
 const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
@@ -311,6 +315,30 @@ function vaultSet(sessionId: string, key: Uint8Array, ttlMs = AUTH_DERIVED_KEY_T
   // Store a fresh copy to avoid external references
   const copy = new Uint8Array(key);
   derivedKeyVault.set(sessionId, { key: copy, expiresAt: Date.now() + ttlMs, remainingReads: maxReads });
+}
+
+function cacheDerivedKeyForSession(sessionId: string, key: Uint8Array): void {
+  sessionDerivedKeyCache.set(sessionId, new Uint8Array(key));
+}
+
+function clearCachedDerivedKey(sessionId: string): void {
+  const cached = sessionDerivedKeyCache.get(sessionId);
+  if (!cached) return;
+  cached.fill(0);
+  sessionDerivedKeyCache.delete(sessionId);
+}
+
+export function refreshSessionDerivedKey(sessionId: string, key: Uint8Array): void {
+  cacheDerivedKeyForSession(sessionId, key);
+  vaultSet(sessionId, key);
+}
+
+export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | undefined {
+  const cached = sessionDerivedKeyCache.get(sessionId);
+  if (!cached) return undefined;
+  const copy = new Uint8Array(cached);
+  vaultSet(sessionId, copy);
+  return copy;
 }
 
 function zeroizeAndDelete(sessionId: string) {
@@ -475,6 +503,8 @@ function authenticateSession(req: Request): AuthResult {
   const now = Date.now();
   if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
     sessionStore.delete(sessionId);
+    clearCachedDerivedKey(sessionId);
+    zeroizeAndDelete(sessionId);
     return { authenticated: false, error: 'Session expired' };
   }
 
@@ -544,6 +574,7 @@ export function createSession(
   
   // Store derivedKey in ephemeral vault (TTL + bounded reads); do not persist on session
   if (derivedKey) {
+    cacheDerivedKeyForSession(sessionId, derivedKey);
     vaultSet(sessionId, derivedKey);
     // Zeroize local copy after storing
     for (let i = 0; i < derivedKey.length; i++) derivedKey[i] = 0;
@@ -570,6 +601,7 @@ function cleanupExpiredSessions(): void {
   for (const [sessionId, session] of Array.from(sessionStore.entries())) {
     if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
       sessionStore.delete(sessionId);
+      clearCachedDerivedKey(sessionId);
       // Ensure any lingering derived key is destroyed
       zeroizeAndDelete(sessionId);
     }
@@ -608,6 +640,10 @@ export function stopAuthCleanup(): void {
   // Zeroize all remaining vault entries on shutdown
   for (const sessionId of Array.from(derivedKeyVault.keys())) {
     zeroizeAndDelete(sessionId);
+  }
+
+  for (const sessionId of Array.from(sessionDerivedKeyCache.keys())) {
+    clearCachedDerivedKey(sessionId);
   }
 }
 
@@ -870,6 +906,7 @@ export function handleLogout(req: Request): Response {
   
   if (sessionId) {
     sessionStore.delete(sessionId);
+    clearCachedDerivedKey(sessionId);
     // Wipe any ephemeral derived key bound to this session
     try { zeroizeAndDelete(sessionId) } catch {}
   }
