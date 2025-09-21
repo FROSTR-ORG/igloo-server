@@ -30,18 +30,19 @@ function aggregateSessionHistory(
   session: { client_pubkey: string; [key: string]: any },
   userId: number | bigint,
   limit = 5
-): { recent_kinds: string[]; recent_methods: string[] } {
+): { recent_kinds: number[]; recent_methods: string[] } {
   const events = listSessionEvents(userId, session.client_pubkey, 50)
-  const kinds: string[] = []
+  const kinds: number[] = []
   const methods: string[] = []
-  const seenKinds = new Set<string>()
+  const seenKinds = new Set<number>()
   const seenMethods = new Set<string>()
 
   for (const ev of events) {
     if (ev.event_type === 'grant_kind' && ev.detail) {
-      if (!seenKinds.has(ev.detail)) {
-        kinds.push(ev.detail)
-        seenKinds.add(ev.detail)
+      const parsedKind = Number.parseInt(ev.detail, 10)
+      if (!Number.isNaN(parsedKind) && !seenKinds.has(parsedKind)) {
+        kinds.push(parsedKind)
+        seenKinds.add(parsedKind)
       }
     } else if (ev.event_type === 'grant_method' && ev.detail) {
       if (!seenMethods.has(ev.detail)) {

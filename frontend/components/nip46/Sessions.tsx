@@ -7,6 +7,15 @@ import { isValidImageUrl } from './utils'
 import { QrCode } from 'lucide-react'
 import { Input } from '../ui/input'
 
+function safeHostname(url?: string | null): string | null {
+  if (!url) return null
+  try {
+    return new URL(url).hostname
+  } catch {
+    return null
+  }
+}
+
 interface SessionsProps { controller: NIP46Controller | null }
 
 export function Sessions({ controller }: SessionsProps) {
@@ -19,7 +28,7 @@ export function Sessions({ controller }: SessionsProps) {
   const [copiedPubkey, setCopiedPubkey] = useState<string | null>(null)
   const [newEventKind, setNewEventKind] = useState<Record<string, string>>({})
   const [isScanning, setIsScanning] = useState(false)
-  const [history, setHistory] = useState<Record<string, { recent_kinds?: string[]; recent_methods?: string[]; last_active_at?: string; status?: string }>>({})
+  const [history, setHistory] = useState<Record<string, { recent_kinds?: number[]; recent_methods?: string[]; last_active_at?: string; status?: string }>>({})
 
   const normalizePolicy = (policy?: PermissionPolicy | null): PermissionPolicy => {
     const normalized: PermissionPolicy = { methods: {}, kinds: {} }
@@ -162,7 +171,9 @@ export function Sessions({ controller }: SessionsProps) {
                         <span className="session-name">{session.profile.name || 'Unknown Application'}</span>
                       </div>
                       {session.profile.url && (
-                        <a href={session.profile.url} target="_blank" rel="noopener noreferrer" className="session-url">{new URL(session.profile.url).hostname}</a>
+                        <a href={session.profile.url} target="_blank" rel="noopener noreferrer" className="session-url">
+                          {safeHostname(session.profile.url) || session.profile.url}
+                        </a>
                       )}
                       <div className="session-pubkey-container">
                         <span className="session-pubkey">{truncated}</span>
@@ -188,7 +199,7 @@ export function Sessions({ controller }: SessionsProps) {
                       {history[session.pubkey]?.recent_kinds?.length ? (
                         <div>
                           <span className="text-gray-500 mr-1">Recent kinds approved:</span>
-                          {history[session.pubkey]!.recent_kinds!.map((k: string) => (
+                          {history[session.pubkey]!.recent_kinds!.map((k: number) => (
                             <span key={k} className="inline-block bg-purple-900/40 text-purple-200 rounded px-1.5 py-0.5 mr-1">{k}</span>
                           ))}
                         </div>

@@ -467,6 +467,65 @@
         }
       }
     },
+    "/api/peers/group": {
+      "get": {
+        "operationId": "getPeerGroup",
+        "summary": "Get group credential metadata",
+        "description": "Return the signing group public key and quorum information",
+        "tags": [
+          "Peers"
+        ],
+        "responses": {
+          "200": {
+            "description": "Group metadata retrieved successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "pubkey": {
+                      "type": "string",
+                      "description": "32-byte x-only group public key (hex)"
+                    },
+                    "threshold": {
+                      "type": "integer",
+                      "description": "Number of shares required to sign"
+                    },
+                    "totalShares": {
+                      "type": "integer",
+                      "description": "Total shares in the group credential"
+                    }
+                  },
+                  "required": [
+                    "pubkey",
+                    "threshold",
+                    "totalShares"
+                  ],
+                  "example": {
+                    "pubkey": "a1b2c3d4e5f6...",
+                    "threshold": 3,
+                    "totalShares": 5
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing group credential in current mode",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
     "/api/peers": {
       "get": {
         "operationId": "listPeers",
@@ -2216,7 +2275,7 @@
           },
           "content": {
             "type": "string",
-            "description": "Payload to process (plaintext for encrypt, ciphertext for decrypt)"
+            "description": "Payload to process (plaintext for encrypt, ciphertext for decrypt).\nMaximum plaintext length: 65,535 bytes; encrypted/padded blob may reach 65,536 bytes.\nMinimum plaintext: 1 byte (padded to 32 bytes).\nImplementations should split messages larger than 65,535 bytes.\n"
           }
         },
         "required": [
@@ -2231,7 +2290,8 @@
         "type": "object",
         "properties": {
           "result": {
-            "type": "string"
+            "type": "string",
+            "description": "Result payload. Encrypt endpoints return base64-encoded ciphertext (for NIP-04 the value includes a '?iv=' suffix with a base64 IV), while decrypt endpoints return UTF-8 plaintext. Clients must decode according to the endpoint invoked."
           }
         },
         "required": [
@@ -2287,7 +2347,10 @@
             "$ref": "#/components/schemas/Nip46Profile"
           },
           "relays": {
-            "type": "array",
+            "type": [
+              "array",
+              "null"
+            ],
             "items": {
               "type": "string"
             }
@@ -2296,16 +2359,17 @@
             "$ref": "#/components/schemas/Nip46Policy"
           },
           "created_at": {
-            "type": "string"
+            "type": "string",
+            "format": "date-time"
           },
           "updated_at": {
-            "type": "string"
+            "type": "string",
+            "format": "date-time"
           },
           "last_active_at": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           }
         }
       },
@@ -2320,10 +2384,9 @@
             "type": "string"
           },
           "last_active_at": {
-            "type": [
-              "string",
-              "null"
-            ]
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
           },
           "profile": {
             "$ref": "#/components/schemas/Nip46Profile"
@@ -2331,8 +2394,9 @@
           "recent_kinds": {
             "type": "array",
             "items": {
-              "type": "string"
-            }
+              "type": "integer"
+            },
+            "description": "Recently granted Nostr kind identifiers"
           },
           "recent_methods": {
             "type": "array",

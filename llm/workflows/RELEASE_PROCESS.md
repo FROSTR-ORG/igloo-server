@@ -337,9 +337,10 @@ If a release needs to be rolled back:
 1. **Revert on Master**
    ```bash
    git checkout master
-   git revert <merge-commit-hash>
+   git revert -m 1 <merge-commit-hash>
    git push origin master
    ```
+   _Use `-m 1` for the common case where master was the first parent of the merge. If you merged from a different base, substitute the parent number that represents the stable branch you want to keep._
 
 2. **Create Hotfix**
    ```bash

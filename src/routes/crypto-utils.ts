@@ -35,9 +35,28 @@ export async function deriveSharedSecret(
   peerXOnly: string,
   timeoutMs: number
 ): Promise<string> {
+  if (typeof peerXOnly !== 'string' || peerXOnly.trim().length === 0) {
+    throw new Error('Invalid peer public key: expected non-empty hex string');
+  }
+
+  const normalizedPeer = peerXOnly.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalizedPeer)) {
+    throw new Error('Invalid peer public key: expected 32-byte x-only hex');
+  }
+
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0) {
+    throw new Error('Invalid timeout: expected positive integer milliseconds');
+  }
+
   const result: any = await withTimeout(node.req.ecdh(peerXOnly), timeoutMs, 'ECDH_TIMEOUT');
   if (!result || result.ok !== true) {
     throw new Error(result?.error || 'ecdh failed');
   }
-  return result.data as string; // hex
+
+  const secret = typeof result.data === 'string' ? result.data.trim().toLowerCase() : null;
+  if (!secret || !/^[0-9a-f]{64}$/.test(secret)) {
+    throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+  }
+
+  return secret;
 }

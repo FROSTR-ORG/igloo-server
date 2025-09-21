@@ -1,4 +1,4 @@
-import React, { useState, ReactNode, useRef, useEffect, useCallback } from 'react';
+import React, { useState, ReactNode, useRef, useEffect, useCallback, useId } from 'react';
 import { createPortal } from 'react-dom';
 import { cn } from "../../lib/utils";
 
@@ -23,7 +23,8 @@ const Tooltip: React.FC<TooltipProps> = ({
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
-  const triggerRef = useRef<HTMLDivElement | null>(null);
+  const tooltipId = useId();
+  const triggerRef = useRef<HTMLDivElement | HTMLButtonElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
 
   const updatePosition = useCallback(() => {
@@ -91,25 +92,46 @@ const Tooltip: React.FC<TooltipProps> = ({
         width,
         className
       )}
+      id={tooltipId}
+      role="tooltip"
       style={{ top: coords.top, left: coords.left, pointerEvents: 'none' }}
     >
       {content}
     </div>
   );
 
-  return (
-    <div
-      ref={triggerRef}
-      className={cn('inline-flex align-middle', triggerClassName)}
-      onMouseEnter={() => setIsVisible(true)}
-      onMouseLeave={() => setIsVisible(false)}
-      onFocus={focusable ? () => setIsVisible(true) : undefined}
-      onBlur={focusable ? () => setIsVisible(false) : undefined}
-      tabIndex={focusable ? 0 : undefined}
-      role={focusable ? 'button' : undefined}
-    >
+  const commonProps = {
+    ref: triggerRef,
+    className: cn('inline-flex align-middle', triggerClassName),
+    onMouseEnter: () => setIsVisible(true),
+    onMouseLeave: () => setIsVisible(false),
+    onFocus: focusable ? () => setIsVisible(true) : undefined,
+    onBlur: focusable ? () => setIsVisible(false) : undefined,
+    'aria-describedby': tooltipId,
+  } as const;
+
+  const triggerContent = (
+    <>
       {trigger}
       {isVisible && typeof document !== 'undefined' ? createPortal(tooltipNode, document.body) : null}
+    </>
+  );
+
+  if (focusable) {
+    return (
+      <button
+        type="button"
+        {...commonProps}
+        className={cn('inline-flex align-middle', triggerClassName)}
+      >
+        {triggerContent}
+      </button>
+    );
+  }
+
+  return (
+    <div {...commonProps}>
+      {triggerContent}
     </div>
   );
 };

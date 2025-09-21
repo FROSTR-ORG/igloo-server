@@ -286,7 +286,7 @@ Then set a secure `ADMIN_SECRET` and start the server to run onboarding again.
 
 Note about overrides: There is currently no `--force-first-run` flag in the codebase. If you need to reinitialize without deleting the database, consider implementing a startup override (e.g., `--force-first-run` or `FORCE_FIRST_RUN=true`) that temporarily disables normal routes and only enables the onboarding endpoints until the first user is created.
 
-Database directory permissions and ownership
+### Database directory permissions and ownership
 
 Apply the principle of least privilege to the database directory and files. Recommended settings (Linux/macOS):
 

@@ -48,7 +48,7 @@ export class PersistentRateLimiter {
 
     try {
       // Start transaction for atomic read-update
-      this.db.exec('BEGIN');
+      this.db.exec('BEGIN IMMEDIATE');
 
       try {
         // Check existing rate limit entry
