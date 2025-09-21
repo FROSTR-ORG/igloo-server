@@ -158,6 +158,12 @@ export async function handleRequest(
 
   // Authentication info for this request (not stored in shared context)
   let authInfo: RequestAuth | null = null;
+  const finalizeAuth = () => {
+    if (authInfo?.destroySecrets) {
+      try { authInfo.destroySecrets(); } catch {}
+    }
+    authInfo = null;
+  };
 
   // Define endpoints that should be accessible without authentication
   const publicEndpoints = [
@@ -182,7 +188,7 @@ export async function handleRequest(
     const authResult = await authenticate(req);
     
     if (authResult.rateLimited) {
-      return Response.json({ 
+      const response = Response.json({ 
         error: 'Rate limit exceeded. Try again later.' 
       }, { 
         status: 429,
@@ -191,18 +197,22 @@ export async function handleRequest(
           'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
         }
       });
+      finalizeAuth();
+      return response;
     }
     
     if (!authResult.authenticated) {
       // Don't set WWW-Authenticate header to avoid browser's native auth dialog
       // The frontend will handle authentication through its own UI
-      return Response.json({ 
+      const response = Response.json({ 
         error: authResult.error || 'Authentication required',
         authMethods: getAuthStatus()
       }, { 
         status: 401,
         headers 
       });
+      finalizeAuth();
+      return response;
     }
     
     authInfo = createRequestAuth({
@@ -241,19 +251,26 @@ export async function handleRequest(
   // Handle user routes (database mode only)
   if (!HEADLESS && url.pathname.startsWith('/api/user')) {
     const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
-    if (userResult) return userResult;
+    if (userResult) {
+      finalizeAuth();
+      return userResult;
+    }
   }
 
   // Handle admin routes (database mode only, requires ADMIN_SECRET)
   if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
     const adminResult = await handleAdminRoute(req, url, baseContext);
-    if (adminResult) return adminResult;
+    if (adminResult) {
+      finalizeAuth();
+      return adminResult;
+    }
   }
   
   // Handle privileged routes separately
   if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
     const result = await handleEnvRoute(req, url, privilegedContext, authInfo);
     if (result) {
+      finalizeAuth();
       return result;
     }
   }
@@ -275,10 +292,13 @@ export async function handleRequest(
   for (const handler of routeHandlers) {
     const result = await handler(req, url, context, authInfo);
     if (result) {
+      finalizeAuth();
       return result;
     }
   }
 
   // If no route matched, return 404
-  return new Response('Not Found', { status: 404 });
+  const notFound = new Response('Not Found', { status: 404 });
+  finalizeAuth();
+  return notFound;
 } 

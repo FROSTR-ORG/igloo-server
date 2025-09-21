@@ -1,8 +1,14 @@
 import type { RequestAuth } from './types.js';
 import { vaultGetOnce, refreshSessionDerivedKey, rehydrateSessionDerivedKey } from './auth.js';
+import { zeroizeUint8 } from '../util/zeroize.js';
 
 // WeakMap for storing sensitive data that won't be enumerable or serializable
 const secretStorage = new WeakMap<RequestAuth, { derivedKey?: Uint8Array; sessionId?: string; hasPassword?: boolean }>();
+const secretFinalizer = typeof globalThis.FinalizationRegistry !== 'undefined'
+  ? new globalThis.FinalizationRegistry<{ derivedKey?: Uint8Array }>((value) => {
+      if (value?.derivedKey) zeroizeUint8(value.derivedKey);
+    })
+  : null;
 
 /**
  * Creates a RequestAuth object with secure ephemeral storage for sensitive data.
@@ -66,6 +72,7 @@ export function createRequestAuth(params: {
   // Only store in WeakMap if we have secrets
   if (secrets.derivedKey || secrets.sessionId || secrets.hasPassword) {
     secretStorage.set(auth, secrets);
+    secretFinalizer?.register(auth, secrets, secrets);
   }
 
   // Add secure getter for derivedKey with lazy vault retrieval
@@ -91,6 +98,7 @@ export function createRequestAuth(params: {
           if (keyFromVault) {
             // Refresh vault TTL/read counters and update session cache
             refreshSessionDerivedKey(secrets.sessionId, keyFromVault);
+            if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
             secrets.derivedKey = keyFromVault;
             return new Uint8Array(keyFromVault);
           }
@@ -98,6 +106,7 @@ export function createRequestAuth(params: {
           if (secrets?.hasPassword) {
             const rehydrated = rehydrateSessionDerivedKey(secrets.sessionId);
             if (rehydrated) {
+              if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
               secrets.derivedKey = rehydrated;
               return new Uint8Array(rehydrated);
             }
@@ -108,6 +117,22 @@ export function createRequestAuth(params: {
       },
     });
   }
+
+  Object.defineProperty(auth, 'destroySecrets', {
+    enumerable: false,
+    configurable: false,
+    writable: false,
+    value: () => {
+      const secrets = secretStorage.get(auth);
+      if (!secrets) return;
+      if (secrets.derivedKey) {
+        zeroizeUint8(secrets.derivedKey);
+        secrets.derivedKey = undefined;
+      }
+      secretFinalizer?.unregister(secrets);
+      secretStorage.delete(auth);
+    }
+  });
 
   return auth;
 }

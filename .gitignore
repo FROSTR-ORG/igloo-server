@@ -40,6 +40,7 @@ dist
 static/app.js
 static/app.css
 static/styles.css
+static/qr-scanner-worker.min.js
 
 # VSCode
 .vscode

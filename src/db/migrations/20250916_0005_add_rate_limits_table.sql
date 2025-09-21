@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS rate_limits (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   identifier TEXT NOT NULL,         -- IP address, fingerprint, or user ID
   bucket TEXT NOT NULL,             -- Rate limit bucket (e.g., 'auth', 'onboarding', 'nip46')
-  count INTEGER NOT NULL DEFAULT 1, -- Number of attempts in current window
+  count INTEGER NOT NULL DEFAULT 1 CHECK (count >= 0), -- Number of attempts in current window
   window_start INTEGER NOT NULL,    -- Unix timestamp (ms) when window started
   last_attempt INTEGER NOT NULL,    -- Unix timestamp (ms) of last attempt
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -25,10 +25,10 @@ CREATE INDEX IF NOT EXISTS idx_rate_limits_window_start
 CREATE INDEX IF NOT EXISTS idx_rate_limits_last_attempt
   ON rate_limits(last_attempt);
 
--- Trigger to auto-update updated_at timestamp
 CREATE TRIGGER IF NOT EXISTS update_rate_limits_timestamp
   AFTER UPDATE ON rate_limits
   FOR EACH ROW
+  WHEN NEW.updated_at = OLD.updated_at
   BEGIN
     UPDATE rate_limits
     SET updated_at = CURRENT_TIMESTAMP

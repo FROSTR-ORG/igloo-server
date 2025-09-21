@@ -11,6 +11,14 @@ import { getValidRelays, safeStringify } from '../routes/utils.js';
 import type { ServerWebSocket } from 'bun';
 import { SimplePool, finalizeEvent, generateSecretKey } from 'nostr-tools';
 
+// Opt-in flag to swallow "benign" relay publish errors (policy rejections, WOT blocks, etc.).
+// Enable by setting NODE_ALLOW_BENIGN_PUBLISH_SWALLOW (or RELAY_ALLOW_BENIGN_SWALLOW) to a truthy value.
+const ALLOW_BENIGN_PUBLISH_SWALLOW = (() => {
+  const raw = process.env.NODE_ALLOW_BENIGN_PUBLISH_SWALLOW ?? process.env.RELAY_ALLOW_BENIGN_SWALLOW;
+  if (raw === undefined) return false;
+  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+})();
+
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
 
@@ -190,7 +198,10 @@ function createInstrumentedPool(
                     reason
                   });
                 }
-                return false;
+                if (ALLOW_BENIGN_PUBLISH_SWALLOW) {
+                  return false;
+                }
+                throw err;
               }
               throw err;
             }));

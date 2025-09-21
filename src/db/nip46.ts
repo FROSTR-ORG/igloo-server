@@ -231,6 +231,11 @@ export function upsertSession(params: {
   const status = params.status || 'pending'
   const profile = params.profile || {}
 
+  const normalizedKey = (client_pubkey || '').trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(normalizedKey)) {
+    throw new Error('Invalid client pubkey format; expected 64-character hex string')
+  }
+
   // Validate and stringify JSON fields with size limits
   let relays: string | null = null
   if (params.relays) {
@@ -274,7 +279,7 @@ export function upsertSession(params: {
         last_active_at = COALESCE(excluded.last_active_at, nip46_sessions.last_active_at)
     `).run(
       userId,
-      client_pubkey,
+      normalizedKey,
       status,
       profile.name ?? null,
       profile.url ?? null,
@@ -285,14 +290,14 @@ export function upsertSession(params: {
       params.touchLastActive ? now : null
     )
 
-    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, normalizedKey)
     // Convert row to session object BEFORE committing transaction
     // This ensures any errors in rowToSession will properly rollback
     const session = rowToSession(row)
     db.exec('COMMIT')
 
     // Log event after successful commit (non-critical, failures ignored)
-    try { logSessionEvent(userId, client_pubkey, 'upsert') } catch {}
+    try { logSessionEvent(userId, normalizedKey, 'upsert') } catch {}
     return session
   } catch (e) {
     db.exec('ROLLBACK')

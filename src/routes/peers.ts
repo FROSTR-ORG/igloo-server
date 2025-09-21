@@ -430,8 +430,8 @@ async function handlePeerPolicyRoute(
     }
 
     const currentSummary = getNodePolicy(context.node, normalized);
-    const nextAllowSend = allowSend ?? currentSummary?.allowSend ?? true;
-    const nextAllowReceive = allowReceive ?? currentSummary?.allowReceive ?? true;
+    const nextAllowSend = allowSend ?? currentSummary?.allowSend ?? false;
+    const nextAllowReceive = allowReceive ?? currentSummary?.allowReceive ?? false;
 
     const policyInput: Record<string, unknown> = {
       pubkey: normalized,

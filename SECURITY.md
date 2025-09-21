@@ -207,10 +207,11 @@ Threshold signing and ECDH may stall due to peer/relay conditions. The server en
 - Keys are available for a short bootstrap window after login, then auto‑deleted.
 - Configuration:
   - `AUTH_DERIVED_KEY_TTL_MS` (default `120000`) – maximum residency time in ms
-  - `AUTH_DERIVED_KEY_MAX_READS` (default `3`) – maximum one‑time retrievals per session
+  - `AUTH_DERIVED_KEY_MAX_READS` (default `3`) – maximum one-time retrievals per session
 - Behavior:
-  - Each retrieval returns a copy and decrements the read budget; on zero or TTL expiry, the key is zeroized and removed.
-  - Logout and session expiry proactively zeroize associated keys.
+  - Each retrieval returns a copy and decrements the read budget; on zero or TTL expiry, the server fills the backing `Uint8Array` with zeros before removal.
+  - Logout and session expiry proactively zeroize associated keys, and per-request caches are wiped once responses are sent.
+  - ⚠️ JavaScript engines may retain historical copies (GC, structured clones); zeroization is best-effort and should be paired with short TTLs and minimal reuse.
 
 ### CORS (Cross-Origin Resource Sharing) Security
 

@@ -118,18 +118,34 @@ export class ServerSigner {
     if (!res.ok) {
       const requestId = res.headers.get('X-Request-ID') || undefined
       let msg = `${res.status} ${res.statusText}`
+      let bodyText: string | undefined
+
       try {
-        const data = await res.json()
-        if (data?.code === 'SIGN_TIMEOUT' || res.status === 504) {
-          msg = `Signing timed out${data?.error ? `: ${data.error}` : ''}`
-        } else if (data?.error) {
-          msg = data.error
-        }
-        throw new Error(`Server signing failed${requestId ? ` [${requestId}]` : ''}: ${msg}`)
+        bodyText = await res.text()
       } catch {
-        const body = await res.text().catch(() => '[unable to read response]')
-        throw new Error(`Server signing failed${requestId ? ` [${requestId}]` : ''}: ${res.status} ${res.statusText} - ${body}`)
+        bodyText = undefined
       }
+
+      if (bodyText && bodyText.length > 0) {
+        try {
+          const data = JSON.parse(bodyText)
+          if (data?.code === 'SIGN_TIMEOUT' || res.status === 504) {
+            msg = `Signing timed out${data?.error ? `: ${data.error}` : ''}`
+          } else if (data?.error) {
+            msg = data.error
+          } else {
+            msg = `${res.status} ${res.statusText} - ${bodyText}`
+          }
+        } catch {
+          msg = `${res.status} ${res.statusText} - ${bodyText}`
+        }
+      } else if (res.status === 504) {
+        msg = 'Signing timed out'
+      } else {
+        msg = `${res.status} ${res.statusText} - [unable to read response]`
+      }
+
+      throw new Error(`Server signing failed${requestId ? ` [${requestId}]` : ''}: ${msg}`)
     }
     const { signature } = await res.json()
     return { ...normalized, id, sig: signature }

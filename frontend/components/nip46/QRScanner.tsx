@@ -1,6 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import QrScanner from 'qr-scanner'
 
+// Ensure the QR scanner can locate its web worker at runtime.
+QrScanner.WORKER_PATH = '/static/qr-scanner-worker.min.js'
+
 interface QRScannerProps {
   onResult: (result: string) => void
   onError?: (error: Error) => void

@@ -6,6 +6,7 @@ import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
+import { zeroizeUint8, zeroizeAndDelete as zeroizeUint8MapEntry } from '../util/zeroize.js';
 
 // Session secret persistence configuration
 // Properly handle DB_PATH whether it's a file or directory
@@ -314,18 +315,19 @@ const derivedKeyVault = new Map<string, VaultEntry>();
 function vaultSet(sessionId: string, key: Uint8Array, ttlMs = AUTH_DERIVED_KEY_TTL_MS, maxReads = AUTH_DERIVED_KEY_MAX_READS) {
   // Store a fresh copy to avoid external references
   const copy = new Uint8Array(key);
+  const existing = derivedKeyVault.get(sessionId);
+  if (existing) zeroizeUint8(existing.key);
   derivedKeyVault.set(sessionId, { key: copy, expiresAt: Date.now() + ttlMs, remainingReads: maxReads });
 }
 
 function cacheDerivedKeyForSession(sessionId: string, key: Uint8Array): void {
+  const existing = sessionDerivedKeyCache.get(sessionId);
+  if (existing) zeroizeUint8(existing);
   sessionDerivedKeyCache.set(sessionId, new Uint8Array(key));
 }
 
 function clearCachedDerivedKey(sessionId: string): void {
-  const cached = sessionDerivedKeyCache.get(sessionId);
-  if (!cached) return;
-  cached.fill(0);
-  sessionDerivedKeyCache.delete(sessionId);
+  zeroizeUint8MapEntry(sessionDerivedKeyCache, sessionId);
 }
 
 export function refreshSessionDerivedKey(sessionId: string, key: Uint8Array): void {
@@ -341,10 +343,10 @@ export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | unde
   return copy;
 }
 
-function zeroizeAndDelete(sessionId: string) {
+function zeroizeVaultEntryAndDelete(sessionId: string) {
   const entry = derivedKeyVault.get(sessionId);
   if (entry) {
-    for (let i = 0; i < entry.key.length; i++) entry.key[i] = 0;
+    zeroizeUint8(entry.key);
     derivedKeyVault.delete(sessionId);
   }
 }
@@ -354,13 +356,13 @@ export function vaultGetOnce(sessionId: string): Uint8Array | undefined {
   if (!entry) return undefined;
   const now = Date.now();
   if (now > entry.expiresAt) {
-    zeroizeAndDelete(sessionId);
+    zeroizeVaultEntryAndDelete(sessionId);
     return undefined;
   }
   // Return a copy to the caller
   const out = new Uint8Array(entry.key);
   entry.remainingReads -= 1;
-  if (entry.remainingReads <= 0) zeroizeAndDelete(sessionId);
+  if (entry.remainingReads <= 0) zeroizeVaultEntryAndDelete(sessionId);
   return out;
 }
 
@@ -370,7 +372,7 @@ function cleanupExpiredVaultEntries(): void {
   for (const [sessionId, entry] of Array.from(derivedKeyVault.entries())) {
     if (now > entry.expiresAt) {
       // Reuse existing zeroization logic
-      zeroizeAndDelete(sessionId);
+      zeroizeVaultEntryAndDelete(sessionId);
     }
   }
 }
@@ -504,7 +506,7 @@ function authenticateSession(req: Request): AuthResult {
   if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
-    zeroizeAndDelete(sessionId);
+    zeroizeVaultEntryAndDelete(sessionId);
     return { authenticated: false, error: 'Session expired' };
   }
 
@@ -577,7 +579,7 @@ export function createSession(
     cacheDerivedKeyForSession(sessionId, derivedKey);
     vaultSet(sessionId, derivedKey);
     // Zeroize local copy after storing
-    for (let i = 0; i < derivedKey.length; i++) derivedKey[i] = 0;
+    zeroizeUint8(derivedKey);
     derivedKey = undefined;
   }
   sessionStore.set(sessionId, {
@@ -603,7 +605,7 @@ function cleanupExpiredSessions(): void {
       sessionStore.delete(sessionId);
       clearCachedDerivedKey(sessionId);
       // Ensure any lingering derived key is destroyed
-      zeroizeAndDelete(sessionId);
+      zeroizeVaultEntryAndDelete(sessionId);
     }
   }
 }
@@ -639,7 +641,7 @@ export function stopAuthCleanup(): void {
 
   // Zeroize all remaining vault entries on shutdown
   for (const sessionId of Array.from(derivedKeyVault.keys())) {
-    zeroizeAndDelete(sessionId);
+    zeroizeVaultEntryAndDelete(sessionId);
   }
 
   for (const sessionId of Array.from(sessionDerivedKeyCache.keys())) {
@@ -908,7 +910,7 @@ export function handleLogout(req: Request): Response {
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
     // Wipe any ephemeral derived key bound to this session
-    try { zeroizeAndDelete(sessionId) } catch {}
+    try { zeroizeVaultEntryAndDelete(sessionId) } catch {}
   }
 
   return Response.json({ success: true }, { headers });

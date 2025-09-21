@@ -76,12 +76,14 @@ export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Pr
     // Fallback: persist locally to avoid signer identity churn within the browser
     try {
       const storageKey = 'igloo:nip46:transport_sk'
-      let sk = localStorage.getItem(storageKey) || ''
+      const storage = typeof window !== 'undefined' ? window.sessionStorage : undefined
+      if (!storage) return undefined
+      let sk = storage.getItem(storageKey) || ''
       if (sk && /^[0-9a-fA-F]{64}$/.test(sk)) return sk.toLowerCase()
       const bytes = new Uint8Array(32)
       crypto.getRandomValues(bytes)
       sk = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-      localStorage.setItem(storageKey, sk)
+      storage.setItem(storageKey, sk)
       return sk
     } catch {
       return undefined

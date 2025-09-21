@@ -102,6 +102,7 @@ export interface RequestAuth {
   // These access secrets from ephemeral storage (WeakMap/closure) and clear after reading
   getPassword?(): string | undefined;
   getDerivedKey?(): Uint8Array | undefined;
+  destroySecrets?(): void;
 }
 
 import type { ServerWebSocket } from 'bun';
