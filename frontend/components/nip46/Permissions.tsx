@@ -52,6 +52,7 @@ export function PermissionsDropdown({
 
     onPermissionChange({
       ...editingPermissions,
+      methods: { ...editingPermissions.methods, sign_event: true },
       kinds: { ...editingPermissions.kinds, [kind]: true }
     })
     onEventKindChange('')
@@ -60,7 +61,11 @@ export function PermissionsDropdown({
   const removeEventKind = (kind: number) => {
     const updated = { ...editingPermissions.kinds }
     delete updated[kind]
-    onPermissionChange({ ...editingPermissions, kinds: updated })
+    const methods = { ...editingPermissions.methods }
+    if (Object.keys(updated).filter(k => updated[k]).length === 0) {
+      methods.sign_event = false
+    }
+    onPermissionChange({ ...editingPermissions, kinds: updated, methods })
   }
 
   const kinds = Object.keys(editingPermissions.kinds || {})

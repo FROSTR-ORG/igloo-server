@@ -837,10 +837,11 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
                       content={
                         <>
                           <p className="mb-2 font-semibold">FROSTR signing timeout:</p>
-                          <p>Maximum time the server waits for a signature before failing. Default: 30000ms (30s). Min 1000, Max 120000.</p>
+                          <p className="mb-2">Maximum time the server waits for a signature before failing. Default: 30000ms (30s). Min 1000, Max 120000.</p>
+                          <p>This value is applied directly to the Bifrost client's <code>req_timeout</code>, so timeouts are enforced by the node instead of the API layer.</p>
                         </>
                       }
-                      width="w-60"
+                      width="w-72"
                     />
                   </label>
                   <Input
@@ -851,6 +852,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
                     disabled={isLoadingAdvanced}
                     className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
                   />
+                  <p className="text-xs text-blue-300/80">Applies in both headless and database modes.</p>
                 </div>
                 
                 {/* Rate Limiting Section */}

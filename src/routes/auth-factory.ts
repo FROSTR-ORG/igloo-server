@@ -94,22 +94,27 @@ export function createRequestAuth(params: {
 
         // If no direct key but we have a sessionId, try lazy retrieval from vault
         if (secrets?.sessionId) {
-          const keyFromVault = vaultGetOnce(secrets.sessionId);
-          if (keyFromVault) {
-            // Refresh vault TTL/read counters and update session cache
-            refreshSessionDerivedKey(secrets.sessionId, keyFromVault);
-            if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
-            secrets.derivedKey = keyFromVault;
-            return new Uint8Array(keyFromVault);
-          }
-
-          if (secrets?.hasPassword) {
-            const rehydrated = rehydrateSessionDerivedKey(secrets.sessionId);
-            if (rehydrated) {
+          try {
+            const keyFromVault = vaultGetOnce(secrets.sessionId);
+            if (keyFromVault) {
+              // Refresh vault TTL/read counters and update session cache
+              refreshSessionDerivedKey(secrets.sessionId, keyFromVault);
               if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
-              secrets.derivedKey = rehydrated;
-              return new Uint8Array(rehydrated);
+              secrets.derivedKey = keyFromVault;
+              return new Uint8Array(keyFromVault);
             }
+
+            if (secrets?.hasPassword) {
+              const rehydrated = rehydrateSessionDerivedKey(secrets.sessionId);
+              if (rehydrated) {
+                if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
+                secrets.derivedKey = rehydrated;
+                return new Uint8Array(rehydrated);
+              }
+            }
+          } catch (error) {
+            console.error('[auth] Failed to hydrate derived key from vault:', error);
+            return undefined;
           }
         }
 

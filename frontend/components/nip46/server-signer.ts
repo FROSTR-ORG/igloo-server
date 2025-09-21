@@ -76,10 +76,12 @@ export class ServerSigner {
     }
 
     // Ensure Unix seconds timestamp (not milliseconds)
-    const created_at = Math.floor(Number(template.created_at))
-    if (!Number.isInteger(created_at) || created_at <= 0) {
+    const ts = Math.floor(Number(template.created_at))
+    if (!Number.isFinite(ts) || ts <= 0) {
       throw new Error('Invalid timestamp: must be positive Unix seconds')
     }
+    // Convert millisecond timestamps to seconds when necessary
+    const created_at = ts > 1_000_000_000_000 ? Math.floor(ts / 1000) : ts
 
     // Normalize tags to string arrays, filtering out null/undefined
     const tags = (template.tags || []).map((tag: any[]) =>
@@ -89,7 +91,12 @@ export class ServerSigner {
     // Validate content is string
     const content = typeof template.content === 'string' ? template.content : ''
 
-    return { pubkey, created_at, kind: template.kind, tags, content }
+    const kindNum = Number(template.kind)
+    if (!Number.isInteger(kindNum) || kindNum < 0) {
+      throw new Error('Invalid kind: must be a non-negative integer')
+    }
+
+    return { pubkey, created_at, kind: kindNum, tags, content }
   }
 
   async sign_event(event: EventTemplate): Promise<SignedEvent> {

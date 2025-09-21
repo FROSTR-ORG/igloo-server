@@ -1,5 +1,5 @@
-import type { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, withTimeout } from './utils.js';
+import type { RouteContext, RequestAuth, ServerBifrostNode } from './types.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs } from './utils.js';
 import { checkRateLimit } from './auth.js';
 import { getEventHash, type EventTemplate, type UnsignedEvent } from 'nostr-tools';
 
@@ -83,6 +83,58 @@ function computeEventId(body: SignRequestBody): { id: string } | { error: string
   return { error: 'Request must include `message` or `event`' };
 }
 
+function applySignRequestTimeout(
+  node: ServerBifrostNode,
+  timeoutMs: number,
+  addServerLog?: RouteContext['addServerLog']
+) {
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
+
+  const log = typeof addServerLog === 'function' ? addServerLog : undefined;
+
+  const updateClientTimeout = (client: any) => {
+    if (!client || typeof client !== 'object') return;
+    const config = client.config ?? client._config;
+    if (!config || typeof config !== 'object') return;
+    const current = config.req_timeout;
+    if (typeof current === 'number' && current === timeoutMs) return;
+    config.req_timeout = timeoutMs;
+    if (log) {
+      try {
+        log('debug', 'Applied signing request timeout to node client', { timeoutMs });
+      } catch {}
+    }
+  };
+
+  try {
+    const client = (node as any).client ?? (node as any)._client;
+    updateClientTimeout(client);
+  } catch (error) {
+    if (log) {
+      try {
+        log('debug', 'Failed to apply signing request timeout', {
+          timeoutMs,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } catch {}
+    }
+  }
+}
+
+function normalizeErrorReason(reason: unknown): string {
+  if (typeof reason === 'string' && reason.trim().length > 0) return reason;
+  if (reason && typeof reason === 'object' && 'message' in reason) {
+    const message = (reason as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim().length > 0) return message;
+  }
+  return String(reason ?? 'unknown error');
+}
+
+function isTimeoutReason(reason: string): boolean {
+  const value = reason.toLowerCase();
+  return value.includes('timeout');
+}
+
 export async function handleSignRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {
   if (url.pathname !== '/api/sign') return null;
 
@@ -138,22 +190,37 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
   try {
     // Bifrost sign request returns { ok, data: SignatureEntry[] }
     const timeoutMs = getOpTimeoutMs();
-    const result = await withTimeout(context.node!.req.sign(id), timeoutMs, 'SIGN_TIMEOUT');
-    if (!result || result.ok !== true) {
-      const reason = (result && (result.err ?? (result as any).error)) || 'signing failed';
-      if (typeof reason === 'string' && reason.toLowerCase().includes('timeout')) {
-        try { context.addServerLog('warning', 'Signing operation timed out', { id, timeoutMs }); } catch {}
+    applySignRequestTimeout(context.node!, timeoutMs, context.addServerLog);
+
+    let signResult;
+    try {
+      signResult = await context.node!.req.sign(id);
+    } catch (error) {
+      const reason = normalizeErrorReason(error);
+      if (isTimeoutReason(reason)) {
+        try { context.addServerLog('warning', 'Signing operation timed out', { id, timeoutMs, source: 'bifrost' }); } catch {}
         return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${timeoutMs}ms` }, { status: 504, headers: { ...headers, 'Retry-After': Math.ceil(timeoutMs / 1000).toString() } });
       }
       try { context.addServerLog('error', 'Signing operation failed', { id, reason }); } catch {}
-      return Response.json({ code: 'SIGN_FAILED', error: String(reason) }, { status: 502, headers });
+      return Response.json({ code: 'SIGN_FAILED', error: reason }, { status: 502, headers });
+    }
+
+    if (!signResult || signResult.ok !== true) {
+      const rawReason = signResult && (signResult.err ?? (signResult as any).error);
+      const reason = normalizeErrorReason(rawReason ?? 'signing failed');
+      if (isTimeoutReason(reason)) {
+        try { context.addServerLog('warning', 'Signing operation timed out', { id, timeoutMs, source: 'response' }); } catch {}
+        return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${timeoutMs}ms` }, { status: 504, headers: { ...headers, 'Retry-After': Math.ceil(timeoutMs / 1000).toString() } });
+      }
+      try { context.addServerLog('error', 'Signing operation failed', { id, reason }); } catch {}
+      return Response.json({ code: 'SIGN_FAILED', error: reason }, { status: 502, headers });
     }
 
     // Expect an array like: [[sighash, pubkey, signature]]
     let signatureHex: string | null = null;
     try {
-      if (Array.isArray(result.data)) {
-        const entry = result.data.find((e) => Array.isArray(e) && e[0] === id) || result.data[0];
+      if (Array.isArray(signResult.data)) {
+        const entry = signResult.data.find((e) => Array.isArray(e) && e[0] === id) || signResult.data[0];
         signatureHex = Array.isArray(entry) ? entry[2] : null;
       }
     } catch (error) {
@@ -173,10 +240,11 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
 
     return Response.json({ id, signature: signatureHex }, { status: 200, headers });
   } catch (e: any) {
-    const message = e?.message || 'Internal error during sign';
-    if (message === 'SIGN_TIMEOUT') {
-      try { context.addServerLog('warning', `FROSTR signing timeout`, { id }); } catch {}
-      return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${getOpTimeoutMs()}ms` }, { status: 504, headers });
+    const message = normalizeErrorReason(e);
+    if (isTimeoutReason(message)) {
+      const timeoutMs = getOpTimeoutMs();
+      try { context.addServerLog('warning', `FROSTR signing timeout`, { id, timeoutMs, source: 'unexpected' }); } catch {}
+      return Response.json({ code: 'SIGN_TIMEOUT', error: `Signing timed out after ${timeoutMs}ms` }, { status: 504, headers });
     }
     return Response.json({ code: 'SIGN_ERROR', error: message }, { status: 500, headers });
   }

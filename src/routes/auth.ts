@@ -289,6 +289,7 @@ const sessionStore = new Map<string, {
   ipAddress: string;
   salt?: string; // Store salt as hex string for non-database users (env auth)
   hasPassword?: boolean; // Flag indicating if password-based derived key is available in vault
+  rehydrationsUsed: number; // Count of cache-driven rehydrations performed for this session
   // Note: for database users, salt comes from the database
 }>();
 
@@ -299,6 +300,7 @@ const sessionDerivedKeyCache = new Map<string, Uint8Array>();
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
 const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
 const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
+const AUTH_DERIVED_KEY_MAX_REHYDRATIONS = Math.max(0, Math.min(100, parseInt(process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS || '3')));
 
 // Configurable cleanup interval for vault entries (default 2 minutes)
 const VAULT_CLEANUP_INTERVAL_MS = Math.max(
@@ -336,11 +338,46 @@ export function refreshSessionDerivedKey(sessionId: string, key: Uint8Array): vo
 }
 
 export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | undefined {
+  if (AUTH_DERIVED_KEY_MAX_REHYDRATIONS === 0) {
+    const cachedDisabled = sessionDerivedKeyCache.get(sessionId);
+    if (cachedDisabled) {
+      zeroizeUint8(cachedDisabled);
+      sessionDerivedKeyCache.delete(sessionId);
+    }
+    zeroizeVaultEntryAndDelete(sessionId);
+    return undefined;
+  }
+
+  const session = sessionStore.get(sessionId);
+  if (!session) {
+    const cachedOrphan = sessionDerivedKeyCache.get(sessionId);
+    if (cachedOrphan) {
+      zeroizeUint8(cachedOrphan);
+      sessionDerivedKeyCache.delete(sessionId);
+    }
+    zeroizeVaultEntryAndDelete(sessionId);
+    return undefined;
+  }
+
   const cached = sessionDerivedKeyCache.get(sessionId);
   if (!cached) return undefined;
+
+  const used = session.rehydrationsUsed ?? 0;
+  if (used >= AUTH_DERIVED_KEY_MAX_REHYDRATIONS) {
+    console.warn('[auth] Session rehydration quota exceeded; denying rehydrate request.');
+    zeroizeUint8(cached);
+    sessionDerivedKeyCache.delete(sessionId);
+    zeroizeVaultEntryAndDelete(sessionId);
+    return undefined;
+  }
+
+  session.rehydrationsUsed = used + 1;
+
   const copy = new Uint8Array(cached);
+  zeroizeUint8(cached);
+  sessionDerivedKeyCache.set(sessionId, copy);
   vaultSet(sessionId, copy);
-  return copy;
+  return new Uint8Array(copy);
 }
 
 function zeroizeVaultEntryAndDelete(sessionId: string) {
@@ -588,7 +625,8 @@ export function createSession(
     lastAccess: now,
     ipAddress,
     salt: sessionSalt, // Store salt for non-database users
-    hasPassword // Flag to indicate password-based auth
+    hasPassword, // Flag to indicate password-based auth
+    rehydrationsUsed: 0
   });
   
   cleanupExpiredSessions();

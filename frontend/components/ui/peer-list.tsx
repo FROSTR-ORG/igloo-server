@@ -809,7 +809,7 @@ const PeerList: React.FC<PeerListProps> = ({
                                     variant="ghost"
                                     size="sm"
                                     className={getPolicyToggleClasses(outboundPolicy.isAllowed, canEditPolicies)}
-                                    onClick={() => updatePeerPolicy(peer, { allowSend: !(policySummary.allowSend ?? true) })}
+                                    onClick={() => updatePeerPolicy(peer, { allowSend: !outboundPolicy.isAllowed })}
                                     disabled={!canEditPolicies || isPolicyBusy}
                                   >
                                     {`Outbound ${outboundPolicy.buttonLabel}`}
@@ -819,7 +819,7 @@ const PeerList: React.FC<PeerListProps> = ({
                                     variant="ghost"
                                     size="sm"
                                     className={getPolicyToggleClasses(inboundPolicy.isAllowed, canEditPolicies)}
-                                    onClick={() => updatePeerPolicy(peer, { allowReceive: !(policySummary.allowReceive ?? true) })}
+                                    onClick={() => updatePeerPolicy(peer, { allowReceive: !inboundPolicy.isAllowed })}
                                     disabled={!canEditPolicies || isPolicyBusy}
                                   >
                                     {`Inbound ${inboundPolicy.buttonLabel}`}

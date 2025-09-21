@@ -181,9 +181,12 @@ export function Sessions({ controller }: SessionsProps) {
                           {copiedPubkey === session.pubkey ? '✓' : '📋'}
                         </button>
                       </div>
+                      {session.relays && session.relays.length > 0 && (
+                        <span className="session-created">Relays: {session.relays.join(', ')}</span>
+                      )}
                       <span className="session-created">Created: {new Date(session.created_at * 1000).toLocaleString()}</span>
-                      {history[session.pubkey]?.last_active_at && (
-                        <span className="session-created">Last Active: {new Date(history[session.pubkey]!.last_active_at!).toLocaleString()}</span>
+                      {session.last_active_at && (
+                        <span className="session-created">Last Active: {new Date(session.last_active_at * 1000).toLocaleString()}</span>
                       )}
                     </div>
                   </div>

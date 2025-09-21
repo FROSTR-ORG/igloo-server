@@ -450,9 +450,10 @@ export function logSessionEvent(userId: number | bigint, client_pubkey: string, 
 }
 
 export function listSessionEvents(userId: number | bigint, client_pubkey: string, limit = 50): Nip46SessionEvent[] {
+  const key = (client_pubkey || '').trim().toLowerCase()
   const rows = db.prepare(
     'SELECT * FROM nip46_session_events WHERE user_id = ? AND client_pubkey = ? ORDER BY created_at DESC, id DESC LIMIT ?'
-  ).all(userId, client_pubkey, limit) as any[]
+  ).all(userId, key, limit) as any[]
   return rows.map(r => ({
     id: r.id,
     user_id: r.user_id,

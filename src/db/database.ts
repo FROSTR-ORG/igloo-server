@@ -582,22 +582,22 @@ export const getAllUsers = (): AdminUserListItem[] => {
   }
 };
 
+export type DeleteUserResult = { success: true } | { success: false; error: string };
+
 /**
- * Delete a user from the database
+ * Delete a user from the database using the guarded transactional path.
  * @param userId - The ID of the user to delete (supports both number and bigint)
- * @returns true if the user was deleted, false otherwise
+ * @returns Detailed result including failure reasons when deletion is blocked
  */
-export const deleteUser = (userId: number | bigint): boolean => {
-  checkShutdown();
-  try {
-    const stmt = db.prepare('DELETE FROM users WHERE id = ?');
-    stmt.run(userId);
-    const result = db.query('SELECT changes() as changes').get() as { changes: number } | null;
-    return !!result && result.changes > 0;
-  } catch (error) {
-    console.error('Error deleting user:', error);
-    return false;
+export const deleteUser = (userId: number | bigint): DeleteUserResult => {
+  const { success, error } = deleteUserSafely(userId);
+  if (success) {
+    return { success: true };
   }
+
+  const message = error ?? 'Deletion failed';
+  console.warn(`[db] deleteUser reported: ${message}`);
+  return { success: false, error: message };
 };
 
 /**

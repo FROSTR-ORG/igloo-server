@@ -396,7 +396,7 @@ export class NIP46Controller extends Emitter {
       this.reconnectTimer = null
       if (this.destroyed) return
       try {
-        await this.agent?.connect?.(Array.from(this.knownRelays.size ? this.knownRelays : new Set(this.config.relays)))
+        await this.agent?.connect?.(Array.from(this.knownRelays.size ? this.knownRelays : new Set(this.config.relays ?? [])))
       } catch (err) {
         // Try again later
         this.scheduleReconnect()
@@ -828,7 +828,10 @@ export class NIP46Controller extends Emitter {
       }
       const sess: SignerSession = {
         pubkey: key,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: Number(s.created_at) || Math.floor(Date.now() / 1000),
+        updated_at: s.updated_at ? Number(s.updated_at) : undefined,
+        last_active_at: s.last_active_at ? Number(s.last_active_at) : undefined,
+        relays: Array.isArray(s.relays) ? s.relays : undefined,
         profile: s.profile || {},
         policy: s.policy || this.config.policy,
         status: s.status === 'active' ? 'active' : 'pending'
@@ -850,16 +853,17 @@ export class NIP46Controller extends Emitter {
 
   private async saveSession(session: SignerSession, relays?: string[]) {
     const key = normalizePubkey(session.pubkey) || session.pubkey
+    const sessionRelays = relays ?? session.relays
     const body = {
       pubkey: key,
       status: session.status || 'pending',
       profile: session.profile || {},
       policy: session.policy || this.config.policy,
-      relays: relays
+      relays: sessionRelays
     }
     await this.api('/api/nip46/sessions', { method: 'POST', body: JSON.stringify(body) })
     // Track relays for future reconnects
-    this.addKnownRelays(relays)
+    this.addKnownRelays(sessionRelays)
   }
 
   private async updateSessionStatus(pubkey: string, status: 'pending' | 'active' | 'revoked', touch = false) {

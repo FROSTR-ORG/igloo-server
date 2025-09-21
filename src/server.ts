@@ -671,6 +671,10 @@ const server = serve({
       const resp = await handleRequest(req, url, baseContext, privilegedContext);
       return resp;
     } catch (err: any) {
+      if (err?.code === 'RATE_LIMITER_UNAVAILABLE') {
+        const status = typeof err.status === 'number' ? err.status : 503;
+        return buildJsonError({ error: err.message, code: err.code }, status, requestId);
+      }
       // Convert unhandled errors into a structured JSON error with correlation id
       const message = err?.message || String(err);
       try {

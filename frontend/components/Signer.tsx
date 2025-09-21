@@ -198,6 +198,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     group: false,
     share: false
   });
+  const [credentialSaveError, setCredentialSaveError] = useState<string | null>(null);
   const [logs, setLogs] = useState<LogEntryData[]>(() => readStoredLogs());
   const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
 
@@ -730,42 +731,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     );
   };
 
-  // Save credentials to server .env file
-  const saveCredentialsToEnv = async (share?: string, group?: string) => {
-    try {
-      const updateData: Record<string, string> = {};
-      if (share !== undefined) updateData.SHARE_CRED = share;
-      if (group !== undefined) updateData.GROUP_CRED = group;
-      
-      if (Object.keys(updateData).length > 0) {
-        await fetch('/api/env', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...authHeaders
-          },
-          body: JSON.stringify(updateData)
-        });
-      }
-    } catch (error) {
-      console.error('Error saving credentials to env:', error);
-    }
-  };
-
-  const handleShareChange = (value: string) => {
-    setSignerSecret(value);
-    const ok = performDeepShareValidation(value)
-    setIsShareValid(ok)
-    if (ok) saveCredentialsToEnv(value, undefined)
-  };
-
-  const handleGroupChange = (value: string) => {
-    setGroupCredential(value);
-    const ok = performDeepGroupValidation(value)
-    setIsGroupValid(ok)
-    if (ok) saveCredentialsToEnv(undefined, value)
-  };
-
   // Helper function to determine if we're in database mode
   const isDatabaseMode = () => {
     // Use explicit flag if provided, otherwise fall back to presence of real initial data
@@ -775,7 +740,91 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     // Backward compatibility: only consider it database mode if we have actual credentials
     return !!(initialData && initialData.share && initialData.groupCredential);
   };
-  
+
+  const saveCredentialsToUser = async (updates: { share_cred?: string; group_cred?: string }) => {
+    try {
+      const response = await fetch('/api/user/credentials', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify(updates)
+      });
+      if (!response.ok) {
+        const message = await response.text().catch(() => '')
+        throw new Error(`Failed to save credentials: ${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`)
+      }
+    } catch (error) {
+      console.error('Error saving credentials for user:', error);
+      throw error;
+    }
+  };
+
+  const saveCredentialsToEnv = async (share?: string, group?: string) => {
+    if (isDatabaseMode()) {
+      const updates: { share_cred?: string; group_cred?: string } = {};
+      if (share !== undefined) updates.share_cred = share;
+      if (group !== undefined) updates.group_cred = group;
+      if (Object.keys(updates).length > 0) {
+        await saveCredentialsToUser(updates);
+      }
+      return;
+    }
+
+    try {
+      const updateData: Record<string, string> = {};
+      if (share !== undefined) updateData.SHARE_CRED = share;
+      if (group !== undefined) updateData.GROUP_CRED = group;
+
+      if (Object.keys(updateData).length > 0) {
+        const response = await fetch('/api/env', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          },
+          body: JSON.stringify(updateData)
+        });
+        if (!response.ok) {
+          const message = await response.text().catch(() => '')
+          throw new Error(`Failed to save environment credentials: ${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`)
+        }
+      }
+    } catch (error) {
+      console.error('Error saving credentials to env:', error);
+      throw error;
+    }
+  };
+
+  const handleShareChange = async (value: string) => {
+    setSignerSecret(value);
+    const ok = performDeepShareValidation(value)
+    setIsShareValid(ok)
+    if (ok) {
+      try {
+        await saveCredentialsToEnv(value, undefined)
+        setCredentialSaveError(null)
+      } catch (error) {
+        setCredentialSaveError('Failed to save share credential. Please try again.')
+      }
+    }
+  };
+
+  const handleGroupChange = async (value: string) => {
+    setGroupCredential(value);
+    const ok = performDeepGroupValidation(value)
+    setIsGroupValid(ok)
+    if (ok) {
+      try {
+        await saveCredentialsToEnv(undefined, value)
+        setCredentialSaveError(null)
+      } catch (error) {
+        setCredentialSaveError('Failed to save group credential. Please try again.')
+      }
+    }
+  };
+
   // Save relay URLs to user credentials (database mode)
   const saveRelaysToUserCredentials = async (relays: string[]) => {
     try {
@@ -1056,6 +1105,12 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
                   Failed to decode share credential
                 </div>
               )}
+            </div>
+          )}
+
+          {credentialSaveError && (
+            <div className="text-sm text-red-400" role="alert">
+              {credentialSaveError}
             </div>
           )}
 

@@ -12,6 +12,9 @@ export interface SessionProfile {
 export interface SignerSession {
   pubkey: string
   created_at: number
+  updated_at?: number
+  last_active_at?: number
+  relays?: string[]
   profile: SessionProfile
   policy?: PermissionPolicy
   status?: 'active' | 'pending'
