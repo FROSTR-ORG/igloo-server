@@ -540,7 +540,8 @@ function authenticateSession(req: Request): AuthResult {
   }
 
   const now = Date.now();
-  if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
+  const lastActivity = session.lastAccess ?? session.createdAt;
+  if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
     zeroizeVaultEntryAndDelete(sessionId);
@@ -639,7 +640,8 @@ export function createSession(
 function cleanupExpiredSessions(): void {
   const now = Date.now();
   for (const [sessionId, session] of Array.from(sessionStore.entries())) {
-    if (now - session.createdAt > AUTH_CONFIG.SESSION_TIMEOUT) {
+    const lastActivity = session.lastAccess ?? session.createdAt;
+    if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
       sessionStore.delete(sessionId);
       clearCachedDerivedKey(sessionId);
       // Ensure any lingering derived key is destroyed

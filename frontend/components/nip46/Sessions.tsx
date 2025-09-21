@@ -16,6 +16,16 @@ function safeHostname(url?: string | null): string | null {
   }
 }
 
+function safeHttpUrl(url?: string | null): string | null {
+  if (!url) return null
+  try {
+    const u = new URL(url)
+    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString() : null
+  } catch {
+    return null
+  }
+}
+
 interface SessionsProps { controller: NIP46Controller | null }
 
 export function Sessions({ controller }: SessionsProps) {
@@ -159,6 +169,8 @@ export function Sessions({ controller }: SessionsProps) {
           <div className="sessions-list">
             {allSessions.map((session) => {
               const truncated = session.pubkey.slice(0, 12) + '...' + session.pubkey.slice(-12)
+              const profileHref = safeHttpUrl(session.profile.url)
+              const profileLabel = safeHostname(session.profile.url) || session.profile.url
               return (
                 <div key={session.pubkey} className="session-card">
                   <span className={`session-badge ${session.status}`}>{session.status}</span>
@@ -170,10 +182,14 @@ export function Sessions({ controller }: SessionsProps) {
                         )}
                         <span className="session-name">{session.profile.name || 'Unknown Application'}</span>
                       </div>
-                      {session.profile.url && (
-                        <a href={session.profile.url} target="_blank" rel="noopener noreferrer" className="session-url">
-                          {safeHostname(session.profile.url) || session.profile.url}
-                        </a>
+                      {session.profile.url && profileLabel && (
+                        profileHref ? (
+                          <a href={profileHref} target="_blank" rel="noopener noreferrer" className="session-url">
+                            {profileLabel}
+                          </a>
+                        ) : (
+                          <span className="session-url">{profileLabel}</span>
+                        )
                       )}
                       <div className="session-pubkey-container">
                         <span className="session-pubkey">{truncated}</span>

@@ -229,7 +229,6 @@ export function upsertSession(params: {
 }): Nip46Session {
   const { userId, client_pubkey } = params
   const status = params.status || 'pending'
-  const profile = params.profile || {}
 
   const normalizedKey = (client_pubkey || '').trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(normalizedKey)) {
@@ -245,14 +244,20 @@ export function upsertSession(params: {
     }
   }
 
-  const policy_methods = JSON.stringify(params.policy?.methods || {})
-  if (policy_methods.length > MAX_JSON_FIELD_SIZE) {
-    throw new Error(`Policy methods data too large (${policy_methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+  let policy_methods: string | null = null
+  if (params.policy && params.policy.methods !== undefined) {
+    policy_methods = JSON.stringify(params.policy.methods)
+    if (policy_methods.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy methods data too large (${policy_methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    }
   }
 
-  const policy_kinds = JSON.stringify(params.policy?.kinds || {})
-  if (policy_kinds.length > MAX_JSON_FIELD_SIZE) {
-    throw new Error(`Policy kinds data too large (${policy_kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+  let policy_kinds: string | null = null
+  if (params.policy && params.policy.kinds !== undefined) {
+    policy_kinds = JSON.stringify(params.policy.kinds)
+    if (policy_kinds.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy kinds data too large (${policy_kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    }
   }
 
   const now = new Date().toISOString()
@@ -281,9 +286,9 @@ export function upsertSession(params: {
       userId,
       normalizedKey,
       status,
-      profile.name ?? null,
-      profile.url ?? null,
-      profile.image ?? null,
+      params.profile?.name ?? null,
+      params.profile?.url ?? null,
+      params.profile?.image ?? null,
       relays,
       policy_methods,
       policy_kinds,
@@ -320,26 +325,30 @@ export function updatePolicy(userId: number | bigint, client_pubkey: string, pol
 
     const prevMethods = existing.policy_methods ? safeParseJSON(existing.policy_methods, {}) as Record<string, boolean> : {}
     const prevKinds = existing.policy_kinds ? safeParseJSON(existing.policy_kinds, {}) as Record<string, boolean> : {}
-    const nextMethods = policy.methods || {}
-    const nextKinds = policy.kinds || {}
 
-    // Validate size before storing
-    const methods = JSON.stringify(nextMethods)
-    if (methods.length > MAX_JSON_FIELD_SIZE) {
-      throw new Error(`Policy methods data too large (${methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    const nextMethods = policy.methods === undefined ? prevMethods : policy.methods
+    const nextKinds = policy.kinds === undefined ? prevKinds : policy.kinds
+
+    // Validate size before storing when new values provided
+    const methodsValue = policy.methods === undefined ? null : JSON.stringify(nextMethods)
+    if (methodsValue && methodsValue.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy methods data too large (${methodsValue.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
     }
 
-    const kinds = JSON.stringify(nextKinds)
-    if (kinds.length > MAX_JSON_FIELD_SIZE) {
-      throw new Error(`Policy kinds data too large (${kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    const kindsValue = policy.kinds === undefined ? null : JSON.stringify(nextKinds)
+    if (kindsValue && kindsValue.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy kinds data too large (${kindsValue.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
     }
 
-    // Update the session
+    // Update the session, preserving existing values when undefined
     db.prepare(`
       UPDATE nip46_sessions
-      SET policy_methods = ?, policy_kinds = ?, updated_at = CURRENT_TIMESTAMP
+      SET
+        policy_methods = COALESCE(?, policy_methods),
+        policy_kinds = COALESCE(?, policy_kinds),
+        updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND client_pubkey = ?
-    `).run(methods, kinds, userId, client_pubkey)
+    `).run(methodsValue, kindsValue, userId, client_pubkey)
 
     // Fetch the updated session within the transaction to ensure consistency
     const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)

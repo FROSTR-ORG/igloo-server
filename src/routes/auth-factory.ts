@@ -99,6 +99,10 @@ export function createRequestAuth(params: {
             if (keyFromVault) {
               // Refresh vault TTL/read counters and update session cache
               refreshSessionDerivedKey(secrets.sessionId, keyFromVault);
+              if (!isValidDerivedKey(keyFromVault)) {
+                zeroizeUint8(keyFromVault);
+                return undefined;
+              }
               if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
               secrets.derivedKey = keyFromVault;
               return new Uint8Array(keyFromVault);
@@ -107,6 +111,10 @@ export function createRequestAuth(params: {
             if (secrets?.hasPassword) {
               const rehydrated = rehydrateSessionDerivedKey(secrets.sessionId);
               if (rehydrated) {
+                if (!isValidDerivedKey(rehydrated)) {
+                  zeroizeUint8(rehydrated);
+                  return undefined;
+                }
                 if (secrets.derivedKey) zeroizeUint8(secrets.derivedKey);
                 secrets.derivedKey = rehydrated;
                 return new Uint8Array(rehydrated);
@@ -140,4 +148,7 @@ export function createRequestAuth(params: {
   });
 
   return auth;
+}
+function isValidDerivedKey(key: unknown): key is Uint8Array {
+  return key instanceof Uint8Array && key.length === 32
 }

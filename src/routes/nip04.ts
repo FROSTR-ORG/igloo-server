@@ -22,10 +22,43 @@ function nip04Decrypt(ciphertextWithIv: string, sharedSecretHex: string): string
   if (!match) throw new Error('Invalid NIP-04 ciphertext format')
   const [, ctb64, ivb64] = match
   const key = createHash('sha256').update(Buffer.from(sharedSecretHex, 'hex')).digest()
-  const iv = Buffer.from(ivb64, 'base64')
+  const iv = decodeBase64Strict(ivb64, 'IV')
+  if (iv.length !== 16) {
+    throw new Error('IV must be 16 bytes')
+  }
+
+  const ciphertext = decodeBase64Strict(ctb64, 'ciphertext')
+  if (ciphertext.length === 0) {
+    throw new Error('Ciphertext must not be empty')
+  }
+
   const decipher = createDecipheriv('aes-256-cbc', key, iv)
-  const dec = Buffer.concat([decipher.update(Buffer.from(ctb64, 'base64')), decipher.final()]).toString('utf8')
-  return dec
+  try {
+    const dec = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8')
+    return dec
+  } catch (error) {
+    throw new Error('Decryption failed')
+  }
+}
+
+function decodeBase64Strict(value: string, label: string): Buffer {
+  const normalized = value.replace(/\s+/g, '')
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(normalized)) {
+    throw new Error(`Invalid base64 ${label}`)
+  }
+
+  const buf = Buffer.from(normalized, 'base64')
+  if (buf.length === 0 && normalized.length > 0) {
+    throw new Error(`Invalid base64 ${label}`)
+  }
+
+  const reencoded = buf.toString('base64').replace(/=+$/, '')
+  const normalizedInput = normalized.replace(/=+$/, '')
+  if (reencoded !== normalizedInput) {
+    throw new Error(`Invalid base64 ${label}`)
+  }
+
+  return buf
 }
 
 export async function handleNip04Route(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {

@@ -1,7 +1,7 @@
 import { HEADLESS } from '../const.js'
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js'
 import type { PrivilegedRouteContext, RequestAuth } from './types.js'
-import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, getTransportKey, setTransportKey } from '../db/nip46.js'
+import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey } from '../db/nip46.js'
 
 // Rate limiting configuration for NIP-46 session creation
 const NIP46_RATE_LIMIT = {
@@ -196,20 +196,28 @@ export async function handleNip46Route(
     // Only allow 'pending' or 'active'. 'revoked' is not persisted.
     const status = (body?.status === 'active' || body?.status === 'pending') ? body.status : 'pending'
 
-    // Extract and validate profile data (do not force defaults here).
-    // Leaving fields undefined allows the DB upsert to preserve existing
-    // values instead of overwriting with placeholders on partial updates.
-    const profile = typeof body?.profile === 'object' && body.profile ? {
-      name: typeof body.profile.name === 'string' ? body.profile.name : undefined,
-      url: typeof body.profile.url === 'string' ? body.profile.url : undefined,
-      image: typeof body.profile.image === 'string' ? body.profile.image : undefined,
-    } : {}
+    // Extract and validate profile data. Only send fields that are explicitly provided.
+    let profile: Nip46Profile | undefined
+    if (body?.profile && typeof body.profile === 'object') {
+      const name = typeof body.profile.name === 'string' ? body.profile.name : undefined
+      const url = typeof body.profile.url === 'string' ? body.profile.url : undefined
+      const image = typeof body.profile.image === 'string' ? body.profile.image : undefined
+      if (name || url || image) {
+        profile = { name, url, image }
+      }
+    }
 
     const relays = Array.isArray(body?.relays) ? body.relays.filter((r: any) => typeof r === 'string') : null
-    const policy: Nip46Policy = {
-      methods: body?.policy?.methods && typeof body.policy.methods === 'object' ? body.policy.methods : {},
-      kinds: body?.policy?.kinds && typeof body.policy.kinds === 'object' ? body.policy.kinds : {},
-    }
+    const policyMethods = body?.policy?.methods && typeof body.policy.methods === 'object' && !Array.isArray(body.policy.methods)
+      ? body.policy.methods as Record<string, boolean>
+      : undefined
+    const policyKinds = body?.policy?.kinds && typeof body.policy.kinds === 'object' && !Array.isArray(body.policy.kinds)
+      ? body.policy.kinds as Record<string, boolean>
+      : undefined
+    const policy: Nip46Policy | undefined =
+      policyMethods !== undefined || policyKinds !== undefined
+        ? { methods: policyMethods, kinds: policyKinds }
+        : undefined
     try {
       const session = upsertSession({ userId, client_pubkey: pubkey, status, profile, relays, policy })
       try {
@@ -249,11 +257,18 @@ export async function handleNip46Route(
     if (!pubkey || !isValidHex(pubkey)) return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
     let body: any
     try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers }) }
-    const policy: Nip46Policy = {
-      methods: body?.methods && typeof body.methods === 'object' ? body.methods : {},
-      kinds: body?.kinds && typeof body.kinds === 'object' ? body.kinds : {},
+    const methods = body?.methods && typeof body.methods === 'object' && !Array.isArray(body.methods)
+      ? body.methods as Record<string, boolean>
+      : undefined
+    const kinds = body?.kinds && typeof body.kinds === 'object' && !Array.isArray(body.kinds)
+      ? body.kinds as Record<string, boolean>
+      : undefined
+
+    if (methods === undefined && kinds === undefined) {
+      return Response.json({ error: 'No policy changes provided' }, { status: 400, headers })
     }
-    const session = updatePolicy(userId, pubkey.toLowerCase(), policy)
+
+    const session = updatePolicy(userId, pubkey.toLowerCase(), { methods, kinds })
     if (!session) return Response.json({ error: 'Session not found' }, { status: 404, headers })
     return Response.json({ ok: true }, { headers })
   }
