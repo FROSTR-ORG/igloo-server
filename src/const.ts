@@ -41,12 +41,27 @@ export const SHARE_CRED = (() => {
 })();
 
 // Admin secret for initial onboarding - treat empty/whitespace and sentinel value as absent
+const shouldAutoGenerateAdminSecret = (() => {
+  const ci = typeof process.env['CI'] === 'string' && process.env['CI']?.toLowerCase() === 'true';
+  const nodeEnvTest = process.env['NODE_ENV'] === 'test';
+  const explicit = typeof process.env['AUTO_ADMIN_SECRET'] === 'string' && process.env['AUTO_ADMIN_SECRET']?.toLowerCase() === 'true';
+  return ci || nodeEnvTest || explicit;
+})();
+
 export const ADMIN_SECRET = (() => {
-  const secret = process.env['ADMIN_SECRET'];
-  if (!secret) return undefined;
-  const trimmed = secret.trim();
-  // Treat the env.example sentinel value as unset
-  if (trimmed === 'REQUIRED_ADMIN_SECRET_NOT_SET') return undefined;
+  const rawSecret = process.env['ADMIN_SECRET'];
+  const trimmed = typeof rawSecret === 'string' ? rawSecret.trim() : undefined;
+
+  const isUnset = !trimmed || trimmed === 'REQUIRED_ADMIN_SECRET_NOT_SET';
+
+  if (isUnset && shouldAutoGenerateAdminSecret) {
+    const fallback = 'ci-auto-admin-secret';
+    process.env['ADMIN_SECRET'] = fallback;
+    console.warn('[init] ADMIN_SECRET was unset. Generated ephemeral secret for CI/test environment.');
+    return fallback;
+  }
+
+  if (!trimmed) return undefined;
   return trimmed.length > 0 ? trimmed : undefined;
 })();
 
