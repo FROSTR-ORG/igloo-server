@@ -45,8 +45,8 @@ export const isSafeId = (id: number | bigint): boolean => {
   // For numbers: check if they're within safe bounds (could have precision loss if > MAX_SAFE_INTEGER)
   // For bigints: check if they could be safely converted to number if needed
   return typeof id === 'number'
-    ? id <= Number.MAX_SAFE_INTEGER
-    : id <= BigInt(Number.MAX_SAFE_INTEGER);
+    ? id <= MAX_SAFE_ID
+    : id <= BigInt(MAX_SAFE_ID);
 };
 
 // Enable foreign keys

@@ -46,10 +46,6 @@ function canonicalizeRelayUrl(value: string): string | null {
   }
 }
 
-function isValidRelayUrl(value: string): boolean {
-  return canonicalizeRelayUrl(value) !== null
-}
-
 function normalizeRelayPayload(input: unknown): string[] {
   if (!Array.isArray(input)) return []
   const normalized: string[] = []

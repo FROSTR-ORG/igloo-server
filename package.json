@@ -48,11 +48,11 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.2",
     "@types/yaml": "^1.9.7",
-    "bun-types": "latest",
-    "esbuild": "^0.24.2",
+    "bun-types": "^1.2.22",
     "concurrently": "^9.1.0",
-    "tailwindcss-animate": "^1.0.7",
+    "esbuild": "^0.24.2",
     "postcss": "^8.5.6",
-    "tailwindcss": "^3.4.17"
+    "tailwindcss": "^3.4.17",
+    "tailwindcss-animate": "^1.0.7"
   }
 }

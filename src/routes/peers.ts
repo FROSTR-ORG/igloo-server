@@ -1,5 +1,5 @@
-import { 
-  decodeGroup, 
+import {
+  decodeGroup,
   extractSelfPubkeyFromCredentials,
   normalizePubkey,
   comparePubkeys,
@@ -12,7 +12,7 @@ import {
 } from '@frostr/igloo-core';
 import { Buffer } from 'node:buffer';
 import { RouteContext, PeerStatus, RequestAuth } from './types.js';
-import type { NodePolicySummary } from '@frostr/igloo-core';
+import type { NodePolicyInput, NodePolicySummary } from '@frostr/igloo-core';
 import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { HEADLESS } from '../const.js';
 import { saveFallbackPeerPolicies } from '../node/peer-policy-store.js';
@@ -501,7 +501,7 @@ async function handlePeerPolicyRoute(
     const nextAllowSend = allowSend ?? currentSummary?.allowSend ?? false;
     const nextAllowReceive = allowReceive ?? currentSummary?.allowReceive ?? false;
 
-    const policyInput: Record<string, unknown> = {
+    const policyInput: NodePolicyInput = {
       pubkey: normalized,
       allowSend: nextAllowSend,
       allowReceive: nextAllowReceive

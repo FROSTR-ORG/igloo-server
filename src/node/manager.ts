@@ -1,5 +1,5 @@
-import { 
-  createAndConnectNode, 
+import {
+  createAndConnectNode,
   createConnectedNode,
   normalizePubkey,
   extractSelfPubkeyFromCredentials,
@@ -12,6 +12,9 @@ import { loadFallbackPeerPolicies } from './peer-policy-store.js';
 import { mergePolicyInputs } from '../util/peer-policy.js';
 import type { ServerWebSocket } from 'bun';
 import { SimplePool, finalizeEvent, generateSecretKey } from 'nostr-tools';
+
+type ConnectedNodeConfig = Parameters<typeof createConnectedNode>[0];
+type BasicNodeConfig = Parameters<typeof createAndConnectNode>[0];
 
 // Control whether we swallow "benign" relay publish errors (policy rejections, WOT blocks, etc.).
 // Defaults to true to keep the signer resilient; set NODE_ALLOW_BENIGN_PUBLISH_SWALLOW=false to surface rejections.
@@ -625,6 +628,12 @@ function checkRelayConnectionStatus(
     } else {
       hasConnectedRelays = true;
     }
+  }
+
+  if (disconnectedRelays.length > 0) {
+    addServerLog('warning', `Detected ${disconnectedRelays.length} disconnected relay(s)`, {
+      relays: disconnectedRelays
+    });
   }
 
   return { disconnectedRelays, hasConnectedRelays };
@@ -1552,14 +1561,20 @@ export async function createNodeWithCredentials(
           addServerLog('info', `Connection attempt ${connectionAttempts}/${maxAttempts} using ${relays.length} relays`);
         }
         
-        const result = await createConnectedNode({
+        const baseConfig: BasicNodeConfig = {
           group: groupCred,
           share: shareCred,
           relays,
-          connectionTimeout: 30000,  // Increased to 30 seconds
-          autoReconnect: true,       // Enable auto-reconnection
           ...(startupPolicies ? { policies: startupPolicies } : {})
-        }, {
+        };
+
+        const enhancedConfig: ConnectedNodeConfig = {
+          ...baseConfig,
+          connectionTimeout: 30000,  // Increased to 30 seconds
+          autoReconnect: true        // Enable auto-reconnection
+        };
+
+        const result = await createConnectedNode(enhancedConfig, {
           enableLogging: false,      // Disable internal logging to avoid duplication
           logLevel: 'error'          // Only log errors from igloo-core
         });
@@ -1683,12 +1698,13 @@ export async function createNodeWithCredentials(
           }
           
           try {
-            const basicNode = await createAndConnectNode({
+            const fallbackConfig: BasicNodeConfig = {
               group: groupCred,
               share: shareCred,
               relays,
-              ...(configPolicies ? { policies: configPolicies } : {})
-            });
+              ...(startupPolicies ? { policies: startupPolicies } : {})
+            };
+            const basicNode = await createAndConnectNode(fallbackConfig);
             if (basicNode) {
               const node = basicNode as unknown as ServerBifrostNode;
               if (addServerLog) {

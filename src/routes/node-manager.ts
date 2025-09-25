@@ -1,7 +1,10 @@
-import { createConnectedNode, createAndConnectNode, cleanupBifrostNode } from '@frostr/igloo-core';
+import { createConnectedNode, createAndConnectNode } from '@frostr/igloo-core';
 import { PrivilegedRouteContext, ServerBifrostNode } from './types.js';
 import { getValidRelays } from './utils.js';
 import { executeUnderNodeLock } from '../utils/node-lock.js';
+
+type ConnectedNodeConfig = Parameters<typeof createConnectedNode>[0];
+type BasicNodeConfig = Parameters<typeof createAndConnectNode>[0];
 
 export interface NodeCredentials {
   group_cred: string;
@@ -50,13 +53,19 @@ export async function createAndStartNode(
     
     try {
       // Try enhanced node creation first (with connection state)
-      const result = await createConnectedNode({
+      const baseConfig: BasicNodeConfig = {
         group: credentials.group_cred,
         share: credentials.share_cred,
         relays: nodeRelays,
+      };
+
+      const enhancedConfig: ConnectedNodeConfig = {
+        ...baseConfig,
         connectionTimeout: 5000, // 5 seconds for fast response
         autoReconnect: true
-      }, {
+      };
+
+      const result = await createConnectedNode(enhancedConfig, {
         enableLogging: false,
         logLevel: 'error'
       });
@@ -84,11 +93,12 @@ export async function createAndStartNode(
       context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
       
       try {
-        const basicNode = await createAndConnectNode({
+        const fallbackConfig: BasicNodeConfig = {
           group: credentials.group_cred,
           share: credentials.share_cred,
           relays: nodeRelays
-        });
+        };
+        const basicNode = await createAndConnectNode(fallbackConfig);
         
         if (basicNode) {
           newNode = basicNode;

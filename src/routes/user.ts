@@ -189,8 +189,6 @@ export async function handleUserRoute(
             const groupCred = credentials.group_cred!;
             const shareCred = credentials.share_cred!;
             const relays = credentials.relays;
-            const groupName = credentials.group_name;
-
             await executeUnderNodeLock(async () => {
               if (!context.node) {
                 context.addServerLog('info', 'Auto-starting Bifrost node for logged-in user...');

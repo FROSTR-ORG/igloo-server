@@ -9,7 +9,7 @@ type Nip44Body = {
   content: string;     // plaintext (encrypt) or ciphertext (decrypt)
 };
 
-export async function handleNip44Route(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {
+export async function handleNip44Route(req: Request, url: URL, context: RouteContext, requestAuth?: RequestAuth | null) {
   if (!url.pathname.startsWith('/api/nip44/')) return null;
 
   const corsHeaders = getSecureCorsHeaders(req);
@@ -24,7 +24,11 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers });
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
-  if (!context._auth?.authenticated) return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
+
+  const authContext = requestAuth ?? context.auth;
+  if (!authContext?.authenticated) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
+  }
   if (!context.node) return Response.json({ error: 'Node not available' }, { status: 503, headers });
 
   // Basic rate limit for e2e crypto ops

@@ -9,7 +9,6 @@ import {
   mergeNip46Relays,
   Nip46Policy,
   Nip46RequestRecord,
-  Nip46RequestStatus,
   setNip46Relays,
   setTransportKey,
   upsertSession,
@@ -46,6 +45,10 @@ function normalizePubkey(value?: string | null): string | undefined {
   const trimmed = value.trim().toLowerCase()
   if (!trimmed || !/^[0-9a-f]{64}$/.test(trimmed)) return undefined
   return trimmed
+}
+
+function isUint8Array(value: unknown): value is Uint8Array {
+  return value instanceof Uint8Array
 }
 
 function normalizeRequestedPolicy(input: any): Nip46Policy | null {
@@ -941,11 +944,11 @@ export class Nip46Service {
   private getIdentityPubkey(): string | undefined {
     const node = this.deps.getNode()
     try {
-      const pk = node?.group?.group_pk
+      const pk = node?.group?.group_pk as unknown
       if (typeof pk === 'string') {
         return pk.length === 66 && (pk.startsWith('02') || pk.startsWith('03')) ? pk.slice(2) : pk
       }
-      if (pk instanceof Uint8Array) {
+      if (isUint8Array(pk)) {
         const hex = Buffer.from(pk).toString('hex')
         return hex.length === 66 && (hex.startsWith('02') || hex.startsWith('03')) ? hex.slice(2) : hex
       }

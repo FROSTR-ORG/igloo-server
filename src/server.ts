@@ -201,7 +201,7 @@ const restartState = { blockedByCredentials: false };
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
-const nip46Service = initNip46Service({
+initNip46Service({
   addServerLog,
   broadcastEvent,
   getNode: () => node
