@@ -295,35 +295,39 @@ function createInstrumentedPool(
       if (prop === 'publish' && typeof target.publish === 'function') {
         const originalPublish = target.publish.bind(target);
         const wrapped = (relays: string[], event: any, ...rest: any[]) => {
-          try {
-            const result = originalPublish(relays, event, ...rest);
-            const { promises, isArray } = normalizePublishResults(result);
+          const result = originalPublish(relays, event, ...rest);
 
+          try {
             publishMetrics.totalAttempts += Array.isArray(relays) ? relays.length : 1;
-            const wrappedPromises = promises.map((p, idx) => p.catch((err: any) => {
-              const reason = err instanceof Error ? err.message : String(err);
-              const url = Array.isArray(relays) ? relays[idx] : undefined;
-              trackPublishFailure(url, reason, addServerLog);
-              if (isBenignPublishError(reason)) {
-                if (addServerLog) {
-                  addServerLog('warning', 'Relay publish rejected (benign)', {
-                    relay: url,
-                    reason
-                  });
+            const { promises } = normalizePublishResults(result);
+            promises.forEach((p, idx) => {
+              p.catch((err: any) => {
+                const reason = err instanceof Error ? err.message : String(err);
+                const url = Array.isArray(relays) ? relays[idx] : undefined;
+                trackPublishFailure(url, reason, addServerLog);
+
+                if (isBenignPublishError(reason)) {
+                  if (addServerLog) {
+                    addServerLog('warning', 'Relay publish rejected (benign)', {
+                      relay: url,
+                      reason
+                    });
+                  }
+                  if (ALLOW_BENIGN_PUBLISH_SWALLOW) {
+                    return false;
+                  }
                 }
-                if (ALLOW_BENIGN_PUBLISH_SWALLOW) {
-                  return false;
-                }
+
                 throw err;
-              }
-              throw err;
-            }));
-            return isArray ? wrappedPromises : wrappedPromises[0];
+              });
+            });
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
             throw err;
           }
+
+          return result;
         };
         cache.set(prop, wrapped);
         return wrapped;
@@ -354,21 +358,36 @@ function createInstrumentedClient(
       // Wrap publish method if present
       if (prop === 'publish' && typeof target.publish === 'function') {
         const originalPublish = target.publish.bind(target);
-        const wrapped = async (...args: any[]) => {
-          publishMetrics.totalAttempts++;
+        const wrapped = (...args: any[]) => {
+          const result = originalPublish(...args);
+
           try {
-            return await originalPublish(...args);
+            publishMetrics.totalAttempts++;
+            const { promises } = normalizePublishResults(result);
+            promises.forEach(p => {
+              p.catch((err: any) => {
+                const reason = err instanceof Error ? err.message : String(err);
+                trackPublishFailure(undefined, reason, addServerLog);
+
+                if (isBenignPublishError(reason)) {
+                  if (addServerLog) {
+                    addServerLog('warning', 'Benign publish error suppressed (client)', { reason });
+                  }
+                  if (ALLOW_BENIGN_PUBLISH_SWALLOW) {
+                    return false;
+                  }
+                }
+
+                throw err;
+              });
+            });
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
-            if (isBenignPublishError(reason) && ALLOW_BENIGN_PUBLISH_SWALLOW) {
-              if (addServerLog) {
-                addServerLog('warning', 'Benign publish error suppressed (client)', { reason });
-              }
-              return false;
-            }
             throw err;
           }
+
+          return result;
         };
         cache.set(prop, wrapped);
         return wrapped;
@@ -406,21 +425,36 @@ function createInstrumentedNode(
       // Pass-through events and core methods
       if (prop === 'publish' && typeof target.publish === 'function') {
         const originalPublish = target.publish.bind(target);
-        const wrapped = async (...args: any[]) => {
-          publishMetrics.totalAttempts++;
+        const wrapped = (...args: any[]) => {
+          const result = originalPublish(...args);
+
           try {
-            return await originalPublish(...args);
+            publishMetrics.totalAttempts++;
+            const { promises } = normalizePublishResults(result);
+            promises.forEach(p => {
+              p.catch((err: any) => {
+                const reason = err instanceof Error ? err.message : String(err);
+                trackPublishFailure(undefined, reason, addServerLog);
+
+                if (isBenignPublishError(reason)) {
+                  if (addServerLog) {
+                    addServerLog('warning', 'Benign publish error suppressed (node)', { reason });
+                  }
+                  if (ALLOW_BENIGN_PUBLISH_SWALLOW) {
+                    return false;
+                  }
+                }
+
+                throw err;
+              });
+            });
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
-            if (isBenignPublishError(reason) && ALLOW_BENIGN_PUBLISH_SWALLOW) {
-              if (addServerLog) {
-                addServerLog('warning', 'Benign publish error suppressed (node)', { reason });
-              }
-              return false;
-            }
             throw err;
           }
+
+          return result;
         };
         cache.set(prop, wrapped);
         return wrapped;

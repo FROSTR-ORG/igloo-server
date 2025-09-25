@@ -4,7 +4,8 @@ FROM oven/bun:latest AS build
 WORKDIR /app
 
 # Copy package files (plus scripts needed during install) first for better caching
-COPY package.json bun.lockb scripts ./
+COPY package.json bun.lockb ./
+COPY scripts ./scripts
 
 # Install all dependencies (including dev dependencies for building)
 RUN bun install --frozen-lockfile
@@ -24,7 +25,8 @@ FROM oven/bun:latest AS production
 WORKDIR /app
 
 # Copy package files (and required scripts)
-COPY package.json bun.lockb scripts ./
+COPY package.json bun.lockb ./
+COPY scripts ./scripts
 
 # Install only production dependencies
 RUN bun install --production --frozen-lockfile
