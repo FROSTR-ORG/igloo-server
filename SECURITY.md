@@ -17,6 +17,7 @@ Igloo Server supports two operation modes with different security models:
 - **Direct credential storage** in environment
 - **Traditional deployment** for backward compatibility
 - **No database required**
+- **Peer policies**: only explicit blocks are honored via `PEER_POLICIES` or `data/peer-policies.json`
 
 ### Security Comparison Table
 
@@ -187,6 +188,32 @@ RATE_LIMIT_MAX=100       # 100 requests per window per IP
 
 ## 🌐 Network Security
 
+## ⏱️ Cryptographic Operation Timeouts
+
+Threshold signing and ECDH may stall due to peer/relay conditions. The server enforces timeouts to protect responsiveness.
+
+- Applies to:
+  - `/api/sign` (threshold Schnorr signing)
+  - `/api/nip44/encrypt|decrypt` (ECDH + NIP‑44)
+  - `/api/nip04/encrypt|decrypt` (ECDH + NIP‑04)
+- Configuration:
+  - `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEOUT_MS`
+  - Default: `30000` ms; bounds: `1000`–`120000` ms
+- Behavior:
+  - On timeout, the server returns HTTP `504 Gateway Timeout` with a clear error message and logs a warning.
+  - Underlying operations are not crashed; the HTTP request is released to keep the service responsive.
+
+## 🔐 Ephemeral Derived Key Handling
+- To minimize exposure of password‑derived keys, the server stores them in an in‑memory ephemeral vault rather than persistent session state.
+- Keys are available for a short bootstrap window after login, then auto‑deleted.
+- Configuration:
+  - `AUTH_DERIVED_KEY_TTL_MS` (default `120000`) – maximum residency time in ms
+  - `AUTH_DERIVED_KEY_MAX_READS` (default `3`) – maximum one-time retrievals per session
+- Behavior:
+  - Each retrieval returns a copy and decrements the read budget; on zero or TTL expiry, the server fills the backing `Uint8Array` with zeros before removal.
+  - Logout and session expiry proactively zeroize associated keys, and per-request caches are wiped once responses are sent.
+  - ⚠️ JavaScript engines may retain historical copies (GC, structured clones); zeroization is best-effort and should be paired with short TTLs and minimal reuse.
+
 ### CORS (Cross-Origin Resource Sharing) Security
 
 Configure secure CORS to prevent unauthorized domains from accessing your API:
@@ -202,10 +229,12 @@ ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8002
 ```
 
 **Security Impact**:
-- **Without `ALLOWED_ORIGINS`**: Defaults to wildcard `*` (all origins allowed) - ⚠️ **Security Risk**
+- **Without `ALLOWED_ORIGINS`**:
+  - Development: Defaults to wildcard `*` (all origins allowed) for easier testing
+  - **Production: CORS requests are BLOCKED** - ✅ **Secure by default**
 - **With `ALLOWED_ORIGINS`**: Only specified domains can make API requests - ✅ **Secure**
 
-⚠️ **Note**: The server shows a warning in production if `ALLOWED_ORIGINS` is not configured.
+🔒 **Security Enforcement**: As of the latest version, the server will **block all CORS requests** in production if `ALLOWED_ORIGINS` is not configured. This prevents accidental security vulnerabilities from misconfiguration.
 
 **Common Configurations**:
 ```bash
@@ -421,97 +450,12 @@ grep "Rate limit exceeded" server.log
 grep "login" server.log
 ```
 
-## 📦 Database Backup and Migration
+> See canonical guidance in the main README:
+> - [Migration Between Modes](README.md#migration-between-modes)
+> - [Database directory permissions and ownership](README.md#database-directory-permissions-and-ownership)
+> These links consolidate backup/migration notes and permissions in one place, avoiding duplicate content here.
 
-### Database Mode Backup
-```bash
-# Backup database file
-cp data/igloo.db data/igloo-backup-$(date +%Y%m%d).db
 
-# Backup with modern AEAD encryption (AES-256-GCM - recommended)
-# Note: Use OpenSSL 1.1.0+ for GCM support
-tar -czf - data/igloo.db | \
-  openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -salt -md sha256 -out backup.tar.gz.enc
-
-# Alternative: Using age encryption (simpler and more secure)
-# Install: https://github.com/FiloSottile/age
-tar -czf - data/igloo.db | \
-  age -p > backup.tar.gz.age
-# Enter passphrase when prompted
-
-# Alternative: Using gpg with AES256 and SHA512
-tar -czf - data/igloo.db | \
-  gpg --symmetric --cipher-algo AES256 --digest-algo SHA512 \
-  --s2k-mode 3 --s2k-count 65536 --compress-algo none \
-  -o backup.tar.gz.gpg
-
-# Restore from encrypted backup (OpenSSL)
-openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -d -in backup.tar.gz.enc | \
-  tar -xzf - 
-
-# Restore from encrypted backup (age)
-age -d backup.tar.gz.age | tar -xzf -
-
-# Restore from encrypted backup (gpg)
-gpg --decrypt backup.tar.gz.gpg | tar -xzf -
-
-# Restore from unencrypted backup
-cp data/igloo-backup-20240101.db data/igloo.db
-```
-
-#### Secure Backup Script Example
-```bash
-#!/bin/bash
-# secure-backup.sh - Production-ready backup with encryption
-
-set -euo pipefail
-
-BACKUP_DIR="/secure/backups"
-DB_FILE="data/igloo.db"
-DATE=$(date +%Y%m%d-%H%M%S)
-BACKUP_NAME="igloo-backup-${DATE}"
-
-# Create backup directory if it doesn't exist
-mkdir -p "${BACKUP_DIR}"
-
-# Check if database exists
-if [ ! -f "${DB_FILE}" ]; then
-    echo "Error: Database file not found"
-    exit 1
-fi
-
-# Create encrypted backup using age (recommended)
-if command -v age &> /dev/null; then
-    tar -czf - "${DB_FILE}" | \
-        age -p -o "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.age"
-    echo "Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.age"
-    
-# Fallback to OpenSSL with AEAD
-elif command -v openssl &> /dev/null; then
-    tar -czf - "${DB_FILE}" | \
-        openssl enc -aes-256-gcm -pbkdf2 -iter 200000 -salt -md sha256 \
-        -out "${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
-    echo "Backup created: ${BACKUP_DIR}/${BACKUP_NAME}.tar.gz.enc"
-    
-else
-    echo "Error: No encryption tool available (install age or openssl)"
-    exit 1
-fi
-
-# Set secure permissions
-chmod 600 "${BACKUP_DIR}/${BACKUP_NAME}".tar.gz.*
-
-# Clean up old backups (keep last 30 days)
-find "${BACKUP_DIR}" -name "igloo-backup-*.tar.gz.*" -mtime +30 -delete
-
-echo "Backup completed successfully"
-```
-
-#### Automated Backup with Cron
-```bash
-# Add to crontab for daily backups at 2 AM
-0 2 * * * /path/to/secure-backup.sh >> /var/log/igloo-backup.log 2>&1
-```
 
 ### Migration Between Modes
 
@@ -660,3 +604,7 @@ for i in {1..10}; do curl http://localhost:8002/api/status; done
 - [ ] Test CORS headers are appropriate
 
 **Remember**: Security is a process, not a destination. Regularly review and update your security configuration. 
+4. **Directional Peer Policies** (optional):
+   - Defaults allow both inbound and outbound traffic.
+   - To deny a direction, supply `allowSend:false` and/or `allowReceive:false` in `PEER_POLICIES`.
+   - The server mirrors saved overrides into `data/peer-policies.json` so they persist between restarts.

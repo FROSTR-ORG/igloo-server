@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from "react"
 import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
+import { NIP46 } from "./components/NIP46"
 import Login from "./components/Login"
 import Onboarding from "./components/Onboarding"
 import type { SignerHandle } from "./types"
@@ -10,6 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
 import { PageLayout } from "./components/ui/page-layout"
 import { AppHeader } from "./components/ui/app-header"
 import { ContentCard } from "./components/ui/content-card"
+import Spinner from "./components/ui/spinner"
 
 interface SignerData {
   share: string;
@@ -35,6 +37,8 @@ const App: React.FC = () => {
   const [signerData, setSignerData] = useState<SignerData | null>(null);
   const [activeTab, setActiveTab] = useState("signer");
   const [initializing, setInitializing] = useState(true);
+  // Loading gate used after login to prevent Configure flash
+  const [loadingAppData, setLoadingAppData] = useState(false);
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     authEnabled: false
@@ -45,6 +49,18 @@ const App: React.FC = () => {
   useEffect(() => {
     initializeApp();
   }, []);
+
+  // Global handler for authentication/credentials expiry from child components
+  useEffect(() => {
+    const onAuthExpired = () => {
+      // If already unauthenticated, ignore; otherwise trigger logout to show login screen
+      if (authState.isAuthenticated) {
+        handleLogout().catch(console.error);
+      }
+    };
+    window.addEventListener('authExpired', onAuthExpired as EventListener);
+    return () => window.removeEventListener('authExpired', onAuthExpired as EventListener);
+  }, [authState.isAuthenticated]);
 
   const initializeApp = async () => {
     try {
@@ -316,6 +332,8 @@ const App: React.FC = () => {
   };
   
   const handleLogin = async (sessionId: string | undefined, userId: string | number, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => {
+    // Set loading before kicking off data fetch to avoid Configure flash
+    setLoadingAppData(true);
     setAuthState({
       isAuthenticated: true,
       sessionId: sessionId || undefined,
@@ -337,7 +355,11 @@ const App: React.FC = () => {
     }
     
     // Now load the app data with the correct headers
-    await loadAppData(authHeaders);
+    try {
+      await loadAppData(authHeaders);
+    } finally {
+      setLoadingAppData(false);
+    }
   };
 
   const handleLogout = async () => {
@@ -400,9 +422,7 @@ const App: React.FC = () => {
         <AppHeader subtitle="Frostr keyset manager and remote signer." />
         
         <ContentCard>
-          <div className="flex items-center justify-center py-12">
-            <div className="text-blue-300">Loading...</div>
-          </div>
+          <Spinner label="Loading…" size="md" />
         </ContentCard>
       </PageLayout>
     );
@@ -416,6 +436,22 @@ const App: React.FC = () => {
   // Show login screen if authentication is required and user is not authenticated
   if (authState.authEnabled && !authState.isAuthenticated) {
     return <Login onLogin={handleLogin} authEnabled={authState.authEnabled} />;
+  }
+
+  // After login, while fetching user data, show loading (prevents Configure flash)
+  if (authState.authEnabled && authState.isAuthenticated && loadingAppData) {
+    return (
+      <PageLayout>
+        <AppHeader 
+          authEnabled={authState.authEnabled}
+          userId={authState.userId}
+          onLogout={authState.authEnabled ? handleLogout : undefined}
+        />
+        <ContentCard>
+          <Spinner label="Loading your signer…" size="md" />
+        </ContentCard>
+      </PageLayout>
+    );
   }
 
   // Show signer view when share is loaded
@@ -446,9 +482,12 @@ const App: React.FC = () => {
             value={activeTab}
             onValueChange={handleTabChange}
           >
-            <TabsList className="grid grid-cols-2 mb-4 bg-gray-800/50 w-full">
+            <TabsList className="grid grid-cols-3 mb-4 bg-gray-800/50 w-full">
               <TabsTrigger value="signer" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Signer
+              </TabsTrigger>
+              <TabsTrigger value="nip46" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
+                NIP-46
               </TabsTrigger>
               <TabsTrigger value="recover" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Recover
@@ -463,6 +502,10 @@ const App: React.FC = () => {
                 isHeadlessMode={authState.headlessMode ?? false}
                 onReady={() => signerRef.current?.checkStatus()}
               />
+            </TabsContent>
+
+            <TabsContent value="nip46" forceMount className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
+              <NIP46 authHeaders={memoizedAuthHeaders} />
             </TabsContent>
             
             <TabsContent value="recover" className="border border-purple-900/30 rounded-lg p-2 sm:p-4">

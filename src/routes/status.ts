@@ -1,6 +1,6 @@
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, readPublicEnvFile, getValidRelays, mergeVaryHeaders } from './utils.js';
-import { getNodeHealth } from '../node/manager.js';
+import { getSecureCorsHeaders, readPublicEnvFile, getValidRelays, mergeVaryHeaders, parseUserId } from './utils.js';
+import { getNodeHealth, getPublishMetrics } from '../node/manager.js';
 import { HEADLESS, hasCredentials } from '../const.js';
 
 export async function handleStatusRoute(req: Request, url: URL, context: RouteContext, auth?: RequestAuth | null): Promise<Response | null> {
@@ -42,39 +42,14 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         // This prevents information leakage about whether ANY user has credentials
         if (auth?.authenticated && auth.userId != null) {
           try {
-            let parsedUserId: number | bigint | null = null;
+            const parsedUserId = parseUserId(auth.userId);
 
-            // Conversion step: handle string, number, and bigint explicitly
-            try {
-              if (typeof auth.userId === 'number') {
-                parsedUserId = auth.userId;
-              } else if (typeof auth.userId === 'string') {
-                const trimmed = auth.userId.trim();
-                if (!/^\d+$/.test(trimmed)) throw new Error('Non-numeric userId string');
-                try {
-                  const asBigInt = BigInt(trimmed);
-                  if (asBigInt <= 0n) throw new Error('userId must be positive');
-                  // Convert to number only if within safe range
-                  parsedUserId = asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : asBigInt;
-                } catch {
-                  throw new Error('Failed to parse userId string');
-                }
-              } else if (typeof auth.userId === 'bigint') {
-                if (auth.userId <= 0n) throw new Error('bigint userId must be positive');
-                parsedUserId = auth.userId;  // Keep as bigint
-              } else {
-                throw new Error(`Unsupported userId type: ${typeof auth.userId}`);
-              }
-            } catch (conversionError) {
-              console.error('User ID conversion error in status endpoint:', conversionError);
+            if (parsedUserId == null) {
               hasStoredCredentials = false;
-              parsedUserId = null;
-            }
-
-            // Validation step: only proceed if conversion succeeded
-            if (parsedUserId != null) {
-              const isValid = typeof parsedUserId === 'bigint' 
-                ? parsedUserId > 0n
+            } else {
+              // parseUserId now returns only number | string, both JSON-safe
+              const isValid = typeof parsedUserId === 'string'
+                ? /^\d+$/.test(parsedUserId) && BigInt(parsedUserId) > 0n
                 : (Number.isFinite(parsedUserId) && Number.isSafeInteger(parsedUserId) && parsedUserId > 0);
 
               if (!isValid) {
@@ -83,7 +58,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
               } else {
                 // Lazy-load DB only in non-headless, authenticated path
                 const { userHasStoredCredentials } = await import('../db/database.js');
-                hasStoredCredentials = userHasStoredCredentials(parsedUserId);
+                // Convert to bigint for database operation
+                const dbUserId = typeof parsedUserId === 'string' ? BigInt(parsedUserId) : parsedUserId;
+                hasStoredCredentials = userHasStoredCredentials(dbUserId);
               }
             }
           } catch (unexpectedError) {
@@ -97,6 +74,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         }
       }
 
+      // Get publish metrics for monitoring
+      const publishMetrics = getPublishMetrics();
+
       const status = {
         serverRunning: true,
         nodeActive: context.node !== null,
@@ -104,6 +84,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         relayCount: currentRelays.length,
         relays: currentRelays,
         timestamp: new Date().toISOString(),
+        restartInfo: {
+          blockedByCredentials: context.restartState?.blockedByCredentials ?? false
+        },
         health: {
           isConnected: nodeHealth.isConnected,
           lastActivity: nodeHealth.lastActivity ? nodeHealth.lastActivity.toISOString() : null,
@@ -111,6 +94,15 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
           consecutiveConnectivityFailures: nodeHealth.consecutiveConnectivityFailures,
           timeSinceLastActivity: nodeHealth.timeSinceLastActivity,
           timeSinceLastConnectivityCheck: nodeHealth.timeSinceLastConnectivityCheck
+        },
+        publishMetrics: {
+          totalAttempts: publishMetrics.totalAttempts,
+          totalFailures: publishMetrics.totalFailures,
+          failureRate: publishMetrics.failureRate,
+          isAboveThreshold: publishMetrics.isAboveThreshold,
+          windowAge: publishMetrics.windowAge,
+          failuresByRelay: publishMetrics.failuresByRelay,
+          failuresByReason: publishMetrics.failuresByReason
         }
       };
       return Response.json(status, { headers });

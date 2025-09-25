@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap');
+@import './styles/nip46.css';
 
 @tailwind base;
 @tailwind components;

@@ -9,15 +9,17 @@ export interface EventLogProps {
   isSignerRunning: boolean;
   onClearLogs: () => void;
   hideHeader?: boolean;
+  autoExpandTypes?: string[];
 }
 
-export const EventLog: React.FC<EventLogProps> = ({ logs, isSignerRunning, onClearLogs, hideHeader }) => {
+export const EventLog: React.FC<EventLogProps> = ({ logs, isSignerRunning, onClearLogs, hideHeader, autoExpandTypes }) => {
   return (
     <UIEventLog
       logs={logs}
       isSignerRunning={isSignerRunning}
       onClearLogs={onClearLogs}
       hideHeader={hideHeader}
+      autoExpandTypes={autoExpandTypes}
     />
   );
-}; 
+};

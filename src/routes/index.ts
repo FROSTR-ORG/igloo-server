@@ -6,6 +6,10 @@ export { handleRecoveryRoute } from './recovery.js';
 export { handleSharesRoute } from './shares.js';
 export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
+export { handleSignRoute } from './sign.js';
+export { handleNip44Route } from './nip44.js';
+export { handleNip04Route } from './nip04.js';
+export { handleNip46Route } from './nip46.js';
 
 // Export types and utilities
 export * from './types.js';
@@ -20,6 +24,10 @@ import { handleRecoveryRoute } from './recovery.js';
 import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
+import { handleSignRoute } from './sign.js';
+import { handleNip44Route } from './nip44.js';
+import { handleNip04Route } from './nip04.js';
+import { handleNip46Route } from './nip46.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
 import { handleUserRoute } from './user.js';
@@ -69,7 +77,7 @@ export async function handleRequest(
     // Only rate limit validation and setup endpoints, not the status endpoint
     if (url.pathname === '/api/onboarding/validate-admin' || 
         url.pathname === '/api/onboarding/setup') {
-      const rateLimit = checkRateLimit(req);
+      const rateLimit = await checkRateLimit(req);
       if (!rateLimit.allowed) {
         return Response.json({ 
           error: 'Rate limit exceeded. Try again later.' 
@@ -150,6 +158,18 @@ export async function handleRequest(
 
   // Authentication info for this request (not stored in shared context)
   let authInfo: RequestAuth | null = null;
+  const finalizeAuth = () => {
+    if (authInfo?.destroySecrets) {
+      try {
+        authInfo.destroySecrets();
+      } catch (cleanupError) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[routes] Failed to destroy auth secrets:', cleanupError);
+        }
+      }
+    }
+    authInfo = null;
+  };
 
   // Define endpoints that should be accessible without authentication
   const publicEndpoints = [
@@ -174,7 +194,7 @@ export async function handleRequest(
     const authResult = await authenticate(req);
     
     if (authResult.rateLimited) {
-      return Response.json({ 
+      const response = Response.json({ 
         error: 'Rate limit exceeded. Try again later.' 
       }, { 
         status: 429,
@@ -183,24 +203,30 @@ export async function handleRequest(
           'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
         }
       });
+      finalizeAuth();
+      return response;
     }
     
     if (!authResult.authenticated) {
       // Don't set WWW-Authenticate header to avoid browser's native auth dialog
       // The frontend will handle authentication through its own UI
-      return Response.json({ 
+      const response = Response.json({ 
         error: authResult.error || 'Authentication required',
         authMethods: getAuthStatus()
       }, { 
         status: 401,
         headers 
       });
+      finalizeAuth();
+      return response;
     }
     
     authInfo = createRequestAuth({
       userId: authResult.userId,
       authenticated: true,
-      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
+      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+      sessionId: authResult.sessionId,
+      hasPassword: authResult.hasPassword
     });
   } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
     // Special handling for /api/status: attempt authentication if headers are present
@@ -214,7 +240,9 @@ export async function handleRequest(
         authInfo = createRequestAuth({
           userId: authResult.userId,
           authenticated: true,
-          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined
+          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+          sessionId: authResult.sessionId,
+          hasPassword: authResult.hasPassword
         });
       }
       // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
@@ -229,34 +257,35 @@ export async function handleRequest(
   // Handle user routes (database mode only)
   if (!HEADLESS && url.pathname.startsWith('/api/user')) {
     const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
-    if (userResult) return userResult;
+    if (userResult) {
+      finalizeAuth();
+      return userResult;
+    }
   }
 
   // Handle admin routes (database mode only, requires ADMIN_SECRET)
   if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
-    // Apply rate limiting to protect ADMIN_SECRET from brute-force
-    const rateLimit = checkRateLimit(req);
-    if (!rateLimit.allowed) {
-      return Response.json({ 
-        error: 'Rate limit exceeded. Try again later.' 
-      }, { 
-        status: 429,
-        headers: {
-          ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
-        }
-      });
-    }
-    
     const adminResult = await handleAdminRoute(req, url, baseContext);
-    if (adminResult) return adminResult;
+    if (adminResult) {
+      finalizeAuth();
+      return adminResult;
+    }
   }
   
   // Handle privileged routes separately
   if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
     const result = await handleEnvRoute(req, url, privilegedContext, authInfo);
     if (result) {
+      finalizeAuth();
       return result;
+    }
+  }
+
+  if (!HEADLESS && url.pathname.startsWith('/api/nip46/')) {
+    const nip46Result = await handleNip46Route(req, url, privilegedContext, authInfo);
+    if (nip46Result) {
+      finalizeAuth();
+      return nip46Result;
     }
   }
 
@@ -266,6 +295,9 @@ export async function handleRequest(
     handleStatusRoute,    // Allow unauthenticated for health checks
     handleEventsRoute,
     handlePeersRoute,
+    handleSignRoute,
+    handleNip44Route,
+    handleNip04Route,
     handleRecoveryRoute,
     handleSharesRoute,
   ];
@@ -273,10 +305,13 @@ export async function handleRequest(
   for (const handler of routeHandlers) {
     const result = await handler(req, url, context, authInfo);
     if (result) {
+      finalizeAuth();
       return result;
     }
   }
 
   // If no route matched, return 404
-  return new Response('Not Found', { status: 404 });
+  const notFound = new Response('Not Found', { status: 404 });
+  finalizeAuth();
+  return notFound;
 } 

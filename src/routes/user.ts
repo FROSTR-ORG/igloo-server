@@ -1,15 +1,17 @@
 import { HEADLESS } from '../const.js';
-import { 
-  getUserById, 
-  getUserCredentials, 
+import {
+  getUserById,
+  getUserCredentials,
   updateUserCredentials,
   deleteUserCredentials,
+  getUserPeerPolicies,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
-import { createAndStartNode } from './node-manager.js';
-import { executeUnderNodeLock, cleanupNodeSynchronized } from './env.js';
+import { createNodeWithCredentials } from '../node/manager.js';
+import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
+import { getNip46Service } from '../nip46/index.js';
 
 // Define route-to-methods mapping for proper 404/405 handling
 const ROUTE_METHODS: Record<string, string[]> = {
@@ -28,10 +30,42 @@ function getAuthSecret(auth: RequestAuth): { secret: string | Uint8Array; isDeri
   if (typeof password === 'string' && password.length > 0) {
     return { secret: password, isDerivedKey: false };
   }
-  
+
   const derivedKey = auth.getDerivedKey?.();
   if (derivedKey) return { secret: derivedKey, isDerivedKey: true };
-  
+
+  return null;
+}
+
+/**
+ * Returns true when the provided string is a valid WebSocket URL.
+ * Accepts only ws:// or wss:// protocols.
+ */
+function isValidWebSocketUrl(value: string): boolean {
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  try {
+    const parsed = new URL(trimmed);
+    return parsed.protocol === 'ws:' || parsed.protocol === 'wss:';
+  } catch {
+    return false;
+  }
+}
+
+function resolveUserId(input: unknown): number | bigint | null {
+  if (typeof input === 'number' && Number.isSafeInteger(input) && input > 0) {
+    return input;
+  }
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (/^\d+$/.test(trimmed)) {
+      try {
+        return BigInt(trimmed);
+      } catch {
+        return null;
+      }
+    }
+  }
   return null;
 }
 
@@ -75,10 +109,13 @@ export async function handleUserRoute(
     );
   }
 
-  // Database users have numeric IDs (number or bigint)
+  // Database users have numeric IDs (number or string representation of bigint)
   let userId: number | bigint | null = null;
-  if (typeof auth.userId === 'number' || typeof auth.userId === 'bigint') {
+  if (typeof auth.userId === 'number') {
     userId = auth.userId;
+  } else if (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)) {
+    // Convert string representation back to bigint for database
+    userId = BigInt(auth.userId);
   }
   
   // Require a valid database user
@@ -158,17 +195,40 @@ export async function handleUserRoute(
               if (!context.node) {
                 context.addServerLog('info', 'Auto-starting Bifrost node for logged-in user...');
                 try {
-                  await createAndStartNode({
-                    group_cred: groupCred,
-                    share_cred: shareCred,
-                    relays,
-                    group_name: groupName
-                  }, context);
+                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
+                  const node = await createNodeWithCredentials(
+                    groupCred,
+                    shareCred,
+                    relays?.join(','),
+                    context.addServerLog,
+                    peerPoliciesJson
+                  );
+                  if (node) {
+                    context.updateNode(node, {
+                      credentials: {
+                        group: groupCred,
+                        share: shareCred,
+                        relaysEnv: relays?.join(','),
+                        peerPoliciesRaw: peerPoliciesJson,
+                        source: 'dynamic'
+                      }
+                    });
+                  }
                 } catch (error) {
                   context.addServerLog('error', 'Failed to auto-start node', error);
                 }
               }
             }, context);
+          }
+
+          const service = getNip46Service();
+          if (service) {
+            const resolvedId = resolveUserId(auth?.userId);
+            if (resolvedId) {
+              service.setActiveUser(resolvedId);
+              await service.ensureStarted();
+            }
           }
 
           return Response.json(credentials, { headers });
@@ -185,18 +245,10 @@ export async function handleUserRoute(
 
           let body: any;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
             return Response.json(
-              { error: 'Invalid JSON in request body' },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate that body is an object
-          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-            return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }
@@ -289,12 +341,31 @@ export async function handleUserRoute(
               await executeUnderNodeLock(async () => {
                 if (!context.node && credentials) {
                   context.addServerLog('info', 'Starting Bifrost node with saved credentials...');
-                  await createAndStartNode({
-                    group_cred: credentials.group_cred!,
-                    share_cred: credentials.share_cred!,
-                    relays: credentials.relays ?? undefined,
-                    group_name: credentials.group_name ?? undefined
-                  }, context);
+                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
+                  const groupCred = credentials.group_cred!;
+                  const shareCred = credentials.share_cred!;
+                  const relays = credentials.relays;
+                  const relaysEnv = relays?.length ? relays.join(',') : undefined;
+
+                  const node = await createNodeWithCredentials(
+                    groupCred,
+                    shareCred,
+                    relaysEnv,
+                    context.addServerLog,
+                    peerPoliciesJson
+                  );
+                  if (node) {
+                    context.updateNode(node, {
+                      credentials: {
+                        group: groupCred,
+                        share: shareCred,
+                        relaysEnv,
+                        peerPoliciesRaw: peerPoliciesJson,
+                        source: 'dynamic'
+                      }
+                    });
+                  }
                 } else {
                   context.addServerLog('info', 'Node already running, skipping restart');
                 }
@@ -364,18 +435,10 @@ export async function handleUserRoute(
         if (req.method === 'POST' || req.method === 'PUT') {
           let body: any;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
             return Response.json(
-              { error: 'Invalid JSON in request body' },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate that body is an object
-          if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-            return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }
@@ -390,11 +453,20 @@ export async function handleUserRoute(
 
           const relays = (body as any).relays;
 
-          if (relays !== null && (!Array.isArray(relays) || !relays.every((r: any) => typeof r === 'string'))) {
-            return Response.json(
-              { error: 'Invalid relays format. Must be an array of strings or null.' },
-              { status: 400, headers }
-            );
+          if (relays !== null) {
+            if (!Array.isArray(relays)) {
+              return Response.json(
+                { error: 'Invalid relays format. Must be an array of strings or null.' },
+                { status: 400, headers }
+              );
+            }
+            const invalidRelays = relays.filter((r: any) => typeof r !== 'string' || !isValidWebSocketUrl(r));
+            if (invalidRelays.length > 0) {
+              return Response.json(
+                { error: 'Invalid relay URLs. Must use ws:// or wss://' },
+                { status: 400, headers }
+              );
+            }
           }
 
           // Relays are stored as plain JSON, so no auth secret needed for relay-only updates

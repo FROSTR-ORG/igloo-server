@@ -95,8 +95,10 @@ const ALLOWED_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - server configuration
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -115,8 +117,10 @@ const PUBLIC_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - safe to expose for configuration UI
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -303,6 +307,31 @@ export async function getCredentialsSavedAt(): Promise<string | null> {
   }
 }
 
+/**
+ * Parses JSON request body with validation
+ * @param req - The incoming request
+ * @returns Parsed JSON body as an object
+ * @throws Error with descriptive message for invalid JSON or non-object bodies
+ */
+export async function parseJsonRequestBody(req: Request): Promise<any> {
+  let body;
+  try {
+    body = await req.json();
+  } catch (error) {
+    if (error instanceof SyntaxError) {
+      throw new Error('Invalid JSON in request body');
+    }
+    throw error; // Re-throw non-JSON errors
+  }
+
+  // Validate that body is a JSON object (not null, array, or primitive)
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    throw new Error('Request body must be a JSON object');
+  }
+
+  return body;
+}
+
 // Enhanced writeEnvFile that automatically sets the save timestamp
 export async function writeEnvFileWithTimestamp(env: Record<string, string>): Promise<boolean> {
   try {
@@ -399,6 +428,9 @@ export function safeStringify(obj: any, maxDepth = 3): string {
   }
 }
 
+// Track if we've already shown the CORS warning this session
+let corsWarningShown = false;
+
 // Utility function to get secure CORS headers based on request origin
 export function getSecureCorsHeaders(req: Request): Record<string, string> {
   const headers: Record<string, string> = {};
@@ -426,12 +458,20 @@ export function getSecureCorsHeaders(req: Request): Record<string, string> {
     }
     // If origin is not allowed, don't set the header (CORS will block the request)
   } else if (!allowedOriginsEnv) {
-    // If ALLOWED_ORIGINS is not set, fall back to wildcard for development
-    // In production, ALLOWED_ORIGINS should always be configured
-    headers['Access-Control-Allow-Origin'] = '*';
-    // Wildcard doesn't need Vary: Origin since response is the same for all origins
+    // Fail safe in production - CORS must be explicitly configured
     if (process.env.NODE_ENV === 'production') {
-      console.warn('SECURITY WARNING: ALLOWED_ORIGINS not configured in production. Using wildcard (*) for CORS.');
+      // SECURITY: Block all CORS requests in production without explicit configuration
+      console.error('SECURITY ERROR: ALLOWED_ORIGINS must be configured in production. CORS requests will be blocked.');
+      // Don't set Access-Control-Allow-Origin header - browsers will block the request
+    } else {
+      // Allow wildcard only in development for easier testing
+      headers['Access-Control-Allow-Origin'] = '*';
+      // No Vary header needed for wildcard since response is identical for all origins
+      // Only show this warning once per server session
+      if (!corsWarningShown) {
+        console.info('Development mode: Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS before deploying to production.');
+        corsWarningShown = true;
+      }
     }
   }
 
@@ -458,4 +498,132 @@ export function mergeVaryHeaders(corsHeaders: Record<string, string>): string {
     for (const part of parts) if (!base.includes(part)) base.push(part);
   }
   return base.join(', ');
+}
+
+/**
+ * Parse a user identifier from an unknown value.
+ *
+ * Accepts null/undefined, number, bigint, and numeric strings. Ensures the
+ * resulting value represents a positive integer. Returns a number when within
+ * Number.MAX_SAFE_INTEGER, bigint for larger numeric strings, or null on any
+ * parse/validation failure.
+ */
+/**
+ * Parses user ID from various input types and returns a JSON-serializable format.
+ * Returns number for IDs within safe integer range, string for larger values.
+ */
+export function parseUserId(input: unknown): number | string | null {
+  try {
+    if (input === null || input === undefined) return null;
+
+    if (typeof input === 'number') {
+      if (!Number.isFinite(input)) return null;
+      if (!Number.isSafeInteger(input)) return null;
+      if (input <= 0) return null;
+      return input;
+    }
+
+    if (typeof input === 'bigint') {
+      if (input <= 0n) return null;
+      // Convert bigint to string for JSON safety
+      return input.toString();
+    }
+
+    if (typeof input === 'string') {
+      const trimmed = input.trim();
+      if (!/^\d+$/.test(trimmed)) return null;
+      const asBigInt = BigInt(trimmed);
+      if (asBigInt <= 0n) return null;
+      // Return as number if it fits, otherwise keep as string
+      return asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : trimmed;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Converts a parsed user ID to bigint format for database operations.
+ * This is used at the database boundary where bigint is still supported.
+ */
+export function userIdToBigInt(userId: number | string): bigint {
+  if (typeof userId === 'number') {
+    return BigInt(userId);
+  }
+  return BigInt(userId);
+}
+
+// Timeout helpers for route handlers
+
+// Unique symbol to identify timeout errors
+const TIMEOUT_ERROR = Symbol('TIMEOUT_ERROR');
+
+// Custom timeout error class with symbol marker
+class TimeoutError extends Error {
+  readonly [TIMEOUT_ERROR] = true;
+
+  constructor(label: string) {
+    super(label);
+    this.name = 'TimeoutError';
+  }
+}
+
+/**
+ * Get operation timeout in milliseconds from environment variables.
+ * Checks multiple fallback keys and enforces min/max bounds.
+ */
+export function getOpTimeoutMs(
+  envKeyFallbacks: string[] = ['FROSTR_SIGN_TIMEOUT', 'SIGN_TIMEOUT_MS'],
+  defaultMs = 30000
+): number {
+  for (const k of envKeyFallbacks) {
+    const v = process.env[k];
+    if (v && !Number.isNaN(parseInt(v))) {
+      const n = parseInt(v);
+      return Math.max(1000, Math.min(120000, n));
+    }
+  }
+  return Math.max(1000, Math.min(120000, defaultMs));
+}
+
+/**
+ * Execute a promise with a timeout. If the promise doesn't resolve within
+ * the specified time, it will be rejected with a TimeoutError.
+ *
+ * @param promise - The promise to execute
+ * @param ms - Timeout in milliseconds
+ * @param label - Error label for timeout (default: 'OP_TIMEOUT')
+ * @returns The result of the promise if it completes in time
+ * @throws TimeoutError if the operation times out
+ */
+export async function withTimeout<T>(
+  promise: Promise<T>,
+  ms: number,
+  label = 'OP_TIMEOUT'
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    const result = await Promise.race<T>([
+      promise,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new TimeoutError(label)), ms);
+      })
+    ]);
+
+    return result;
+  } catch (error) {
+    // Check if it's our timeout error
+    if (error && typeof error === 'object' && TIMEOUT_ERROR in error) {
+      throw error; // Re-throw timeout errors
+    }
+    // Re-throw other errors
+    throw error;
+  } finally {
+    if (timer) {
+      clearTimeout(timer);
+    }
+  }
 }

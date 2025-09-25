@@ -1,6 +1,6 @@
 import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { readEnvFile, writeEnvFileWithTimestamp, getCredentialsSavedAt } from './utils.js';
 import { authenticate, AUTH_CONFIG } from './auth.js';
 import { hasCredentials } from '../const.js';
@@ -76,21 +76,10 @@ export async function handleSharesRoute(req: Request, url: URL, context: RouteCo
           // Save share data (for future enhancement - could store in a file or database)
           let body;
           try {
-            body = await req.json();
+            body = await parseJsonRequestBody(req);
           } catch (error) {
-            if (error instanceof SyntaxError) {
-              return Response.json(
-                { error: 'Invalid JSON in request body' },
-                { status: 400, headers }
-              );
-            }
-            throw error; // Re-throw non-JSON errors
-          }
-          
-          // Body must be a JSON object
-          if (body === null || typeof body !== 'object' || Array.isArray(body)) {
             return Response.json(
-              { error: 'Request body must be a JSON object' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }

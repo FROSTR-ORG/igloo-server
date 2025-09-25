@@ -179,7 +179,7 @@ The script performs these checks in sequence:
 
 ### 3. Manual Steps (Developer Action Required)
 
-After the script pushes the release branch, you must create a pull request to merge the changes into the `main` branch.
+After the script pushes the release branch, you must create a pull request to merge the changes into the `master` branch.
 
 1.  **Create a Pull Request**
 
@@ -189,16 +189,16 @@ After the script pushes the release branch, you must create a pull request to me
     ```bash
     # Optional: Create the pull request using the GitHub CLI
     # Replace <VERSION> with the new version number from the script's output
-    gh pr create --base main --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
+    gh pr create --base master --head "release/prepare-v<VERSION>" --title "chore(release): Release v<VERSION>" --body "Prepares for release v<VERSION>"
     ```
 
 2.  **Review and Merge PR**
     - Get approvals if required.
-    - Merge the pull request to `main` to trigger the automated release workflow.
+    - Merge the pull request to `master` to trigger the automated release workflow.
 
 ### 4. GitHub Actions Automation
 
-When the PR is merged to main:
+When the PR is merged to master:
 
 1. **Release Creation**
    - GitHub automatically creates a release
@@ -325,7 +325,7 @@ Apply appropriate labels for changelog categorization:
 ## Release Artifacts
 
 Each release produces:
-1. **Git Tag**: `v{version}` on main branch
+1. **Git Tag**: `v{version}` on master branch
 2. **GitHub Release**: With auto-generated changelog
 3. **Updated package.json**: New version number
 4. **Release Branch**: Archived as `release/prepare-v{version}`
@@ -336,17 +336,18 @@ If a release needs to be rolled back:
 
 1. **Revert on Master**
    ```bash
-   git checkout main
-   git revert <merge-commit-hash>
-   git push origin main
+   git checkout master
+   git revert -m 1 <merge-commit-hash>
+   git push origin master
    ```
+   _Use `-m 1` for the common case where master was the first parent of the merge. If you merged from a different base, substitute the parent number that represents the stable branch you want to keep._
 
 2. **Create Hotfix**
    ```bash
    git checkout -b hotfix/v{version}-rollback
    # Make fixes
    git push origin hotfix/v{version}-rollback
-   # Create PR to main
+   # Create PR to master
    ```
 
 ## Monitoring Post-Release
@@ -406,9 +407,10 @@ curl http://localhost:8002/api/status
 ### Version Already Exists
 **Symptom**: npm version fails
 **Cause**: Version tag already exists
-**Solution**: 
+**Solution**:
 1. Use different version number
 2. Delete existing tag (if appropriate)
+   **⚠️ WARNING**: Only delete tags if you're certain they haven't been used in production
 ```bash
 git tag -d v1.2.3
 git push origin :refs/tags/v1.2.3

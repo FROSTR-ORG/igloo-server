@@ -1,8 +1,9 @@
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
 import { RouteContext } from './types.js';
-import { getAllUsers, deleteUser, isDatabaseInitialized } from '../db/database.js';
+import { getAllUsers, deleteUserSafely, isDatabaseInitialized } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
+import { checkRateLimit } from './auth.js';
 
 /**
  * Shape of the request body for deleting a user via the admin API.
@@ -84,6 +85,21 @@ export async function handleAdminRoute(
     return new Response(null, { status: 200, headers });
   }
 
+  // Check rate limit before admin authentication to prevent brute force attacks
+  const rate = await checkRateLimit(req);
+  if (!rate.allowed) {
+    return Response.json(
+      { error: 'Rate limit exceeded. Try again later.' },
+      {
+        status: 429,
+        headers: {
+          ...headers,
+          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+        }
+      }
+    );
+  }
+
   // Database must be initialized for admin operations
   try {
     const initialized = isDatabaseInitialized();
@@ -161,40 +177,18 @@ export async function handleAdminRoute(
             );
           }
 
-          // Prevent deleting the last admin user
-          // In this system, we consider users with stored credentials as admins
-          const users = getAllUsers();
-          const targetUser = users.find(u => String(u.id) === String(normalizedUserId));
-          if (!targetUser) {
-            return Response.json(
-              { error: 'User not found or deletion failed' },
-              { status: 404, headers }
-            );
-          }
-
-          // Use consistent String comparison for filtering admin users
-          const adminUsers = users.filter(u => u.hasCredentials && String(u.id) !== String(normalizedUserId));
-          const isTargetAdmin = !!targetUser.hasCredentials;
-          if (isTargetAdmin && adminUsers.length === 0) {
-            return Response.json(
-              { error: 'Cannot delete the last admin user' },
-              { status: 400, headers }
-            );
-          }
-
-          // Pass the original targetUser.id to preserve its type
-          const success = deleteUser(targetUser.id);
+          // Perform atomic delete with last-admin guard inside a DB transaction
+          const { success, error } = deleteUserSafely(normalizedUserId);
           if (!success) {
-            return Response.json(
-              { error: 'User not found or deletion failed' },
-              { status: 404, headers }
-            );
+            console.error(`[admin] Error during user deletion for userId ${normalizedUserId}:`, error);
+            const status = error === 'User not found'
+              ? 404
+              : error === 'Cannot delete the last admin user'
+              ? 400
+              : 500;
+            return Response.json({ error: error || 'Deletion failed' }, { status, headers });
           }
-
-          return Response.json(
-            { success: true, message: 'User deleted successfully' },
-            { headers }
-          );
+          return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
         }
         break;
 

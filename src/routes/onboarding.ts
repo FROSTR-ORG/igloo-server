@@ -1,9 +1,12 @@
 import { timingSafeEqual } from 'crypto';
+import { hmac } from '@noble/hashes/hmac';
+import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { RouteContext } from './types.js';
 import { VALIDATION } from '../config/crypto.js';
+import { getRateLimiter } from '../utils/rate-limiter.js';
 
 // Fixed delay to prevent timing attacks (milliseconds)
 const UNIFORM_DELAY_MS = 150;
@@ -15,46 +18,38 @@ const ROUTE_METHODS: Record<string, string[]> = {
   '/api/onboarding/setup': ['POST']
 };
 
-// Simple rate limiter for admin validation endpoints
-const adminLimiter = new Map<string, { count: number; resetAt: number }>();
+// Rate limiting configuration for admin validation endpoints
 const RATE_LIMIT_WINDOW_MS = 60000; // 1 minute
 const MAX_ATTEMPTS_PER_WINDOW = 5;
 
-// Periodic cleanup to bound memory for adminLimiter
-const ADMIN_LIMITER_CLEANUP_INTERVAL_MS = 120000; // 2 minutes
-let adminLimiterCleanupTimer: ReturnType<typeof setInterval> | null = null;
+// Stable client identifier cache (maps canonical fingerprint input -> stable ID)
+const clientIdCache = new Map<string, { id: string; expiresAt: number }>();
+const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
+const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, parseInt(process.env.CLIENT_ID_TTL_MS || '86400000')));
+const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
+const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
+let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
+
 
 /**
- * Removes expired entries from the admin limiter Map.
- * Deletes any entry where resetAt is in the past.
- * @param now - Epoch ms used for comparison; defaults to current time
+ * Removes expired entries from the client identifier cache to bound memory.
  */
-function removeExpiredAdminLimiterEntries(now: number = Date.now()): void {
-  for (const [ip, entry] of adminLimiter) {
-    if (entry.resetAt <= now) adminLimiter.delete(ip);
+function removeExpiredClientIds(now: number = Date.now()): void {
+  for (const [key, entry] of clientIdCache) {
+    if (entry.expiresAt <= now) clientIdCache.delete(key);
   }
 }
 
-/**
- * Starts periodic cleanup of expired admin limiter entries.
- * Stores the timer so it can be cleared on shutdown.
- */
-function startAdminLimiterCleanup(): void {
-  if (adminLimiterCleanupTimer) return;
-  adminLimiterCleanupTimer = setInterval(() => removeExpiredAdminLimiterEntries(), ADMIN_LIMITER_CLEANUP_INTERVAL_MS);
-}
-
-/**
- * Stops the periodic cleanup interval for admin limiter entries.
- */
-export function stopAdminLimiterCleanup(): void {
-  if (!adminLimiterCleanupTimer) return;
-  clearInterval(adminLimiterCleanupTimer);
-  adminLimiterCleanupTimer = null;
+// Start periodic cleanup for client ID cache
+function startClientIdCleanup(): void {
+  if (clientIdCleanupTimer) return;
+  clientIdCleanupTimer = setInterval(() => removeExpiredClientIds(), Math.min(CLIENT_ID_TTL_MS, 5 * 60_000));
 }
 
 // Initialize cleanup when onboarding routes are active
-if (!HEADLESS) startAdminLimiterCleanup();
+if (!HEADLESS) {
+  startClientIdCleanup();
+}
 
 // Helper function to add uniform delay to responses
 async function addUniformDelay(): Promise<void> {
@@ -62,49 +57,105 @@ async function addUniformDelay(): Promise<void> {
 }
 
 /**
- * Extracts client IP from request headers.
- * Checks x-forwarded-for, x-real-ip, then falls back to 'unknown'.
+ * Extracts client IP from request headers with proxy trust validation.
+ * Only trusts proxy headers when TRUST_PROXY environment variable is set.
+ *
+ * Security Note: In production behind a proxy (nginx, cloudflare, etc), set
+ * TRUST_PROXY=true. Without a trusted proxy, we cannot reliably determine
+ * the client IP, so we use a hash of headers for rate limiting consistency.
  */
 function getClientIp(req: Request): string {
-  return req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 
-         req.headers.get('x-real-ip') || 
-         'unknown';
+  // Check if we should trust proxy headers
+  const trustProxy = process.env.TRUST_PROXY === 'true';
+
+  if (trustProxy) {
+    // Trust proxy headers when explicitly configured
+    // Priority: X-Forwarded-For (standard), X-Real-IP (nginx), fallback
+    const xForwardedFor = req.headers.get('x-forwarded-for');
+    if (xForwardedFor) {
+      // Take the first IP (original client) from comma-separated list
+      return xForwardedFor.split(',')[0]?.trim() || 'unknown';
+    }
+
+    const xRealIp = req.headers.get('x-real-ip');
+    if (xRealIp) {
+      return xRealIp.trim();
+    }
+
+    const cfConnectingIp = req.headers.get('cf-connecting-ip');
+    if (cfConnectingIp) {
+      return cfConnectingIp.trim();
+    }
+  }
+
+  // Stronger fallback: build canonical fingerprint input from multiple headers
+  // and compute a stable, truncated HMAC-SHA256/SHA-256 identifier.
+  const headerKeys = [
+    'user-agent', 'accept-language', 'accept-encoding', 'accept', 'dnt',
+    'sec-ch-ua', 'sec-ch-ua-platform', 'sec-ch-ua-mobile', 'sec-ch-ua-arch', 'sec-ch-ua-model',
+    'x-forwarded-proto', 'cf-ipcountry', 'cf-ray', 'x-tls-fingerprint', 'x-ja3', 'ja3'
+  ];
+
+  const parts: Array<[string, string]> = [];
+  for (const key of headerKeys) {
+    const val = req.headers.get(key);
+    if (val) parts.push([key, val]);
+  }
+
+  if (parts.length === 0) {
+    // Nothing to fingerprint with
+    if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
+      console.warn('[onboarding] Fingerprint fallback has no usable headers. Configure a trusted proxy (set TRUST_PROXY=true) to propagate client IPs.');
+    }
+    return 'unknown';
+  }
+
+  // Canonicalize by sorting keys
+  parts.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  const canonical = JSON.stringify(parts);
+
+  // Cache to provide stability across slightly varying requests within TTL
+  const now = Date.now();
+  const cached = clientIdCache.get(canonical);
+  if (cached && cached.expiresAt > now) return cached.id;
+
+  const encoder = new TextEncoder();
+  const data = encoder.encode(canonical);
+  const digest = FINGERPRINT_SECRET
+    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), data)
+    : sha256(data);
+  const hex = Buffer.from(digest).toString('hex');
+  // Truncate to 32 hex chars (128-bit) for brevity while maintaining collision resistance
+  const id = `fp_${hex.slice(0, 32)}`;
+
+  clientIdCache.set(canonical, { id, expiresAt: now + CLIENT_ID_TTL_MS });
+
+  if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
+    console.warn('[onboarding] Using fingerprint fallback for client identification. For stronger attribution, enable a trusted proxy (TRUST_PROXY=true) and ensure X-Forwarded-For / CF headers are passed.');
+  }
+
+  return id;
 }
 
 /**
  * Checks if the request should be rate limited based on client IP.
- * Uses the adminLimiter Map to track attempts per IP.
+ * Uses persistent SQLite-backed rate limiting that survives server restarts.
  * @param context - RouteContext (included for consistency, uses local state)
  * @param req - The incoming request
  * @returns true if the request should be rate limited, false otherwise
  */
-async function checkPerIpRateLimit(context: RouteContext, req: Request): Promise<boolean> {
+async function checkPerIpRateLimit(_context: RouteContext, req: Request): Promise<boolean> {
   const clientIp = getClientIp(req);
-  const now = Date.now();
-  
-  // Prune expired entries proactively
-  removeExpiredAdminLimiterEntries(now);
+  const rateLimiter = getRateLimiter();
 
-  let limiterEntry = adminLimiter.get(clientIp);
-  
-  if (limiterEntry) {
-    if (now >= limiterEntry.resetAt) {
-      // Window expired on access: delete the stale entry, then treat as first attempt
-      adminLimiter.delete(clientIp);
-      limiterEntry = undefined;
-    } else if (limiterEntry.count >= MAX_ATTEMPTS_PER_WINDOW) {
-      // Rate limit exceeded
-      return true;
-    } else {
-      // Still within the window, increment count
-      limiterEntry.count++;
-      return false;
-    }
-  }
-  
-  // First attempt from this IP or expired entry was deleted
-  adminLimiter.set(clientIp, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
-  return false;
+  const result = await rateLimiter.checkLimit(clientIp, {
+    windowMs: RATE_LIMIT_WINDOW_MS,
+    maxAttempts: MAX_ATTEMPTS_PER_WINDOW,
+    bucket: 'onboarding_admin'
+  });
+
+  // Return true if rate limited (not allowed)
+  return !result.allowed;
 }
 
 // Uniform error response for all authentication failures
@@ -120,14 +171,6 @@ const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 // - Special character (at least one of @$!%*?&, but allows any special chars)
 // Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])\S*$/;
-
-// Common weak passwords that should be rejected
-const COMMON_PASSWORDS = new Set([
-  'password1!', 'password123!', 'admin123!', 'qwerty123!',
-  'password!', 'letmein1!', 'welcome1!', 'monkey123!',
-  'dragon123!', 'master123!', 'abc123!@#', 'password1',
-  'p@ssw0rd', 'p@ssword1', 'passw0rd!', 'admin@123'
-]);
 
 /**
  * Validates the admin secret in a timing-safe manner
@@ -209,11 +252,6 @@ function validatePasswordStrength(password: string, username?: string): string |
 
   if (!PASSWORD_REGEX.test(password)) {
     return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (must include at least one of @$!%*?&)';
-  }
-
-  // Check against common passwords (case-insensitive)
-  if (COMMON_PASSWORDS.has(password.toLowerCase())) {
-    return 'This password is too common. Please choose a more unique password';
   }
 
   // Check for sequential or repeated characters
@@ -312,17 +350,19 @@ export async function handleOnboardingRoute(
 
       case '/api/onboarding/validate-admin':
         if (req.method === 'POST') {
-          // Add uniform delay to all responses
-          await addUniformDelay();
-          
-          // Apply rate limiting for admin validation
+          // Apply rate limiting BEFORE delay to prevent resource exhaustion
           const rateLimited = await checkPerIpRateLimit(_context, req);
           if (rateLimited) {
+            // Still add delay to rate-limited responses for timing consistency
+            await addUniformDelay();
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }
             );
           }
+
+          // Add uniform delay to all non-rate-limited responses
+          await addUniformDelay();
           
           // Check if already initialized
           let initialized = false;
@@ -370,17 +410,19 @@ export async function handleOnboardingRoute(
 
       case '/api/onboarding/setup':
         if (req.method === 'POST') {
-          // Add uniform delay to all responses
-          await addUniformDelay();
-          
-          // Apply rate limiting for setup endpoint
+          // Apply rate limiting BEFORE delay to prevent resource exhaustion
           const rateLimited = await checkPerIpRateLimit(_context, req);
           if (rateLimited) {
+            // Still add delay to rate-limited responses for timing consistency
+            await addUniformDelay();
             return Response.json(
               UNIFORM_AUTH_ERROR,
               { status: 401, headers }
             );
           }
+
+          // Add uniform delay to all non-rate-limited responses
+          await addUniformDelay();
           
           // Check if already initialized
           let initialized = false;
@@ -410,11 +452,11 @@ export async function handleOnboardingRoute(
 
           let body;
           try {
-            body = await req.json();
-          } catch (e) {
-            console.error('Failed to parse JSON in onboarding/setup:', e);
+            body = await parseJsonRequestBody(req);
+          } catch (error) {
+            console.error('Failed to parse JSON in onboarding/setup:', error);
             return Response.json(
-              { error: 'Invalid JSON request body' },
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
               { status: 400, headers }
             );
           }

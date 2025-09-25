@@ -6,6 +6,7 @@ import { Copy, Check, X, HelpCircle, ChevronDown, ChevronRight, User } from "luc
 import { EventLog, type LogEntryData } from "./EventLog"
 import { Input } from "./ui/input"
 import PeerList from "./ui/peer-list"
+import Spinner from "./ui/spinner"
 // Import real igloo-core functions
 import { 
   validateShare, 
@@ -43,6 +44,113 @@ const pulseStyle = `
 `;
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
+const LOG_STORAGE_KEY = "igloo:event-log";
+const MAX_LOG_ENTRIES = 500;
+const AUTO_EXPAND_EVENT_TYPES: string[] = ['sign'];
+
+const canUseSessionStorage = () => typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
+
+const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
+  if (!entry || typeof entry !== "object") return null;
+  const log = entry as Partial<LogEntryData>;
+
+  if (typeof log.id !== "string" || typeof log.timestamp !== "string" || typeof log.type !== "string" || typeof log.message !== "string") {
+    return null;
+  }
+
+  let timestamp = log.timestamp;
+  if (typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(timestamp)) {
+    try {
+      const parsed = new Date(timestamp);
+      if (!Number.isNaN(parsed.getTime())) {
+        timestamp = parsed.toLocaleTimeString();
+      }
+    } catch {}
+  }
+
+  return {
+    id: log.id,
+    timestamp,
+    type: log.type,
+    message: log.message,
+    data: log.data
+  };
+};
+
+const readStoredLogs = (): LogEntryData[] => {
+  if (!canUseSessionStorage()) return [];
+
+  try {
+    const raw = window.sessionStorage.getItem(LOG_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed
+      .map(sanitizeLogEntry)
+      .filter((entry): entry is LogEntryData => entry !== null)
+      .slice(-MAX_LOG_ENTRIES);
+  } catch (error) {
+    console.warn("Failed to parse stored event logs:", error);
+    return [];
+  }
+};
+
+const writeStoredLogs = (entries: LogEntryData[]) => {
+  if (!canUseSessionStorage()) return;
+
+  if (entries.length === 0) {
+    window.sessionStorage.removeItem(LOG_STORAGE_KEY);
+    return;
+  }
+
+  try {
+    window.sessionStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries));
+  } catch (error) {
+    console.warn("Failed to persist event logs:", error);
+  }
+};
+
+const clearStoredLogs = () => {
+  if (!canUseSessionStorage()) return;
+  window.sessionStorage.removeItem(LOG_STORAGE_KEY);
+};
+
+// Reusable deep validation helpers to avoid duplication
+function performDeepShareValidation(shareCredential: string): boolean {
+  const validation = validateShare(shareCredential)
+  if (!validation.isValid || !shareCredential.trim()) return false
+  try {
+    const decodedShare = decodeShare(shareCredential)
+    return !!(
+      typeof (decodedShare as any).idx === 'number' &&
+      typeof (decodedShare as any).seckey === 'string' &&
+      typeof (decodedShare as any).binder_sn === 'string' &&
+      typeof (decodedShare as any).hidden_sn === 'string'
+    )
+  } catch {
+    return false
+  }
+}
+
+function performDeepGroupValidation(groupCredential: string): boolean {
+  const validation = validateGroup(groupCredential)
+  if (!validation.isValid || !groupCredential.trim()) return false
+  try {
+    const decodedGroup = decodeGroup(groupCredential) as any
+    // group_pk can be hex string or Uint8Array depending on upstream; accept either
+    const groupPkOk = typeof decodedGroup.group_pk === 'string' || (decodedGroup.group_pk && typeof decodedGroup.group_pk.length === 'number')
+    return !!(
+      typeof decodedGroup.threshold === 'number' &&
+      groupPkOk &&
+      Array.isArray(decodedGroup.commits) &&
+      decodedGroup.commits.length > 0
+    )
+  } catch {
+    return false
+  }
+}
 
 // Helper function to extract share information using real igloo-core functions
 const getShareInfo = (groupCredential: string, shareCredential: string, shareName?: string, realPubkey?: string) => {
@@ -101,7 +209,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     group: false,
     share: false
   });
-  const [logs, setLogs] = useState<LogEntryData[]>([]);
+  const [credentialSaveError, setCredentialSaveError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<LogEntryData[]>(() => readStoredLogs());
   const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
 
   // Reference for compatibility with parent component
@@ -255,6 +364,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         if (response.ok) {
           const data = await response.json();
           setRealSelfPubkey(data.pubkey);
+        } else if (response.status === 401) {
+          // Notify app to re-auth; keep UI stable.
+          try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
         }
       } catch (error) {
         // Silently ignore errors fetching self pubkey
@@ -343,9 +455,34 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               }));
               return; // Don't add to event log
             }
+
+            if (typeof logEntry.type === 'string' && logEntry.type.startsWith('nip46:')) {
+              try {
+                window.dispatchEvent(new CustomEvent('nip46Event', { detail: logEntry }));
+              } catch (dispatchError) {
+                console.warn('Failed to dispatch nip46 event', dispatchError);
+              }
+            }
             
             // Add all other server log entries to our local logs (original Igloo Desktop events)
-            setLogs(prev => [...prev, logEntry]);
+            setLogs(prev => {
+              const nextLog = sanitizeLogEntry(logEntry);
+              if (!nextLog) {
+                return prev;
+              }
+
+              // Skip duplicates by ID or matching payloads in recent history
+              const isDuplicateId = prev.some(existing => existing.id === nextLog.id);
+              if (isDuplicateId || isDuplicateLog(nextLog.data, prev.slice(-25))) {
+                return prev;
+              }
+
+              const updated = [...prev, nextLog];
+              if (updated.length > MAX_LOG_ENTRIES) {
+                return updated.slice(updated.length - MAX_LOG_ENTRIES);
+              }
+              return updated;
+            });
           } catch (error) {
             console.error('Error parsing WebSocket event:', error);
           }
@@ -504,55 +641,13 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   // Validate initial data (when props are provided in database mode)
   useEffect(() => {
     if (initialData?.share) {
-      setSignerSecret(initialData.share);
-      const validation = validateShare(initialData.share);
-      
-      // Perform deep validation with actual decoding (same as handleShareChange)
-      if (validation.isValid && initialData.share.trim()) {
-        try {
-          const decodedShare = decodeShare(initialData.share);
-          
-          // Check decoded structure has required fields
-          if (typeof decodedShare.idx !== 'number' ||
-              typeof decodedShare.seckey !== 'string' ||
-              typeof decodedShare.binder_sn !== 'string' ||
-              typeof decodedShare.hidden_sn !== 'string') {
-            setIsShareValid(false);
-          } else {
-            setIsShareValid(true);
-          }
-        } catch (error) {
-          setIsShareValid(false);
-        }
-      } else {
-        setIsShareValid(validation.isValid);
-      }
+      setSignerSecret(initialData.share)
+      setIsShareValid(performDeepShareValidation(initialData.share))
     }
 
     if (initialData?.groupCredential) {
-      setGroupCredential(initialData.groupCredential);
-      const validation = validateGroup(initialData.groupCredential);
-      
-      // Perform deep validation with actual decoding (same as handleGroupChange)
-      if (validation.isValid && initialData.groupCredential.trim()) {
-        try {
-          const decodedGroup = decodeGroup(initialData.groupCredential);
-          
-          // Check decoded structure has required fields
-          if (typeof decodedGroup.threshold !== 'number' ||
-              typeof decodedGroup.group_pk !== 'string' ||
-              !Array.isArray(decodedGroup.commits) ||
-              decodedGroup.commits.length === 0) {
-            setIsGroupValid(false);
-          } else {
-            setIsGroupValid(true);
-          }
-        } catch (error) {
-          setIsGroupValid(false);
-        }
-      } else {
-        setIsGroupValid(validation.isValid);
-      }
+      setGroupCredential(initialData.groupCredential)
+      setIsGroupValid(performDeepGroupValidation(initialData.groupCredential))
     }
     
     if (initialData?.name) {
@@ -655,88 +750,6 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     );
   };
 
-  // Save credentials to server .env file
-  const saveCredentialsToEnv = async (share?: string, group?: string) => {
-    try {
-      const updateData: Record<string, string> = {};
-      if (share !== undefined) updateData.SHARE_CRED = share;
-      if (group !== undefined) updateData.GROUP_CRED = group;
-      
-      if (Object.keys(updateData).length > 0) {
-        await fetch('/api/env', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            ...authHeaders
-          },
-          body: JSON.stringify(updateData)
-        });
-      }
-    } catch (error) {
-      console.error('Error saving credentials to env:', error);
-    }
-  };
-
-  const handleShareChange = (value: string) => {
-    setSignerSecret(value);
-    const validation = validateShare(value);
-
-    // Try deeper validation with real decoder if basic validation passes
-    if (validation.isValid && value.trim()) {
-      try {
-        // If this doesn't throw, it's a valid share
-        const decodedShare = decodeShare(value);
-
-        // Additional structure validation - igloo-core returns proper structure
-        if (typeof decodedShare.idx !== 'number' ||
-          typeof decodedShare.seckey !== 'string' ||
-          typeof decodedShare.binder_sn !== 'string' ||
-          typeof decodedShare.hidden_sn !== 'string') {
-          setIsShareValid(false);
-          return;
-        }
-
-        setIsShareValid(true);
-        // Save valid share to env
-        saveCredentialsToEnv(value, undefined);
-      } catch {
-        setIsShareValid(false);
-      }
-    } else {
-      setIsShareValid(validation.isValid);
-    }
-  };
-
-  const handleGroupChange = (value: string) => {
-    setGroupCredential(value);
-    const validation = validateGroup(value);
-
-    // Try deeper validation with real decoder if basic validation passes
-    if (validation.isValid && value.trim()) {
-      try {
-        // If this doesn't throw, it's a valid group
-        const decodedGroup = decodeGroup(value);
-
-        // Additional structure validation - igloo-core returns proper structure
-        if (typeof decodedGroup.threshold !== 'number' ||
-          typeof decodedGroup.group_pk !== 'string' ||
-          !Array.isArray(decodedGroup.commits) ||
-          decodedGroup.commits.length === 0) {
-          setIsGroupValid(false);
-          return;
-        }
-
-        setIsGroupValid(true);
-        // Save valid group to env
-        saveCredentialsToEnv(undefined, value);
-      } catch {
-        setIsGroupValid(false);
-      }
-    } else {
-      setIsGroupValid(validation.isValid);
-    }
-  };
-
   // Helper function to determine if we're in database mode
   const isDatabaseMode = () => {
     // Use explicit flag if provided, otherwise fall back to presence of real initial data
@@ -746,7 +759,91 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     // Backward compatibility: only consider it database mode if we have actual credentials
     return !!(initialData && initialData.share && initialData.groupCredential);
   };
-  
+
+  const saveCredentialsToUser = async (updates: { share_cred?: string; group_cred?: string }) => {
+    try {
+      const response = await fetch('/api/user/credentials', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify(updates)
+      });
+      if (!response.ok) {
+        const message = await response.text().catch(() => '')
+        throw new Error(`Failed to save credentials: ${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`)
+      }
+    } catch (error) {
+      console.error('Error saving credentials for user:', error);
+      throw error;
+    }
+  };
+
+  const saveCredentialsToEnv = async (share?: string, group?: string) => {
+    if (isDatabaseMode()) {
+      const updates: { share_cred?: string; group_cred?: string } = {};
+      if (share !== undefined) updates.share_cred = share;
+      if (group !== undefined) updates.group_cred = group;
+      if (Object.keys(updates).length > 0) {
+        await saveCredentialsToUser(updates);
+      }
+      return;
+    }
+
+    try {
+      const updateData: Record<string, string> = {};
+      if (share !== undefined) updateData.SHARE_CRED = share;
+      if (group !== undefined) updateData.GROUP_CRED = group;
+
+      if (Object.keys(updateData).length > 0) {
+        const response = await fetch('/api/env', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...authHeaders
+          },
+          body: JSON.stringify(updateData)
+        });
+        if (!response.ok) {
+          const message = await response.text().catch(() => '')
+          throw new Error(`Failed to save environment credentials: ${response.status} ${response.statusText}${message ? ` - ${message}` : ''}`)
+        }
+      }
+    } catch (error) {
+      console.error('Error saving credentials to env:', error);
+      throw error;
+    }
+  };
+
+  const handleShareChange = async (value: string) => {
+    setSignerSecret(value);
+    const ok = performDeepShareValidation(value)
+    setIsShareValid(ok)
+    if (ok) {
+      try {
+        await saveCredentialsToEnv(value, undefined)
+        setCredentialSaveError(null)
+      } catch (error) {
+        setCredentialSaveError('Failed to save share credential. Please try again.')
+      }
+    }
+  };
+
+  const handleGroupChange = async (value: string) => {
+    setGroupCredential(value);
+    const ok = performDeepGroupValidation(value)
+    setIsGroupValid(ok)
+    if (ok) {
+      try {
+        await saveCredentialsToEnv(undefined, value)
+        setCredentialSaveError(null)
+      } catch (error) {
+        setCredentialSaveError('Failed to save group credential. Please try again.')
+      }
+    }
+  };
+
   // Save relay URLs to user credentials (database mode)
   const saveRelaysToUserCredentials = async (relays: string[]) => {
     try {
@@ -813,13 +910,21 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     // Signer is managed by the server - no manual stop needed
   };
 
+  // Persist logs in session storage while component stays mounted
+  useEffect(() => {
+    writeStoredLogs(logs);
+  }, [logs]);
+
+  const handleClearLogs = useCallback(() => {
+    clearStoredLogs();
+    setLogs([]);
+  }, []);
+
   // Show loading state while fetching environment variables
   if (isLoading) {
     return (
       <div className="space-y-6">
-        <div className="flex items-center justify-center py-12">
-          <div className="text-blue-300">Loading signer configuration...</div>
-        </div>
+        <Spinner label="Loading signer configuration…" size="md" />
       </div>
     );
   }
@@ -1022,6 +1127,12 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
             </div>
           )}
 
+          {credentialSaveError && (
+            <div className="text-sm text-red-400" role="alert">
+              {credentialSaveError}
+            </div>
+          )}
+
           <div className="flex items-center justify-center mt-6">
             <div className="flex items-center gap-2">
               <div className={`w-3 h-3 rounded-full ${isSignerRunning
@@ -1116,12 +1227,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           isSignerRunning={isSignerRunning}
           disabled={!isGroupValid || !isShareValid}
           authHeaders={authHeaders}
+          defaultExpanded={isDatabaseMode()}
         />
 
         <EventLog
           logs={logs}
           isSignerRunning={isSignerRunning}
-          onClearLogs={() => setLogs([])}
+          onClearLogs={handleClearLogs}
+          autoExpandTypes={AUTO_EXPAND_EVENT_TYPES}
         />
       </div>
     </div>

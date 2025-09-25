@@ -113,21 +113,31 @@ Best for:
 
 Features:
 - ✅ Direct environment variable configuration
+- ✅ Directional peer policies via `PEER_POLICIES` env var
 - ✅ No database dependencies
 - ✅ Simpler deployment model
 - ✅ Compatible with existing automation
 - ❌ Frontend/UI disabled (API-only)
 
+#### Headless Peer Policies
+Use the `PEER_POLICIES` environment variable to pre-load deviations from the default `allow`/`allow` policy when the server boots. Provide a JSON array (or single JSON object) with the peer `pubkey` and any directions you want to block (`allowSend:false` and/or `allowReceive:false`). Example:
+
+```
+PEER_POLICIES=[{"pubkey":"abcdef...","allowSend":false}]
+```
+
+Entries that keep both directions allowed are ignored—only explicit blocks are persisted. At runtime the server also mirrors database-stored policies into `data/peer-policies.json` so headless/API-auth sessions pick up overrides after restarts.
+
 ### Mode Selection Guide
 
-| Use Case | Recommended Mode | Key Benefit |
-|----------|-----------------|-------------|
-| Personal multi-device | Database | Access from anywhere with login |
-| Team collaboration | Database | Individual user accounts |
-| Automated signing node | Headless | Simple env-based config |
-| Docker/Kubernetes | Headless | Container-friendly |
-| High-security setup | Database | Encrypted credential storage |
-| Quick testing | Headless | Minimal configuration |
+| Use Case | Recommended Mode | Why |
+|----------|-----------------|-----|
+| Personal multi-device | Database | Login-protected access with encrypted credential storage |
+| Team collaboration | Database | Per-user accounts and policy persistence |
+| Automated signing node | Headless | Minimal env-based config, API-focused |
+| Docker/Kubernetes | Headless | Container-friendly env vars |
+| High-security setup | Database | Credentials encrypted at rest; peer policies tied to accounts |
+| Quick testing | Headless | Fast bootstrap with direct env creds |
 
 To choose your mode, set the `HEADLESS` environment variable:
 ```bash
@@ -212,11 +222,23 @@ The server will be available at **http://localhost:8002**
 This mode provides user management with secure credential storage in a SQLite database.
 
 ##### Initial Setup (First Time Only)
+
+> ⚠️ **Security Note**: Never store secrets directly in files. Use environment variables or proper secret management tools.
+
 1. Set the `ADMIN_SECRET` environment variable:
    ```bash
-   echo "ADMIN_SECRET=$(openssl rand -hex 32)" >> .env
+   # Option 1: Export to current shell session (recommended for development)
+   export ADMIN_SECRET=$(openssl rand -hex 32)
+   echo "Your admin secret: $ADMIN_SECRET" # Save this securely!
+
+   # Option 2: Pass directly when starting the server
+   ADMIN_SECRET=$(openssl rand -hex 32) bun run start
+
+   # Option 3: For persistent non-production use, create .env (already gitignored)
+   # ⚠️ Only use this method if you understand the security implications
+   # echo "ADMIN_SECRET=$(openssl rand -hex 32)" >> .env
    ```
-2. Start the server: `bun run start`
+2. Start the server: `bun run start` (or with the env var as shown above)
 3. Open http://localhost:8002 in your browser
 4. Enter the admin secret when prompted
 5. Create your admin username and password
@@ -264,7 +286,7 @@ Then set a secure `ADMIN_SECRET` and start the server to run onboarding again.
 
 Note about overrides: There is currently no `--force-first-run` flag in the codebase. If you need to reinitialize without deleting the database, consider implementing a startup override (e.g., `--force-first-run` or `FORCE_FIRST_RUN=true`) that temporarily disables normal routes and only enables the onboarding endpoints until the first user is created.
 
-Database directory permissions and ownership
+### Database directory permissions and ownership
 
 Apply the principle of least privilege to the database directory and files. Recommended settings (Linux/macOS):
 
@@ -298,20 +320,34 @@ Ownership should be assigned to the user that runs the `igloo-server` process. F
 For simple deployments or automation, you can use traditional environment variable configuration:
 
 ```bash
-# Create .env file for headless mode
-cat > .env << EOF
-HEADLESS=true  # Enable headless mode
-GROUP_CRED=bfgroup1qqsqp...your-group-credential
-SHARE_CRED=bfshare1qqsqp...your-share-credential
-RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
-GROUP_NAME=my-signing-group
-EOF
+# Set configuration via environment variables (recommended)
+export HEADLESS=true
+export GROUP_CRED="bfgroup1qqsqp...your-group-credential"
+export SHARE_CRED="bfshare1qqsqp...your-share-credential"
+export RELAYS='["wss://relay.primal.net","wss://relay.damus.io"]'
+export GROUP_NAME="my-signing-group"
 
 # Start server (node will start automatically with valid credentials)
 bun run start
+
+# Optional: block directions per peer (defaults remain allow/allow unless you set explicit false)
+export PEER_POLICIES='[{"pubkey":"02abcdef...","allowSend":false}]'
+
+# Alternative: For development/testing only, you can use .env file
+# ⚠️ Remember: .env files are gitignored but still risky for secrets
+# cat > .env << EOF
+# HEADLESS=true
+# GROUP_CRED=bfgroup1qqsqp...your-group-credential
+# SHARE_CRED=bfshare1qqsqp...your-share-credential
+# RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
+# GROUP_NAME=my-signing-group
+# EOF
 ```
 
-**Note**: In headless mode, credentials are read from environment variables and the frontend is disabled. Use API endpoints only.
+**Notes for headless mode**
+- The React frontend is disabled; manage the server via API.
+- Leave `GROUP_CRED`/`SHARE_CRED` unset to configure credentials later through the API before the node starts.
+- `PEER_POLICIES` only persists entries that set `allowSend:false` or `allowReceive:false`. Saved overrides are mirrored to `data/peer-policies.json` so they survive restarts and are applied for API-key flows.
 
 ### Docker Deployment
 
@@ -507,6 +543,49 @@ ws://localhost:8002/api/events?sessionId=your-session-id
 
 💡 **Note**: Real-time events have been migrated from Server-Sent Events (SSE) to **WebSockets** for better performance and reliability. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
 
+### Crypto: Sign and Encrypt
+```bash
+# Threshold sign a Nostr event id
+POST /api/sign
+Content-Type: application/json
+{ "message": "<32-byte-hex-id>" }
+# or
+{ "event": { "pubkey": "<64-hex>", "kind": 1, "created_at": 1734300000, "content": "...", "tags": [] } }
+
+# NIP-44 encrypt/decrypt
+POST /api/nip44/encrypt  { "peer_pubkey": "<x-only or compressed>", "content": "plaintext" }
+POST /api/nip44/decrypt  { "peer_pubkey": "<x-only or compressed>", "content": "ciphertext" }
+
+# NIP-04 encrypt/decrypt (legacy; use NIP-44 when possible)
+POST /api/nip04/encrypt  { "peer_pubkey": "<x-only or compressed>", "content": "plaintext" }
+POST /api/nip04/decrypt  { "peer_pubkey": "<x-only or compressed>", "content": "ciphertext" }
+```
+Timeouts: these endpoints honor `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEOUT_MS` (default 30000ms; bounds 1000–120000ms). On timeout, HTTP 504 is returned.
+
+### NIP‑46 Sessions
+```bash
+# List sessions (optionally include history summary)
+GET /api/nip46/sessions?history=true
+
+# Create/update a session
+POST /api/nip46/sessions
+{ "pubkey": "<64-hex>", "status": "pending", "profile": {"name": "App"}, "relays": ["wss://..."], "policy": {"methods": {}, "kinds": {}} }
+
+# Update policy for a session
+PUT /api/nip46/sessions/{pubkey}/policy
+{ "methods": {"get_public_key": true}, "kinds": {"1": true} }
+
+# Update status (revoked deletes the session)
+PUT /api/nip46/sessions/{pubkey}/status
+{ "status": "revoked" }
+
+# Delete session
+DELETE /api/nip46/sessions/{pubkey}
+
+# Compact history
+GET /api/nip46/history
+```
+
 ## Deployment
 
 ### Digital Ocean Deployment
@@ -535,33 +614,32 @@ sudo chmod +x /usr/local/bin/docker-compose
 ```
 
 #### 3. Deploy with Docker Compose
+
+> 🔒 **Production Security**: Use Docker secrets or environment variables for sensitive data. Never commit credentials to version control.
+
 ```bash
 # Clone the repository
 git clone https://github.com/FROSTR-ORG/igloo-server.git
 cd igloo-server
 
-# Create production environment file
-cat > .env << EOF
-NODE_ENV=production
-HOST_NAME=0.0.0.0
-GROUP_CRED=bfgroup1qqsqp...your-group-credential
-SHARE_CRED=bfshare1qqsqp...your-share-credential
-RELAYS=["wss://relay.primal.net","wss://relay.damus.io"]
-GROUP_NAME=my-signing-group
+# Copy example configuration
+cp .env.example .env
 
-# Security settings (REQUIRED for production)
-AUTH_ENABLED=true
-API_KEY=your-secure-api-key-here
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASS=your-strong-password
-# SESSION_SECRET is auto-generated if not provided
-# SESSION_SECRET=your-custom-secret-here  # Optional override
-RATE_LIMIT_ENABLED=true
-ALLOWED_ORIGINS=https://yourdomain.com
-EOF
+# Edit .env for non-sensitive configuration
+nano .env  # Configure HOST_NAME, ALLOWED_ORIGINS, etc.
 
-# Deploy with Docker Compose
+# Set sensitive environment variables (don't store in files!)
+export GROUP_CRED="bfgroup1qqsqp...your-group-credential"
+export SHARE_CRED="bfshare1qqsqp...your-share-credential"
+export API_KEY="$(openssl rand -hex 32)"
+export BASIC_AUTH_USER="admin"
+export BASIC_AUTH_PASS="$(openssl rand -base64 32)"
+
+# Deploy with Docker Compose using environment variables
 docker-compose up -d
+
+# Alternative: Use Docker secrets (recommended for production)
+# See Docker documentation for setting up secrets management
 ```
 
 #### 4. Configure Firewall
@@ -723,6 +801,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `SHARE_CRED` | Your secret share | - | ✅ (Headless) |
 | `RELAYS` | JSON array of relay URLs | `["wss://relay.primal.net"]` | ❌ |
 | `GROUP_NAME` | Display name for signing group | - | ❌ |
+| `PEER_POLICIES` | JSON array of peer policy objects applied on startup (headless) | - | ❌ |
 | **Server Configuration** | | | |
 | `HOST_NAME` | Server bind address | `localhost` | ❌ |
 | `HOST_PORT` | Server port | `8002` | ❌ |
@@ -734,6 +813,12 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
+| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy | `false` | ❌ |
+| **Crypto Timeouts** | | | |
+| `FROSTR_SIGN_TIMEOUT` / `SIGN_TIMEOUT_MS` | Timeout (ms) for signing and ECDH crypto endpoints | `30000` | ❌ |
+| **Ephemeral Derived Keys** | | | |
+| `AUTH_DERIVED_KEY_TTL_MS` | Derived key vault TTL (ms) | `120000` | ❌ |
+| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `3` | ❌ |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_WINDOW` | Rate limit window in seconds | `900` | ❌ |
@@ -773,10 +858,15 @@ If you're currently using headless mode and want to switch to database mode for 
 
 2. **Switch to database mode**:
    ```bash
-   # Update your .env file
-   HEADLESS=false
-   ADMIN_SECRET=$(openssl rand -hex 32)
+   # Update your .env file (non-sensitive config only)
+   echo "HEADLESS=false" > .env
+
+   # Set admin secret via environment variable
+   export ADMIN_SECRET=$(openssl rand -hex 32)
+   echo "Save this admin secret securely: $ADMIN_SECRET"
+
    # Remove GROUP_CRED and SHARE_CRED from env
+   unset GROUP_CRED SHARE_CRED
    ```
 
 3. **Complete onboarding**:
@@ -859,6 +949,7 @@ Igloo Server includes comprehensive security features to protect your FROSTR cre
 - **Configurable Security**: Enable/disable authentication for development vs production
 - **Rate Limiting**: IP-based request limiting to prevent abuse
 - **Session Management**: Secure cookie-based sessions with configurable timeouts
+- **Proxy Trust**: When behind a reverse proxy (nginx, Cloudflare, etc.), set `TRUST_PROXY=true` to correctly identify client IPs for rate limiting
 
 ### 📋 **Quick Security Setup**
 
@@ -891,13 +982,40 @@ See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 
 ## Security Notes
 
+### Secret Management Best Practices
+
+**Never store secrets in files that could be committed to version control:**
+- ❌ Don't put secrets directly in `.env` files (even if gitignored)
+- ❌ Don't hardcode secrets in your code
+- ✅ Use environment variables for development
+- ✅ Use proper secret management tools for production (Docker Secrets, Kubernetes Secrets, AWS Secrets Manager, etc.)
+
+**Recommended approach for different environments:**
+
+```bash
+# Development - Use environment variables
+export ADMIN_SECRET="dev-secret-here"
+export API_KEY="dev-api-key"
+bun run start
+
+# Docker - Use secrets or env vars
+docker run -e ADMIN_SECRET="$ADMIN_SECRET" igloo-server
+
+# Production - Use secret management service
+# Example with AWS Secrets Manager
+ADMIN_SECRET=$(aws secretsmanager get-secret-value --secret-id prod/igloo/admin --query SecretString --output text)
+```
+
+### General Security Guidelines
+
 - **Share credentials are sensitive**: Store `SHARE_CRED` securely - it's part of your nsec fragments
-- **Network security**: Use WSS (secure WebSocket) relays in production  
+- **Network security**: Use WSS (secure WebSocket) relays in production
 - **Authentication required**: Configure authentication for any non-local deployment
 - **CORS security**: Set `ALLOWED_ORIGINS` to specific domains in production (avoid wildcard `*`)
 - **SESSION_SECRET auto-generated**: Automatically generates and persists a secure `SESSION_SECRET` if not provided
 - **Memory management**: The relay auto-purges events to prevent memory leaks
 - **HTTPS recommended**: Use a reverse proxy with TLS for production deployments
+- **File permissions**: Ensure proper permissions on data directory (700) and database files (600)
 
 ## License
 
