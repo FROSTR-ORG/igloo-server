@@ -53,6 +53,7 @@ export function createRequestAuth(params: {
       // Normalize to Uint8Array and defensively copy
       const normalized = new Uint8Array(input);
       if (normalized.length === 0) throw new Error('Invalid derivedKey: empty binary data');
+      if (normalized.length !== 32) throw new Error('Invalid derivedKey: expected 32-byte key');
       bytes = new Uint8Array(normalized);
     }
     secrets.derivedKey = bytes;

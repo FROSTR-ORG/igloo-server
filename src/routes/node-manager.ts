@@ -63,7 +63,14 @@ export async function createAndStartNode(
       
       if (result.node) {
         newNode = result.node;
-        context.updateNode(newNode);
+        context.updateNode(newNode, {
+          credentials: {
+            group: credentials.group_cred,
+            share: credentials.share_cred,
+            relaysEnv: relayString,
+            source: 'dynamic'
+          }
+        });
         context.addServerLog('info', 'Node connected and ready');
         
         if (result.state) {
@@ -85,7 +92,14 @@ export async function createAndStartNode(
         
         if (basicNode) {
           newNode = basicNode;
-          context.updateNode(newNode);
+          context.updateNode(newNode, {
+            credentials: {
+              group: credentials.group_cred,
+              share: credentials.share_cred,
+              relaysEnv: relayString,
+              source: 'dynamic'
+            }
+          });
           context.addServerLog('info', 'Node connected and ready (basic mode)');
         }
       } catch (basicError) {

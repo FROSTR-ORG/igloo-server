@@ -1,35 +1,36 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Backend lives in `src/` with entrypoint `server.ts`; group route handlers under `routes/`, pure helpers in `util/`, and shared classes in `class/` or `node/`.
-- React UI resides in `frontend/` (`index.tsx`, `components/`, `styles/`); compiled assets write to `static/`—do not edit generated files like `static/app.js` or `static/styles.css`.
-- API contracts sit in `docs/openapi.yaml`; regenerate bundled JSON via `bun run docs:bundle` after spec changes.
-- Deployment assets (Docker, Compose) are under `scripts/`; secrets remain outside the repo in `data/` or environment variables.
+- Backend TypeScript lives in `src/`; `src/server.ts` wires routes from `src/routes/`, shared logic in `src/class/`, and node helpers in `src/node/`.
+- Frontend React + Tailwind lives in `frontend/`; build artifacts land in `static/` and must not be edited manually.
+- Helpers without state belong in `src/util/`; persistent fixtures and captured payloads go under `data/`.
+- Place tests next to their subjects as `feature.test.ts` or `feature.spec.ts` (e.g., `src/routes/status.test.ts`).
 
 ## Build, Test, and Development Commands
-- `bun run dev` watches Tailwind and frontend bundles for live editing.
-- `bun run build` creates production JS/CSS; use `bun run build:dev` when readable assets help debugging.
-- `bun run start` launches the full stack on `http://localhost:8002`; set `HEADLESS=true` to skip UI builds for API-only runs.
-- `bun test` executes backend specs; keep runs hermetic and deterministic.
-- `bun run docs:validate` lints the OpenAPI definition before publishing artifacts.
+- `bun run dev` — concurrent watch build for backend, React, and Tailwind during local development.
+- `bun run build` — production bundles, minified JS/CSS.
+- `bun run build:dev` — readable bundles for debugging deployed issues.
+- `bun run start` / `HEADLESS=true bun run start` — launch the packaged server with or without UI assets.
+- `bun run docs:validate` — verify the OpenAPI contract before shipping API changes.
+- `bun test` — execute the Bun-powered backend suite.
 
 ## Coding Style & Naming Conventions
-- TypeScript strict mode is enabled; prefer explicit types and avoid `any`.
-- Use 2-space indentation, Unix line endings, camelCase functions, and UPPER_SNAKE_CASE constants.
-- Backend filenames use kebab-case (e.g., `auth-factory.ts`); React components use PascalCase (`Signer.tsx`).
-- Keep backend logic pure where possible; socket flows should call `socket.send({ id, result | error }, peer)` directly.
+- TypeScript is in strict mode: declare explicit types, avoid `any`, and prefer readonly props where practical.
+- Use two-space indentation, Unix newlines, camelCase variables, and UPPER_SNAKE_CASE constants.
+- Backend filenames stay kebab-case (`src/routes/nip46.ts`); React components use PascalCase.
+- Keep utility helpers pure; stateful logic belongs in services or classes for easier testing.
 
 ## Testing Guidelines
-- Place specs under `src/**/*.(test|spec).ts`, mirroring the production structure.
-- Cover `/api/sign`, `/api/nip44/*`, `/api/nip04/*`, and `/api/nip46/*` edge cases with mocked inputs—no external network calls.
-- Run `bun test` before pushing; add targeted fixtures to keep tests fast and deterministic.
+- Use Bun’s test runner with colocated specs; mock external calls to `/api/sign`, `/api/nip44/*`, `/api/nip04/*`, and `/api/nip46/*`.
+- Seed complex scenarios from `data/` fixtures instead of hitting live services.
+- Run `bun test` before every push and note material coverage impacts in PRs; add scenario-focused tests when behavior changes.
 
 ## Commit & Pull Request Guidelines
-- Follow Conventional Commits (e.g., `feat: add signer session store`); branch names like `feature/<slug>`.
-- PR descriptions should state intent, link issues, and list manual verification steps; include UI screenshots when frontend changes.
-- Ensure `bun run build`, Docker builds, and `bun run docs:validate` succeed before requesting review.
+- Follow Conventional Commits (e.g., `feat: enforce peer policy store`), and branch off `main` using `feature/<slug>`.
+- PRs should state intent, reference tickets, list manual verification (`bun run build`, `bun test`, `bun run docs:validate`), and include UI screenshots when relevant.
+- Confirm no secrets or generated assets are committed; re-run the app in headless mode when backend-only.
 
 ## Security & Configuration Tips
-- Keep secrets out of version control; reference through environment variables or `data/` mounts.
-- Production requires `AUTH_ENABLED=true` and `ADMIN_SECRET` for admin APIs; bind services to `0.0.0.0` behind TLS or a proxy.
-- Tune `FROSTR_SIGN_TIMEOUT`, `SIGN_TIMEOUT_MS`, `AUTH_DERIVED_KEY_TTL_MS`, and `AUTH_DERIVED_KEY_MAX_READS` per environment to balance latency and security.
+- Load secrets from environment files or `data/` fixtures; never commit real credentials.
+- Production deployments must set `AUTH_ENABLED=true`, a strong `ADMIN_SECRET`, and serve behind TLS on `0.0.0.0`.
+- Adjust `FROSTR_SIGN_TIMEOUT`, `SIGN_TIMEOUT_MS`, `AUTH_DERIVED_KEY_TTL_MS`, and `AUTH_DERIVED_KEY_MAX_READS` per environment to balance responsiveness and risk tolerance.

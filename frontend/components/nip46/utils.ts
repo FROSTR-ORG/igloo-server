@@ -26,11 +26,14 @@ export function isValidImageUrl(url: string | undefined | null): boolean {
 
   try {
     const parsed = new URL(url)
-    // Only allow http and https protocols for images
-    // This prevents javascript:, data:, vbscript:, file:// and other dangerous protocols
     return parsed.protocol === 'http:' || parsed.protocol === 'https:'
   } catch {
-    // Invalid URL format
     return false
   }
+}
+
+export function getFallbackAvatar(pubkey: string, size = 64): string {
+  const trimmed = (pubkey || '').trim().toLowerCase()
+  const seed = trimmed || 'nostr'
+  return `https://www.gravatar.com/avatar/${seed}?d=identicon&s=${size}`
 }

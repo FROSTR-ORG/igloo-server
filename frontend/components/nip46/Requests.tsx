@@ -1,416 +1,413 @@
-import React, { useState, useEffect } from 'react'
-import { PermissionRequest, NIP46Request } from './types'
-import { NIP46Controller } from './controller'
-import { isValidImageUrl } from './utils'
+import React, { useMemo, useState } from 'react'
+import type { Nip46RequestApi, PermissionPolicy, PolicyPatch } from './types'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
-import { Check, X, ChevronDown, ChevronUp, Clock, Shield, FileSignature, Key, Lock, Unlock } from 'lucide-react'
+import { Alert } from '../ui/alert'
+import { ChevronDown, ChevronUp, ShieldCheck, ShieldAlert, Sparkles, Ban, Layers } from 'lucide-react'
+import { getFallbackAvatar, isValidImageUrl } from './utils'
 
-interface RequestsProps { controller: NIP46Controller | null }
-
-// Type guard for sign_event content
-function isSignEventContent(content: unknown): content is { kind: number; content?: string; tags?: string[][] } {
-  return (
-    typeof content === 'object' &&
-    content !== null &&
-    !('parseError' in content) &&
-    'kind' in content &&
-    typeof (content as any).kind === 'number'
-  );
+interface RequestsProps {
+  requests: Nip46RequestApi[]
+  loading?: boolean
+  actionPending?: boolean
+  error?: string | null
+  policies: Record<string, PermissionPolicy | undefined>
+  onApprove: (request: Nip46RequestApi, options?: { policyPatch?: PolicyPatch }) => Promise<void>
+  onDeny: (request: Nip46RequestApi, options?: { policyPatch?: PolicyPatch }) => Promise<void>
+  onApproveMany: (requests: Nip46RequestApi[], options?: { policyPatch?: PolicyPatch }) => Promise<void>
+  onDenyMany: (requests: Nip46RequestApi[], options?: { policyPatch?: PolicyPatch }) => Promise<void>
 }
 
-// Type guard for sign_event content with parse error
-function isSignEventError(content: unknown): content is { raw: string; parseError: true } {
-  return (
-    typeof content === 'object' &&
-    content !== null &&
-    'parseError' in content &&
-    (content as any).parseError === true &&
-    'raw' in content
-  );
+interface ParsedRequest {
+  record: Nip46RequestApi
+  method: string
+  params: any[]
+  session: any
+  sessionName: string
+  sessionImage?: string
+  sessionUrl?: string
+  eventKind: number | null
+  eventTemplate: Record<string, any> | null
+  contentPreview: string | null
 }
 
-// Type guard for base request content
-function isBaseRequestContent(content: unknown): content is { params: string[] } {
-  return (
-    typeof content === 'object' &&
-    content !== null &&
-    'params' in content &&
-    Array.isArray((content as any).params)
-  );
+const DEFAULT_POLICY: PermissionPolicy = { methods: {}, kinds: {} }
+
+const truncate = (hex?: string | null, size = 8) => {
+  if (!hex) return ''
+  return hex.length <= size * 2 ? hex : `${hex.slice(0, size)}...${hex.slice(-size)}`
 }
 
-function transformRequest(req: PermissionRequest): NIP46Request {
-  const request_type = req.method === 'sign_event' ? 'note_signature' : 'base'
-  let content
-  if (req.params?.length) {
-    if (req.method === 'sign_event') {
-      try { 
-        content = JSON.parse(req.params[0])
+const formatTimestamp = (value: string) => {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleString()
+}
+
+const parseRequest = (record: Nip46RequestApi): ParsedRequest => {
+  let method = record.method
+  let params: any[] = []
+  let session: any = null
+
+  try {
+    const payload = JSON.parse(record.params)
+    if (payload && typeof payload === 'object') {
+      method = typeof payload.method === 'string' ? payload.method : method
+      params = Array.isArray(payload.params) ? payload.params : []
+      session = payload.session || null
+    }
+  } catch {
+    // fall back to defaults
+  }
+
+  const profile = session?.profile || {}
+  const sessionName = typeof profile?.name === 'string' ? profile.name : 'Unknown application'
+  const sessionImage = typeof profile?.image === 'string' ? profile.image : undefined
+  const sessionUrl = typeof profile?.url === 'string' ? profile.url : undefined
+
+  let eventKind: number | null = null
+  let eventTemplate: Record<string, any> | null = null
+  if (method === 'sign_event') {
+    const rawEvent = typeof params[0] === 'string' ? params[0] : null
+    if (rawEvent) {
+      try {
+        const parsed = JSON.parse(rawEvent)
+        if (parsed && typeof parsed === 'object') {
+          eventTemplate = parsed
+          const parsedKind = Number(parsed.kind)
+          eventKind = Number.isFinite(parsedKind) ? parsedKind : null
+        }
       } catch {
-        // Log parse error or handle invalid JSON case
-        console.error('Failed to parse sign_event params:', req.params[0])
-        content = { raw: req.params[0], parseError: true }
+        // ignore bad payloads
       }
-    } else { content = { params: req.params } }
+    }
   }
-  const session_origin = {
-    name: req.session.profile?.name,
-    image: req.session.profile?.image,
-    pubkey: req.session.pubkey,
-    url: req.session.profile?.url
-  }
+
+  const contentPreview = eventTemplate && typeof eventTemplate.content === 'string'
+    ? eventTemplate.content.trim().slice(0, 160)
+    : null
+
   return {
-    id: req.id,
-    method: req.method,
-    source: req.session.profile?.name || 'Unknown App',
-    content,
-    timestamp: req.stamp,
-    session_origin,
-    request_type,
-    status: 'pending',
-    deniedReason: req.deniedReason
+    record,
+    method,
+    params,
+    session,
+    sessionName,
+    sessionImage,
+    sessionUrl,
+    eventKind,
+    eventTemplate,
+    contentPreview
   }
 }
 
-export function Requests({ controller }: RequestsProps) {
-  const [pendingRequests, setPendingRequests] = useState<NIP46Request[]>([])
-  const [expandedRequests, setExpandedRequests] = useState<Set<string>>(new Set())
-  const [actionById, setActionById] = useState<Record<string, 'idle' | 'approving' | 'denying' | 'approved' | 'denied' | 'error'>>({})
-  const [flash, setFlash] = useState<{ kind: 'success' | 'error'; text: string } | null>(null)
-  type BulkState = 'idle' | 'running' | 'success' | 'error'
-  const [bulkAll, setBulkAll] = useState<{ approve: BulkState; deny: BulkState }>({ approve: 'idle', deny: 'idle' })
-  const [bulkByKind, setBulkByKind] = useState<Record<number, { approve: BulkState; deny: BulkState }>>({})
+const allowKindPatch = (kind: number): PolicyPatch => ({
+  methods: { sign_event: true },
+  kinds: { [String(kind)]: true }
+})
 
-  useEffect(() => {
-    if (!controller) return
-    const update = () => setPendingRequests(controller.getPendingRequests().map(transformRequest))
-    update()
-    controller.on('request:new', update)
-    controller.on('request:approved', update)
-    controller.on('request:denied', update)
-    return () => {
-      controller.off('request:new', update)
-      controller.off('request:approved', update)
-      controller.off('request:denied', update)
-    }
-  }, [controller])
+const denyKindPatch = (kind: number): PolicyPatch => ({
+  kinds: { [String(kind)]: false }
+})
 
-  const handleApprove = async (id: string, options?: { autoGrant?: boolean }) => {
-    setActionById(s => ({ ...s, [id]: 'approving' }))
-    try {
-      await controller?.approveRequest(id, options)
-      setActionById(s => ({ ...s, [id]: 'approved' }))
-      setFlash({ kind: 'success', text: 'Request approved' })
-      setTimeout(() => setFlash(null), 1500)
-    } catch (e: any) {
-      console.error('Approve failed:', e)
-      setActionById(s => ({ ...s, [id]: 'error' }))
-      setFlash({ kind: 'error', text: `Approve failed: ${e?.message || 'Unknown error'}` })
-      setTimeout(() => setFlash(null), 2500)
-    }
-  }
+const allowMethodPatch = (method: string): PolicyPatch => ({
+  methods: { [method]: true }
+})
 
-  const handleDeny = async (id: string) => {
-    setActionById(s => ({ ...s, [id]: 'denying' }))
-    try {
-      await controller?.denyRequest(id, 'Denied by user')
-      setActionById(s => ({ ...s, [id]: 'denied' }))
-      setFlash({ kind: 'success', text: 'Request denied' })
-      setTimeout(() => setFlash(null), 1500)
-    } catch (e: any) {
-      console.error('Deny failed:', e)
-      setActionById(s => ({ ...s, [id]: 'error' }))
-      setFlash({ kind: 'error', text: `Deny failed: ${e?.message || 'Unknown error'}` })
-      setTimeout(() => setFlash(null), 2500)
-    }
-  }
+const denyMethodPatch = (method: string): PolicyPatch => ({
+  methods: { [method]: false }
+})
 
-  const handleApproveAll = async () => {
-    setBulkAll(s => ({ ...s, approve: 'running' }))
-    try {
-      for (const r of pendingRequests) { await handleApprove(r.id) }
-      setBulkAll(s => ({ ...s, approve: 'success' }))
-      setTimeout(() => setBulkAll(s => ({ ...s, approve: 'idle' })), 1500)
-    } catch {
-      setBulkAll(s => ({ ...s, approve: 'error' }))
-      setTimeout(() => setBulkAll(s => ({ ...s, approve: 'idle' })), 2000)
-    }
-  }
-  const handleDenyAll = async () => {
-    setBulkAll(s => ({ ...s, deny: 'running' }))
-    try {
-      for (const r of pendingRequests) { await handleDeny(r.id) }
-      setBulkAll(s => ({ ...s, deny: 'success' }))
-      setTimeout(() => setBulkAll(s => ({ ...s, deny: 'idle' })), 1500)
-    } catch {
-      setBulkAll(s => ({ ...s, deny: 'error' }))
-      setTimeout(() => setBulkAll(s => ({ ...s, deny: 'idle' })), 2000)
-    }
-  }
+export function Requests({
+  requests,
+  loading = false,
+  actionPending = false,
+  error,
+  policies,
+  onApprove,
+  onDeny,
+  onApproveMany,
+  onDenyMany
+}: RequestsProps) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
 
-  const handleApproveAllKind = async (kind: number) => {
-    setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'running' } }))
-    try {
-      for (const r of pendingRequests) {
-        if (r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind) {
-          await handleApprove(r.id, { autoGrant: true })
-        }
+  const { pendingRequests, parsedRequests, kindMap } = useMemo(() => {
+    const pending = requests.filter(req => req.status === 'pending')
+    const map = new Map<number, Nip46RequestApi[]>()
+    const parsed = pending.map(record => {
+      const parsedRecord = parseRequest(record)
+      if (parsedRecord.method === 'sign_event' && parsedRecord.eventKind != null) {
+        const list = map.get(parsedRecord.eventKind) ?? []
+        list.push(record)
+        map.set(parsedRecord.eventKind, list)
       }
-      setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'success' } }))
-      setTimeout(() => setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'idle' } })), 1500)
-    } catch {
-      setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'error' } }))
-      setTimeout(() => setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), approve: 'idle' } })), 2000)
-    }
-  }
-  const handleDenyAllKind = async (kind: number) => {
-    setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), deny: 'running' } }))
-    try {
-      for (const r of pendingRequests) {
-        if (r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind) {
-          await handleDeny(r.id)
-        }
-      }
-      setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), deny: 'success' } }))
-      setTimeout(() => setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), deny: 'idle' } })), 1500)
-    } catch {
-      setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), deny: 'error' } }))
-      setTimeout(() => setBulkByKind(s => ({ ...s, [kind]: { ...(s[kind] || { approve: 'idle', deny: 'idle' }), deny: 'idle' } })), 2000)
-    }
-  }
-
-  const getUniqueEventKinds = (): number[] => {
-    const kinds = new Set<number>()
-    pendingRequests.forEach(req => {
-      if (req.method === 'sign_event' && isSignEventContent(req.content)) {
-        kinds.add(req.content.kind)
-      }
+      return parsedRecord
     })
-    return Array.from(kinds).sort((a, b) => a - b)
-  }
+    return { pendingRequests: pending, parsedRequests: parsed, kindMap: map }
+  }, [requests])
 
   const toggleExpanded = (id: string) => {
-    const s = new Set(expandedRequests)
-    s.has(id) ? s.delete(id) : s.add(id)
-    setExpandedRequests(s)
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
   }
 
-  const getMethodIcon = (method: string) => {
-    switch (method) {
-      case 'sign_event': return <FileSignature className="h-4 w-4" />
-      case 'get_public_key': return <Key className="h-4 w-4" />
-      case 'nip04_encrypt':
-      case 'nip44_encrypt': return <Lock className="h-4 w-4" />
-      case 'nip04_decrypt':
-      case 'nip44_decrypt': return <Unlock className="h-4 w-4" />
-      default: return <Shield className="h-4 w-4" />
-    }
+  if (loading) {
+    return <div className="text-sm text-gray-400">Loading requests...</div>
   }
 
-  const getMethodDescription = (method: string): string => {
-    switch (method) {
-      case 'sign_event': return 'Sign a Nostr event'
-      case 'get_public_key': return 'Access your public key'
-      case 'nip04_encrypt': return 'Encrypt a message (NIP-04)'
-      case 'nip44_encrypt': return 'Encrypt a message (NIP-44)'
-      case 'nip04_decrypt': return 'Decrypt a message (NIP-04)'
-      case 'nip44_decrypt': return 'Decrypt a message (NIP-44)'
-      case 'ping': return 'Test connection'
-      default: return `Execute ${method}`
-    }
+  if (!pendingRequests.length) {
+    return <div className="text-sm text-gray-500 italic">No pending requests.</div>
   }
 
-  const uniqueKinds = getUniqueEventKinds()
+  const allTargets = parsedRequests.map(entry => entry.record)
 
   return (
-    <div className="space-y-6">
-      {flash && (
-        <div role="status" aria-live="polite" className={`${flash.kind === 'success' ? 'bg-green-900/30 text-green-200 border-green-700/30' : 'bg-red-900/30 text-red-200 border-red-700/30'} rounded-md px-3 py-2 text-sm border`}>
-          {flash.text}
-        </div>
-      )}
-      {pendingRequests.length > 0 && (
-        <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4 space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Clock className="h-4 w-4 text-blue-400" />
-                <span className="text-sm text-blue-300">{pendingRequests.length} pending {pendingRequests.length === 1 ? 'request' : 'requests'}</span>
-              </div>
-              <div className="flex gap-2">
-              <Button onClick={handleApproveAll} size="sm" disabled={bulkAll.approve === 'running'} className={`${bulkAll.approve === 'success' ? 'bg-green-700' : 'bg-green-600'} hover:bg-green-700 text-green-100`}>
-                {bulkAll.approve === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
-                {bulkAll.approve === 'success' ? 'Approved' : bulkAll.approve === 'running' ? 'Approving…' : 'Approve All'}
-              </Button>
-              <Button onClick={handleDenyAll} size="sm" disabled={bulkAll.deny === 'running'} variant="destructive">
-                {bulkAll.deny === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <X className="h-4 w-4 mr-1" />}
-                {bulkAll.deny === 'running' ? 'Denying…' : bulkAll.deny === 'success' ? 'Denied' : 'Deny All'}
-              </Button>
-              </div>
-            </div>
+    <div className="space-y-4">
+      {error ? (
+        <Alert variant="error" dismissAfterMs={7000}>
+          {error}
+        </Alert>
+      ) : null}
 
-          {uniqueKinds.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-2 border-t border-blue-900/20">
-              {uniqueKinds.map(kind => {
-                const kindCount = pendingRequests.filter(r => r.method === 'sign_event' && isSignEventContent(r.content) && r.content.kind === kind).length
-                const state = bulkByKind[kind] || { approve: 'idle', deny: 'idle' }
-                return (
-                  <div key={kind} className="flex gap-1">
-                    <Button onClick={() => handleApproveAllKind(kind)} size="sm" disabled={state.approve === 'running'} className={`${state.approve === 'success' ? 'bg-blue-700' : 'bg-blue-600'} hover:bg-blue-700 text-blue-100 text-xs`}>
-                      {state.approve === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
-                      {state.approve === 'success' ? 'Approved' : state.approve === 'running' ? `Approving Kind ${kind}…` : `Approve All Kind ${kind} (${kindCount})`}
-                    </Button>
-                    <Button onClick={() => handleDenyAllKind(kind)} size="sm" disabled={state.deny === 'running'} className="bg-purple-600 hover:bg-purple-700 text-purple-100 text-xs">
-                      {state.deny === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <X className="h-4 w-4 mr-1" />}
-                      {state.deny === 'running' ? `Denying Kind ${kind}…` : `Deny All Kind ${kind}`}
-                    </Button>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          disabled={actionPending}
+          onClick={() => void onApproveMany(allTargets)}
+          className="gap-1 bg-blue-600 text-blue-100 hover:bg-blue-500 border border-blue-500/60"
+        >
+          <Sparkles className="h-4 w-4" />
+          Approve All
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={actionPending}
+          onClick={() => void onDenyMany(allTargets)}
+          className="gap-1 bg-red-600 text-red-100 hover:bg-red-500 border border-red-500/60"
+        >
+          <Ban className="h-4 w-4" />
+          Deny All
+        </Button>
+      </div>
+
+      {parsedRequests.map(entry => {
+        const { record, method, sessionName, sessionImage, sessionUrl, eventKind, eventTemplate, params, contentPreview } = entry
+        const policy = policies[record.session_pubkey] ?? DEFAULT_POLICY
+        const methodAllowed = policy.methods?.[method] === true
+        const wildcardKind = policy.kinds?.['*'] === true
+        const kindAllowed = method === 'sign_event' && eventKind != null
+          ? methodAllowed && (wildcardKind || policy.kinds?.[String(eventKind)] === true)
+          : false
+        const allowedByPolicy = method === 'sign_event' ? kindAllowed : methodAllowed
+        const isExpanded = expanded.has(record.id)
+        const sameKindTargets = eventKind != null ? (kindMap.get(eventKind) ?? []) : []
+        const avatarUrl = sessionImage && isValidImageUrl(sessionImage) ? sessionImage : getFallbackAvatar(record.session_pubkey)
+
+        return (
+          <div key={record.id} className="rounded-md border border-blue-900/30 bg-gray-900/35 p-4 space-y-3 shadow-lg">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2">
+                  <img
+                    src={avatarUrl}
+                    alt={`${sessionName} icon`}
+                    className="h-8 w-8 rounded"
+                    onError={event => {
+                      const fallback = getFallbackAvatar(record.session_pubkey)
+                      if (event.currentTarget.src !== fallback) {
+                        event.currentTarget.src = fallback
+                      }
+                    }}
+                  />
+                  <div>
+                    <div className="text-sm font-semibold text-blue-100">{sessionName}</div>
+                    <div className="text-xs text-gray-400 font-mono">{truncate(record.session_pubkey)}</div>
+                    {(() => {
+                      if (!sessionUrl) return null;
+                      try {
+                        const parsed = new URL(sessionUrl);
+                        const allowed = parsed.protocol === 'http:' || parsed.protocol === 'https:';
+                        if (allowed) {
+                          return (
+                            <a
+                              href={sessionUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[11px] text-blue-400 transition hover:text-blue-300"
+                            >
+                              {sessionUrl}
+                            </a>
+                          );
+                        }
+                      } catch {
+                        // Ignore parsing errors and fall through to render plain text
+                      }
+                      return (
+                        <span className="text-[11px] text-gray-400">{sessionUrl}</span>
+                      );
+                    })()}
                   </div>
-                )
-              })}
-            </div>
-          )}
-        </div>
-      )}
+                </div>
 
-      {pendingRequests.length === 0 ? (
-        <div className="bg-gray-800/30 border border-blue-900/20 rounded-lg p-8 text-center">
-          <Shield className="h-12 w-12 text-gray-600 mx-auto mb-3" />
-          <p className="text-gray-400">No pending permission requests</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {pendingRequests.map((req) => {
-            const expanded = expandedRequests.has(req.id)
-            const isNoteSig = req.method === 'sign_event' && isSignEventContent(req.content)
-            const thisKind = isNoteSig ? (req.content as any).kind as number : undefined
-            const sameKindCount = typeof thisKind === 'number' ? pendingRequests.filter(r => r.method === 'sign_event' && isSignEventContent(r.content) && (r.content as any).kind === thisKind).length : 0
-            return (
-              <div key={req.id} className="bg-gray-800/50 border border-blue-900/30 rounded-lg overflow-hidden">
-                <div className="p-4 space-y-3">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-start gap-3">
-                      {req.session_origin.image && isValidImageUrl(req.session_origin.image) && (
-                        <img src={req.session_origin.image} alt={req.source} className="w-10 h-10 rounded-lg" />
-                      )}
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <span className="font-medium text-blue-200">{req.source}</span>
-                          <Badge variant={req.deniedReason ? 'destructive' : 'warning'}>{req.deniedReason ? 'Blocked' : 'Pending'}</Badge>
-                        </div>
-                        <div className="flex items-center gap-2 text-sm text-gray-400">
-                          {getMethodIcon(req.method)}
-                          <span>{getMethodDescription(req.method)}</span>
-                        </div>
-                        {req.deniedReason && (<div className="text-xs text-red-400 font-medium">⚠️ {req.deniedReason}</div>)}
-                        <span className="text-xs text-gray-500">{new Date(req.timestamp).toLocaleTimeString()}</span>
-                      </div>
-                    </div>
-                    <button onClick={() => toggleExpanded(req.id)} className="text-blue-400 hover:text-blue-300 p-1">{expanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button>
-                  </div>
-
-                  {expanded && req.content && (
-                    <div className="border-t border-blue-900/20 pt-3 space-y-3">
-                      {req.request_type === 'note_signature' && isSignEventContent(req.content) && (
-                        <div className="space-y-2">
-                          <span className="text-xs text-gray-400">Event Details:</span>
-                          <div className="bg-gray-900/50 rounded-lg p-3 space-y-2">
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-gray-500">Kind:</span>
-                              <Badge variant="purple">{req.content.kind}</Badge>
-                            </div>
-                            {req.content.content && (
-                              <div className="space-y-1">
-                                <span className="text-xs text-gray-500">Content:</span>
-                                <p className="text-sm text-blue-100 font-mono bg-gray-900/70 rounded p-2 break-all">{req.content.content}</p>
-                              </div>
-                            )}
-                            {req.content.tags && req.content.tags.length > 0 && (
-                              <div className="space-y-1">
-                                <span className="text-xs text-gray-500">Tags:</span>
-                                <div className="text-xs text-gray-400 font-mono">
-                                  {req.content.tags.map((tag: string[], i: number) => (<div key={i}>[{tag.join(', ')}]</div>))}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      )}
-
-                      {req.request_type === 'note_signature' && isSignEventError(req.content) && (
-                        <div className="space-y-2">
-                          <span className="text-xs text-gray-400">Event Details (JSON Parse Error):</span>
-                          <div className="bg-gray-900/50 rounded-lg p-3 space-y-2">
-                            <div className="space-y-1">
-                              <span className="text-xs text-gray-500">Raw Content:</span>
-                              <p className="text-sm text-red-400 font-mono bg-gray-900/70 rounded p-2 break-all">{req.content.raw}</p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {req.request_type === 'base' && isBaseRequestContent(req.content) && (
-                        <div className="space-y-2">
-                          <span className="text-xs text-gray-400">Parameters:</span>
-                          <div className="bg-gray-900/50 rounded-lg p-3">
-                            <pre className="text-xs text-gray-400 font-mono overflow-x-auto">{JSON.stringify(req.content.params, null, 2)}</pre>
-                          </div>
-                        </div>
-                      )}
-                    </div>
+                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                  <span className="uppercase tracking-wide text-gray-500">Method</span>
+                  <Badge variant="info" className="bg-blue-900/30">{method}</Badge>
+                  {method === 'sign_event' && eventKind != null ? (
+                    <Badge variant="purple" className="bg-purple-900/30">Kind {eventKind}</Badge>
+                  ) : null}
+                  <span className="ml-2">Created {formatTimestamp(record.created_at)}</span>
+                  {allowedByPolicy ? (
+                    <Badge variant="success" className="flex items-center gap-1 bg-green-900/30">
+                      <ShieldCheck className="h-3.5 w-3.5" />
+                      Allowed by policy
+                    </Badge>
+                  ) : (
+                    <Badge variant="warning" className="flex items-center gap-1 bg-yellow-900/30">
+                      <ShieldAlert className="h-3.5 w-3.5" />
+                      Manual approval required
+                    </Badge>
                   )}
                 </div>
 
-                <div className="bg-gray-900/30 border-t border-blue-900/20 p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2 text-xs text-gray-500">
-                    <Shield className="h-3 w-3" />
-                    <span>{req.deniedReason ? 'Blocked by policy - update permissions to allow' : 'Requires your approval'}</span>
-                  </div>
-                  <div className="flex gap-2">
-                    <Button onClick={() => handleApprove(req.id)} size="sm" disabled={actionById[req.id] === 'approving' || actionById[req.id] === 'denying'} className={`${actionById[req.id] === 'approved' ? 'bg-green-700' : 'bg-green-600'} hover:bg-green-700 text-green-100`}>
-                      {actionById[req.id] === 'approving' ? <Clock className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
-                      {actionById[req.id] === 'approved' ? 'Approved' : actionById[req.id] === 'approving' ? 'Approving...' : 'Approve'}
-                    </Button>
-                    <Button onClick={() => handleDeny(req.id)} size="sm" disabled={actionById[req.id] === 'approving' || actionById[req.id] === 'denying'} variant="destructive">
-                      {actionById[req.id] === 'denying' ? <Clock className="h-4 w-4 mr-1" /> : <X className="h-4 w-4 mr-1" />}
-                      {actionById[req.id] === 'denying' ? 'Denying...' : actionById[req.id] === 'denied' ? 'Denied' : 'Deny'}
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Per-request bulk actions */}
-                <div className="bg-gray-900/20 border-t border-blue-900/20 p-3 flex flex-wrap items-center justify-between gap-2">
-                  <div className="flex gap-2">
-                    <Button onClick={handleApproveAll} size="sm" disabled={bulkAll.approve === 'running'} className={`${bulkAll.approve === 'success' ? 'bg-green-700' : 'bg-green-600'} hover:bg-green-700 text-green-100`}>
-                      {bulkAll.approve === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
-                      {bulkAll.approve === 'success' ? 'Approved' : bulkAll.approve === 'running' ? 'Approving…' : 'Approve All'}
-                    </Button>
-                    <Button onClick={handleDenyAll} size="sm" disabled={bulkAll.deny === 'running'} variant="destructive">
-                      {bulkAll.deny === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <X className="h-4 w-4 mr-1" />}
-                      {bulkAll.deny === 'running' ? 'Denying…' : bulkAll.deny === 'success' ? 'Denied' : 'Deny All'}
-                    </Button>
-                  </div>
-                  {isNoteSig && sameKindCount > 1 && (
-                    <div className="flex gap-2">
-                      {(() => { const state = bulkByKind[thisKind!] || { approve: 'idle', deny: 'idle' }; return (
-                        <>
-                          <Button onClick={() => handleApproveAllKind(thisKind!)} size="sm" disabled={state.approve === 'running'} className={`${state.approve === 'success' ? 'bg-blue-700' : 'bg-blue-600'} hover:bg-blue-700 text-blue-100 text-xs`}>
-                            {state.approve === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <Check className="h-4 w-4 mr-1" />}
-                            {state.approve === 'success' ? 'Approved' : state.approve === 'running' ? `Approving Kind ${thisKind}…` : `Approve All Kind ${thisKind}`}
-                          </Button>
-                          <Button onClick={() => handleDenyAllKind(thisKind!)} size="sm" disabled={state.deny === 'running'} className="bg-purple-600 hover:bg-purple-700 text-purple-100 text-xs">
-                            {state.deny === 'running' ? <Clock className="h-4 w-4 mr-1" /> : <X className="h-4 w-4 mr-1" />}
-                            {state.deny === 'running' ? `Denying Kind ${thisKind}…` : `Deny All Kind ${thisKind}`}
-                          </Button>
-                        </>
-                      )})()}
-                    </div>
-                  )}
-                </div>
+                {contentPreview ? (
+                  <div className="text-xs italic text-gray-300">{contentPreview}{eventTemplate?.content && eventTemplate.content.length > 160 ? '…' : ''}</div>
+                ) : null}
               </div>
-            )
-          })}
-        </div>
-      )}
+
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => toggleExpanded(record.id)}
+                className="shrink-0"
+              >
+                {isExpanded ? <><ChevronUp className="h-4 w-4" /><span className="sr-only">Collapse</span></> : <><ChevronDown className="h-4 w-4" /><span className="sr-only">Expand</span></>}
+              </Button>
+            </div>
+
+            {isExpanded ? (
+              <div className="space-y-3 text-xs text-gray-300">
+                <div>
+                  <div className="mb-1 text-[11px] uppercase tracking-wide text-gray-500">Params</div>
+                  <pre className="overflow-auto rounded border border-blue-900/30 bg-gray-950/50 p-2 text-[11px]">{JSON.stringify(params, null, 2)}</pre>
+                </div>
+                {eventTemplate ? (
+                  <div>
+                    <div className="mb-1 text-[11px] uppercase tracking-wide text-gray-500">Event Template</div>
+                    <pre className="overflow-auto rounded border border-blue-900/30 bg-gray-950/50 p-2 text-[11px]">{JSON.stringify(eventTemplate, null, 2)}</pre>
+                  </div>
+                ) : null}
+                {entry.session ? (
+                  <div>
+                    <div className="mb-1 text-[11px] uppercase tracking-wide text-gray-500">Session Payload</div>
+                    <pre className="overflow-auto rounded border border-blue-900/30 bg-gray-950/50 p-2 text-[11px]">{JSON.stringify(entry.session, null, 2)}</pre>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                disabled={actionPending}
+                onClick={() => void onApprove(record)}
+                className="bg-blue-600 text-blue-100 hover:bg-blue-500 border border-blue-500/60"
+              >
+                Approve
+              </Button>
+              {method === 'sign_event' && eventKind != null ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={actionPending || kindAllowed}
+                  onClick={() => void onApprove(record, { policyPatch: allowKindPatch(eventKind) })}
+                  className="bg-gray-800/80 text-blue-100 hover:bg-blue-900/40 border border-blue-900/40"
+                >
+                  Remember kind {eventKind}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  disabled={actionPending || methodAllowed}
+                  onClick={() => void onApprove(record, { policyPatch: allowMethodPatch(method) })}
+                  className="bg-gray-800/80 text-blue-100 hover:bg-blue-900/40 border border-blue-900/40"
+                >
+                  Remember method
+                </Button>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                variant="destructive"
+                disabled={actionPending}
+                onClick={() => void onDeny(record)}
+                className="bg-red-600 text-red-100 hover:bg-red-500 border border-red-500/60"
+              >
+                Deny
+              </Button>
+              {method === 'sign_event' && eventKind != null ? (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={actionPending || !kindAllowed}
+                  onClick={() => void onDeny(record, { policyPatch: denyKindPatch(eventKind) })}
+                  className="border border-blue-900/40 text-blue-200 hover:bg-blue-900/20"
+                >
+                  Block kind {eventKind}
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={actionPending || !methodAllowed}
+                  onClick={() => void onDeny(record, { policyPatch: denyMethodPatch(method) })}
+                  className="border border-blue-900/40 text-blue-200 hover:bg-blue-900/20"
+                >
+                  Block method
+                </Button>
+              )}
+              {method === 'sign_event' && eventKind != null ? (
+                <>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={actionPending || sameKindTargets.length === 0}
+                    onClick={() => void onApproveMany(sameKindTargets, { policyPatch: allowKindPatch(eventKind) })}
+                    className="gap-1 text-blue-200 hover:text-blue-100 hover:bg-blue-900/20"
+                  >
+                    <Layers className="h-4 w-4" />
+                    Approve all kind {eventKind}
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    disabled={actionPending || sameKindTargets.length === 0}
+                    onClick={() => void onDenyMany(sameKindTargets, { policyPatch: denyKindPatch(eventKind) })}
+                    className="gap-1 text-blue-200 hover:text-blue-100 hover:bg-blue-900/20"
+                  >
+                    <Layers className="h-4 w-4" />
+                    Deny all kind {eventKind}
+                  </Button>
+                </>
+              ) : null}
+            </div>
+          </div>
+        )
+      })}
     </div>
   )
 }

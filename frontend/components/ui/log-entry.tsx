@@ -29,6 +29,11 @@ const getLogVariant = (type: string) => {
   }
 };
 
+const truncateMiddle = (value: string, lead = 8, tail = 6) => {
+  if (value.length <= lead + tail + 1) return value;
+  return `${value.slice(0, lead)}…${value.slice(-tail)}`;
+};
+
 // Utility function to format log data with proper error handling
 function formatLogData(data: any): string {
   try {
@@ -74,6 +79,18 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
     }
   }, [hasData]);
 
+  const signatureSummary = React.useMemo(() => {
+    if (log.type !== 'sign' || !log.data) return null;
+    const session = typeof log.data.session === 'string' ? log.data.session : null;
+    const eventId = typeof log.data.eventId === 'string' ? log.data.eventId : null;
+    const kind = typeof log.data.kind === 'number' ? log.data.kind : null;
+    const parts: string[] = [];
+    if (session) parts.push(`session ${truncateMiddle(session)}`);
+    if (kind != null) parts.push(`kind ${kind}`);
+    if (eventId) parts.push(`event ${truncateMiddle(eventId)}`);
+    return parts.length ? parts.join(' · ') : null;
+  }, [log]);
+
   const formattedData = React.useMemo(() => {
     if (!hasData) return null;
     return formatLogData(log.data);
@@ -117,6 +134,11 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
         </Badge>
         <span className="text-gray-300">{log.message}</span>
       </div>
+      {signatureSummary && (
+        <div className="mt-1 pl-6 text-[11px] text-gray-500 font-mono">
+          {signatureSummary}
+        </div>
+      )}
       {hasData && (
         <div className={cn(
           "transition-all duration-200 ease-in-out overflow-hidden",

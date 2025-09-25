@@ -603,7 +603,7 @@ export async function withTimeout<T>(
   ms: number,
   label = 'OP_TIMEOUT'
 ): Promise<T> {
-  let timer: NodeJS.Timeout | undefined;
+  let timer: ReturnType<typeof setTimeout> | undefined;
 
   try {
     const result = await Promise.race<T>([

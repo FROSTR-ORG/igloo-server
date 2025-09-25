@@ -84,6 +84,9 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
         relayCount: currentRelays.length,
         relays: currentRelays,
         timestamp: new Date().toISOString(),
+        restartInfo: {
+          blockedByCredentials: context.restartState?.blockedByCredentials ?? false
+        },
         health: {
           isConnected: nodeHealth.isConnected,
           lastActivity: nodeHealth.lastActivity ? nodeHealth.lastActivity.toISOString() : null,

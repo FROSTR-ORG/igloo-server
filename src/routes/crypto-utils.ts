@@ -48,7 +48,7 @@ export async function deriveSharedSecret(
     throw new Error('Invalid timeout: expected positive integer milliseconds');
   }
 
-  const result: any = await withTimeout(node.req.ecdh(peerXOnly), timeoutMs, 'ECDH_TIMEOUT');
+  const result: any = await withTimeout(node.req.ecdh(normalizedPeer), timeoutMs, 'ECDH_TIMEOUT');
   if (!result || result.ok !== true) {
     throw new Error(result?.error || 'ecdh failed');
   }

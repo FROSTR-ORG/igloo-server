@@ -17,6 +17,7 @@ Igloo Server supports two operation modes with different security models:
 - **Direct credential storage** in environment
 - **Traditional deployment** for backward compatibility
 - **No database required**
+- **Peer policies**: only explicit blocks are honored via `PEER_POLICIES` or `data/peer-policies.json`
 
 ### Security Comparison Table
 
@@ -603,3 +604,7 @@ for i in {1..10}; do curl http://localhost:8002/api/status; done
 - [ ] Test CORS headers are appropriate
 
 **Remember**: Security is a process, not a destination. Regularly review and update your security configuration. 
+4. **Directional Peer Policies** (optional):
+   - Defaults allow both inbound and outbound traffic.
+   - To deny a direction, supply `allowSend:false` and/or `allowReceive:false` in `PEER_POLICIES`.
+   - The server mirrors saved overrides into `data/peer-policies.json` so they persist between restarts.

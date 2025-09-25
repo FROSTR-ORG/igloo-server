@@ -504,12 +504,8 @@ const App: React.FC = () => {
               />
             </TabsContent>
 
-            <TabsContent value="nip46" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
-              <NIP46 
-                groupCred={signerData?.groupCredential}
-                shareCred={signerData?.share}
-                authHeaders={memoizedAuthHeaders}
-              />
+            <TabsContent value="nip46" forceMount className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
+              <NIP46 authHeaders={memoizedAuthHeaders} />
             </TabsContent>
             
             <TabsContent value="recover" className="border border-purple-900/30 rounded-lg p-2 sm:p-4">

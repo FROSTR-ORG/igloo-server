@@ -111,6 +111,18 @@ import type { ServerWebSocket } from 'bun';
 type EventStreamData = { isEventStream: true };
 
 // Base context for all routes - without updateNode function
+export interface NodeCredentialSnapshot {
+  group: string;
+  share: string;
+  relaysEnv?: string;
+  peerPoliciesRaw?: string;
+  source?: 'env' | 'dynamic';
+}
+
+export interface UpdateNodeOptions {
+  credentials?: NodeCredentialSnapshot | null;
+}
+
 export interface RouteContext {
   node: ServerBifrostNode | null;
   peerStatuses: Map<string, PeerStatus>;
@@ -120,13 +132,16 @@ export interface RouteContext {
   auth?: AuthContext;
   requestId?: string;
   clientIp?: string;
+  restartState?: {
+    blockedByCredentials: boolean;
+  };
 }
 
 // Privileged context for trusted/authenticated routes that need node management
 export interface PrivilegedRouteContext extends RouteContext {
   // Synchronously updates the node reference and performs cleanup
   // Note: This is NOT async - it returns void, not Promise<void>
-  updateNode: (newNode: ServerBifrostNode | null) => void;
+  updateNode: (newNode: ServerBifrostNode | null, options?: UpdateNodeOptions) => void;
 }
 
 export interface ApiResponse {

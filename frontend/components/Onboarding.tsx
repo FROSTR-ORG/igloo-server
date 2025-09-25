@@ -33,6 +33,20 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   // - At least one uppercase letter, one lowercase letter, one digit, and one special character
   const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
 
+  const parseRetryAfter = (retryAfterHeader: string | null): number | null => {
+    if (!retryAfterHeader) return null;
+    const trimmed = retryAfterHeader.trim();
+    if (/^\d+$/.test(trimmed)) {
+      return Number(trimmed);
+    }
+    const timestamp = new Date(trimmed).getTime();
+    if (!Number.isNaN(timestamp)) {
+      const deltaMs = timestamp - Date.now();
+      return deltaMs > 0 ? Math.ceil(deltaMs / 1000) : 0;
+    }
+    return null;
+  };
+
   useEffect(() => {
     checkStatus();
     
@@ -92,8 +106,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
       // Handle rate limiting first
       if (response.status === 429) {
-        const retryAfter = response.headers.get('Retry-After');
-        throw new Error(`Rate limit exceeded. Please try again${retryAfter ? ` in ${retryAfter} seconds` : ' later'}.`);
+        const retryAfter = parseRetryAfter(response.headers.get('Retry-After'));
+        throw new Error(`Rate limit exceeded. Please try again${retryAfter != null ? ` in ${retryAfter} seconds` : ' later'}.`);
       }
 
       // Handle 204 No Content as success
@@ -183,16 +197,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
 
       // Handle rate limiting first (Retry-After can be seconds or HTTP-date)
       if (response.status === 429) {
-        const raw = response.headers.get('Retry-After');
-        let seconds: number | null = null;
-        if (raw) {
-          if (/^\d+$/.test(raw)) {
-            seconds = Number(raw);
-          } else {
-            const t = new Date(raw).getTime();
-            if (!Number.isNaN(t)) seconds = Math.max(0, Math.ceil((t - Date.now()) / 1000));
-          }
-        }
+        const seconds = parseRetryAfter(response.headers.get('Retry-After'));
         throw new Error(seconds != null ? `Rate limited. Try again in ${seconds}s.` : 'Rate limited. Try again shortly.');
       }
 

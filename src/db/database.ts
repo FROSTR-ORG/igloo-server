@@ -3,6 +3,7 @@ import { password as BunPassword } from 'bun';
 import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
 import path from 'path';
 import { existsSync, mkdirSync, chmodSync } from 'fs';
+import { sanitizePeerPolicyEntries, type PeerPolicyRecord } from '../util/peer-policy.js';
 import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '../config/crypto.js';
 
 // Database configuration
@@ -62,6 +63,7 @@ const createUserTable = () => {
       group_cred_encrypted TEXT,
       share_cred_encrypted TEXT,
       relays TEXT,
+      peer_policies TEXT,
       group_name TEXT,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -74,6 +76,21 @@ const createUserTable = () => {
 
 // Initialize database tables
 createUserTable();
+
+// Ensure legacy databases add the peer_policies column without requiring manual migration
+const ensurePeerPoliciesColumn = () => {
+  try {
+    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    const hasColumn = columns.some(column => column.name === 'peer_policies');
+    if (!hasColumn) {
+      db.exec('ALTER TABLE users ADD COLUMN peer_policies TEXT');
+    }
+  } catch (error) {
+    console.error('[db] Failed to ensure peer_policies column exists:', error);
+  }
+};
+
+ensurePeerPoliciesColumn();
 
 // Dummy hash for timing attack mitigation (Argon2id hash of 'dummy')
 // This is used to perform a constant-time verification when user is not found
@@ -203,6 +220,7 @@ export interface User {
   group_cred_encrypted: string | null;
   share_cred_encrypted: string | null;
   relays: string | null;
+  peer_policies: string | null;
   group_name: string | null;
   created_at: string;
   updated_at: string;
@@ -214,6 +232,8 @@ export interface UserCredentials {
   relays: string[] | null;
   group_name: string | null;
 }
+
+export type StoredPeerPolicy = PeerPolicyRecord;
 
 export interface AdminUserListItem {
   id: number | bigint;
@@ -495,6 +515,56 @@ export const getUserCredentials = (
   }
 };
 
+export const getUserPeerPolicies = (userId: number | bigint): StoredPeerPolicy[] => {
+  checkShutdown();
+  try {
+    const user = getUserById(userId);
+    if (!user || !user.peer_policies) return [];
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(user.peer_policies);
+    } catch (error) {
+      console.warn('Failed to parse stored peer policies JSON:', error);
+      return [];
+    }
+
+    const entries = Array.isArray(parsed) ? parsed : [parsed];
+    return sanitizePeerPolicyEntries(entries);
+  } catch (error) {
+    console.error('Error getting user peer policies:', error);
+    return [];
+  }
+};
+
+export const updateUserPeerPolicies = (
+  userId: number | bigint,
+  policies: StoredPeerPolicy[] | null
+): boolean => {
+  checkShutdown();
+  try {
+    let serialized: string | null = null;
+    if (policies && policies.length > 0) {
+      const sanitized = sanitizePeerPolicyEntries(policies);
+      if (sanitized.length > 0) {
+        serialized = JSON.stringify(sanitized);
+      }
+    }
+
+    const stmt = db.query(`
+      UPDATE users
+      SET peer_policies = ?,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = ?
+    `);
+    stmt.run(serialized, userId);
+    return true;
+  } catch (error) {
+    console.error('Error updating user peer policies:', error);
+    return false;
+  }
+};
+
 // Check if a user has stored credentials (without needing password)
 export const userHasStoredCredentials = (userId: number | bigint): boolean => {
   checkShutdown();
@@ -535,11 +605,12 @@ export const deleteUserCredentials = (userId: number | bigint): boolean => {
       SET group_cred_encrypted = NULL,
           share_cred_encrypted = NULL,
           relays = NULL,
+          peer_policies = NULL,
           group_name = NULL,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = ?
     `);
-    
+
     stmt.run(userId);
     return true;
   } catch (error) {

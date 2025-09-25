@@ -13,20 +13,23 @@ interface EventLogProps {
   onClearLogs: () => void;
   title?: string;
   hideHeader?: boolean;
+  autoExpandTypes?: string[];
 }
 
-export const EventLog = memo(({ 
-  logs, 
-  isSignerRunning = false, 
+export const EventLog = memo(({
+  logs,
+  isSignerRunning = false,
   onClearLogs,
   title = "Event Log",
-  hideHeader = false
+  hideHeader = false,
+  autoExpandTypes = []
 }: EventLogProps) => {
   const logEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
+  const previousLogIdsRef = useRef<string[] | null>(null);
 
   // Get unique event types from logs
   const availableEventTypes = useMemo(() => {
@@ -59,6 +62,26 @@ export const EventLog = memo(({
       scrollToBottom();
     }
   }, [filteredLogs, isExpanded, scrollToBottom]);
+
+  useEffect(() => {
+    if (!autoExpandTypes.length) {
+      previousLogIdsRef.current = logs.map(log => log.id);
+      return;
+    }
+
+    if (previousLogIdsRef.current === null) {
+      previousLogIdsRef.current = logs.map(log => log.id);
+      return;
+    }
+
+    const prevIds = previousLogIdsRef.current;
+    const newEntries = logs.filter(log => !prevIds.includes(log.id));
+    previousLogIdsRef.current = logs.map(log => log.id);
+
+    if (!isExpanded && newEntries.some(log => autoExpandTypes.includes(log.type))) {
+      setIsExpanded(true);
+    }
+  }, [logs, autoExpandTypes, isExpanded]);
 
   const handleClearClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();

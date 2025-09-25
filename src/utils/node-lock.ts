@@ -1,7 +1,11 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { PrivilegedRouteContext } from '../routes/types.js';
 
 // Add a lock to prevent concurrent node updates
 let nodeUpdateLock: Promise<void> = Promise.resolve();
+
+// Track lock ownership to prevent deadlocks from re-entrant acquisition
+const nodeLockALS = new AsyncLocalStorage<boolean>();
 
 /**
  * Helper function to execute node operations under lock without poisoning the queue.
@@ -17,8 +21,14 @@ export async function executeUnderNodeLock<T>(
   operation: () => Promise<T>,
   context: PrivilegedRouteContext
 ): Promise<T> {
+  if (nodeLockALS.getStore()) {
+    const error = new Error('Re-entrant executeUnderNodeLock detected');
+    context.addServerLog('error', error.message);
+    throw error;
+  }
+
   // Create a promise for this specific operation
-  const run = nodeUpdateLock.then(operation);
+  const run = nodeUpdateLock.then(() => nodeLockALS.run(true, operation));
 
   // Update the queue to continue even if this operation fails
   // This preserves queue continuity while allowing caller to see errors

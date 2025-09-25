@@ -1,5 +1,5 @@
-import type { RouteContext, RequestAuth, ServerBifrostNode } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs } from './utils.js';
+import type { RouteContext, RequestAuth } from './types.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, withTimeout } from './utils.js';
 import { checkRateLimit } from './auth.js';
 import { getEventHash, type EventTemplate, type UnsignedEvent } from 'nostr-tools';
 
@@ -83,44 +83,6 @@ function computeEventId(body: SignRequestBody): { id: string } | { error: string
   return { error: 'Request must include `message` or `event`' };
 }
 
-function applySignRequestTimeout(
-  node: ServerBifrostNode,
-  timeoutMs: number,
-  addServerLog?: RouteContext['addServerLog']
-) {
-  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) return;
-
-  const log = typeof addServerLog === 'function' ? addServerLog : undefined;
-
-  const updateClientTimeout = (client: any) => {
-    if (!client || typeof client !== 'object') return;
-    const config = client.config ?? client._config;
-    if (!config || typeof config !== 'object') return;
-    const current = config.req_timeout;
-    if (typeof current === 'number' && current === timeoutMs) return;
-    config.req_timeout = timeoutMs;
-    if (log) {
-      try {
-        log('debug', 'Applied signing request timeout to node client', { timeoutMs });
-      } catch {}
-    }
-  };
-
-  try {
-    const client = (node as any).client ?? (node as any)._client;
-    updateClientTimeout(client);
-  } catch (error) {
-    if (log) {
-      try {
-        log('debug', 'Failed to apply signing request timeout', {
-          timeoutMs,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      } catch {}
-    }
-  }
-}
-
 function normalizeErrorReason(reason: unknown): string {
   if (typeof reason === 'string' && reason.trim().length > 0) return reason;
   if (reason && typeof reason === 'object' && 'message' in reason) {
@@ -190,11 +152,14 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
   try {
     // Bifrost sign request returns { ok, data: SignatureEntry[] }
     const timeoutMs = getOpTimeoutMs();
-    applySignRequestTimeout(context.node!, timeoutMs, context.addServerLog);
+    const rawSignPromise = context.node!.req.sign(id);
+    const safeSignPromise = rawSignPromise
+      .then((res: any) => res)
+      .catch((error: unknown) => ({ ok: false, err: error instanceof Error ? error.message : String(error) }));
 
     let signResult;
     try {
-      signResult = await context.node!.req.sign(id);
+      signResult = await withTimeout(safeSignPromise, timeoutMs, 'SIGN_TIMEOUT');
     } catch (error) {
       const reason = normalizeErrorReason(error);
       if (isTimeoutReason(reason)) {
@@ -220,7 +185,7 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     let signatureHex: string | null = null;
     try {
       if (Array.isArray(signResult.data)) {
-        const entry = signResult.data.find((e) => Array.isArray(e) && e[0] === id) || signResult.data[0];
+        const entry = signResult.data.find((e: unknown) => Array.isArray(e) && e[0] === id) || signResult.data[0];
         signatureHex = Array.isArray(entry) ? entry[2] : null;
       }
     } catch (error) {

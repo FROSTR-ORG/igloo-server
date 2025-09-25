@@ -46,6 +46,7 @@ const pulseStyle = `
 const DEFAULT_RELAY = "wss://relay.primal.net";
 const LOG_STORAGE_KEY = "igloo:event-log";
 const MAX_LOG_ENTRIES = 500;
+const AUTO_EXPAND_EVENT_TYPES: string[] = ['sign'];
 
 const canUseSessionStorage = () => typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
 
@@ -57,9 +58,19 @@ const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
     return null;
   }
 
+  let timestamp = log.timestamp;
+  if (typeof timestamp === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(timestamp)) {
+    try {
+      const parsed = new Date(timestamp);
+      if (!Number.isNaN(parsed.getTime())) {
+        timestamp = parsed.toLocaleTimeString();
+      }
+    } catch {}
+  }
+
   return {
     id: log.id,
-    timestamp: log.timestamp,
+    timestamp,
     type: log.type,
     message: log.message,
     data: log.data
@@ -443,6 +454,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
                 detail: logEntry.data
               }));
               return; // Don't add to event log
+            }
+
+            if (typeof logEntry.type === 'string' && logEntry.type.startsWith('nip46:')) {
+              try {
+                window.dispatchEvent(new CustomEvent('nip46Event', { detail: logEntry }));
+              } catch (dispatchError) {
+                console.warn('Failed to dispatch nip46 event', dispatchError);
+              }
             }
             
             // Add all other server log entries to our local logs (original Igloo Desktop events)
@@ -1215,6 +1234,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           logs={logs}
           isSignerRunning={isSignerRunning}
           onClearLogs={handleClearLogs}
+          autoExpandTypes={AUTO_EXPAND_EVENT_TYPES}
         />
       </div>
     </div>

@@ -8,6 +8,36 @@ import Spinner from "./ui/spinner"
 import { HelpCircle, ChevronDown, ChevronUp, Settings } from 'lucide-react';
 import { InputWithValidation } from "./ui/input-with-validation"
 
+type AdvancedSettingsState = {
+  SESSION_TIMEOUT: string;
+  FROSTR_SIGN_TIMEOUT: string;
+  RATE_LIMIT_ENABLED: string;
+  RATE_LIMIT_WINDOW: string;
+  RATE_LIMIT_MAX: string;
+  NODE_RESTART_DELAY: string;
+  NODE_MAX_RETRIES: string;
+  NODE_BACKOFF_MULTIPLIER: string;
+  NODE_MAX_RETRY_DELAY: string;
+  INITIAL_CONNECTIVITY_DELAY: string;
+  ALLOWED_ORIGINS: string;
+  RELAYS?: string;
+};
+
+const defaultAdvancedSettings: AdvancedSettingsState = {
+  RELAYS: '["wss://relay.primal.net"]',
+  SESSION_TIMEOUT: '3600',
+  FROSTR_SIGN_TIMEOUT: '30000',
+  RATE_LIMIT_ENABLED: 'true',
+  RATE_LIMIT_WINDOW: '900',
+  RATE_LIMIT_MAX: '100',
+  NODE_RESTART_DELAY: '30000',
+  NODE_MAX_RETRIES: '5',
+  NODE_BACKOFF_MULTIPLIER: '1.5',
+  NODE_MAX_RETRY_DELAY: '300000',
+  INITIAL_CONNECTIVITY_DELAY: '5000',
+  ALLOWED_ORIGINS: ''
+};
+
 interface ConfigureProps {
   onKeysetCreated: (data: { groupCredential: string; shareCredentials: string[]; name: string }) => void;
   onCredentialsSaved?: () => void;
@@ -36,21 +66,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [isHeadlessMode, setIsHeadlessMode] = useState(false);
   const [existingRelays, setExistingRelays] = useState<string[] | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [advancedSettings, setAdvancedSettings] = useState({
-    RELAYS: '["wss://relay.primal.net"]',
-    SESSION_TIMEOUT: '3600',
-    FROSTR_SIGN_TIMEOUT: '30000',
-    RATE_LIMIT_ENABLED: 'true',
-    RATE_LIMIT_WINDOW: '900',
-    RATE_LIMIT_MAX: '100',
-    NODE_RESTART_DELAY: '30000',
-    NODE_MAX_RETRIES: '5',
-    NODE_BACKOFF_MULTIPLIER: '1.5',
-    NODE_MAX_RETRY_DELAY: '300000',
-    INITIAL_CONNECTIVITY_DELAY: '5000',
-    ALLOWED_ORIGINS: ''
-  });
-  const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<typeof advancedSettings>({...advancedSettings});
+  const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
+  const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
   // Initial load gate to prevent empty form flash
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
@@ -99,21 +116,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
-        interface AdvancedSettingsData {
-          SESSION_TIMEOUT: string;
-          FROSTR_SIGN_TIMEOUT: string;
-          RATE_LIMIT_ENABLED: string;
-          RATE_LIMIT_WINDOW: string;
-          RATE_LIMIT_MAX: string;
-          NODE_RESTART_DELAY: string;
-          NODE_MAX_RETRIES: string;
-          NODE_BACKOFF_MULTIPLIER: string;
-          NODE_MAX_RETRY_DELAY: string;
-          INITIAL_CONNECTIVITY_DELAY: string;
-          ALLOWED_ORIGINS: string;
-          RELAYS?: string;
-        }
-        const newSettings: AdvancedSettingsData = {
+        const newSettings: AdvancedSettingsState = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
           FROSTR_SIGN_TIMEOUT: coerceEnvValueToString(envVars.FROSTR_SIGN_TIMEOUT, '30000'),
           RATE_LIMIT_ENABLED: coerceEnvValueToString(envVars.RATE_LIMIT_ENABLED, 'true'),
@@ -549,11 +552,11 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       // Call the appropriate callback
       if (onCredentialsSaved) {
         // In database mode, notify that credentials were saved
-        onCredentialsSaved();
-      } else {
-        // Legacy callback for compatibility
-        onKeysetCreated(configuredKeyset);
+        await onCredentialsSaved();
       }
+
+      // Always notify parent with local snapshot so UI can transition immediately
+      onKeysetCreated(configuredKeyset);
     } catch (error) {
       console.error('Error saving credentials:', error);
       setKeysetGenerated({

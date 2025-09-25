@@ -7,17 +7,42 @@ import {
 } from '@frostr/igloo-core';
 import type { NodePolicyInput } from '@frostr/igloo-core';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
-import { getValidRelays, safeStringify } from '../routes/utils.js';
+import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
+import { loadFallbackPeerPolicies } from './peer-policy-store.js';
+import { mergePolicyInputs } from '../util/peer-policy.js';
 import type { ServerWebSocket } from 'bun';
 import { SimplePool, finalizeEvent, generateSecretKey } from 'nostr-tools';
 
-// Opt-in flag to swallow "benign" relay publish errors (policy rejections, WOT blocks, etc.).
-// Enable by setting NODE_ALLOW_BENIGN_PUBLISH_SWALLOW (or RELAY_ALLOW_BENIGN_SWALLOW) to a truthy value.
+// Control whether we swallow "benign" relay publish errors (policy rejections, WOT blocks, etc.).
+// Defaults to true to keep the signer resilient; set NODE_ALLOW_BENIGN_PUBLISH_SWALLOW=false to surface rejections.
 const ALLOW_BENIGN_PUBLISH_SWALLOW = (() => {
   const raw = process.env.NODE_ALLOW_BENIGN_PUBLISH_SWALLOW ?? process.env.RELAY_ALLOW_BENIGN_SWALLOW;
-  if (raw === undefined) return false;
-  return ['1', 'true', 'yes', 'on'].includes(String(raw).trim().toLowerCase());
+  if (raw === undefined) return true;
+  const normalized = String(raw).trim().toLowerCase();
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  return true;
 })();
+
+const isBenignPublishError = (reason: string | undefined): boolean => {
+  if (!reason) return false;
+  const lower = reason.toLowerCase();
+  return (
+    lower.includes('policy violated') ||
+    lower.includes('web of trust') ||
+    lower.includes('blocked:') ||
+    lower.includes('publish timed out') ||
+    lower.includes('relay publish timed out') ||
+    lower.includes('relay connection closed') ||
+    lower.includes('relay connection errored') ||
+    lower.includes('connection closed') ||
+    lower.includes('websocket is not open') ||
+    lower.includes('websocket closed') ||
+    lower.includes('socket not open') ||
+    lower.includes('socket closed') ||
+    lower.includes('econnreset')
+  );
+};
 
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
@@ -61,6 +86,16 @@ const METRICS_WINDOW = 60000; // 1 minute sliding window
 const FAILURE_THRESHOLD = 10; // Alert if >10 failures per minute
 const METRICS_REPORT_INTERVAL = 60000; // Report every minute
 
+// Safety timeout for event-based publish receipts; prevents hanging listeners when relays never respond.
+const PUBLISH_PROMISE_TIMEOUT_MS = (() => {
+  const raw = process.env.PUBLISH_EVENT_TIMEOUT_MS ?? process.env.RELAY_PUBLISH_TIMEOUT ?? process.env.FROSTR_SIGN_TIMEOUT;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed)) {
+    return Math.min(Math.max(parsed, 1000), 120000);
+  }
+  return 30000;
+})();
+
 // Global metrics state
 let publishMetrics: PublishMetrics = {
   totalAttempts: 0,
@@ -81,6 +116,90 @@ function resetMetricsWindow() {
     lastReportTime: Date.now(),
     windowStart: Date.now()
   };
+}
+
+function isThenable(value: any): value is PromiseLike<any> {
+  return value && typeof value === 'object' && typeof value.then === 'function';
+}
+
+function toPublishPromise(entry: any): Promise<any> {
+  if (isThenable(entry)) {
+    return Promise.resolve(entry);
+  }
+
+  if (entry && typeof entry === 'object') {
+    const hasOnce = typeof entry.once === 'function';
+    const hasOn = typeof entry.on === 'function';
+    if (hasOnce || hasOn) {
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+        const removeListener = (event: string, handler: (...args: any[]) => void) => {
+          try {
+            if (typeof entry.off === 'function') {
+              entry.off(event, handler);
+            } else if (typeof entry.removeListener === 'function') {
+              entry.removeListener(event, handler);
+            } else if (typeof entry.removeEventListener === 'function') {
+              entry.removeEventListener(event, handler);
+            }
+          } catch {}
+        };
+
+        const cleanup = () => {
+          removeListener('ok', onOk);
+          removeListener('seen', onOk);
+          removeListener('failed', onFail);
+          removeListener('error', onFail);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = undefined;
+          }
+        };
+
+        const finish = (fn: () => void) => {
+          if (settled) return;
+          settled = true;
+          cleanup();
+          fn();
+        };
+
+        const onOk = () => {
+          finish(() => resolve(true));
+        };
+
+        const onFail = (err?: any) => {
+          finish(() => reject(err ?? new Error('Relay publish failed')));
+        };
+
+        if (hasOnce) {
+          try { entry.once('ok', onOk); } catch {}
+          try { entry.once('seen', onOk); } catch {}
+          try { entry.once('failed', onFail); } catch {}
+          try { entry.once('error', onFail); } catch {}
+        } else {
+          try { entry.on('ok', onOk); } catch {}
+          try { entry.on('seen', onOk); } catch {}
+          try { entry.on('failed', onFail); } catch {}
+          try { entry.on('error', onFail); } catch {}
+        }
+
+        timeoutId = setTimeout(() => {
+          finish(() => reject(new Error(`Relay publish timed out after ${PUBLISH_PROMISE_TIMEOUT_MS}ms`)));
+        }, PUBLISH_PROMISE_TIMEOUT_MS);
+      });
+    }
+  }
+
+  return Promise.resolve(entry);
+}
+
+function normalizePublishResults(result: any): { promises: Promise<any>[]; isArray: boolean } {
+  if (Array.isArray(result)) {
+    return { promises: result.map(toPublishPromise), isArray: true };
+  }
+  return { promises: [toPublishPromise(result)], isArray: false };
 }
 
 // Helper to track and report publish failures
@@ -166,16 +285,6 @@ function createInstrumentedPool(
 
   const cache = new Map<string | symbol, any>();
 
-  const isBenignPublishError = (reason: string | undefined): boolean => {
-    if (!reason) return false;
-    const lower = reason.toLowerCase();
-    return (
-      lower.includes('policy violated') ||
-      lower.includes('web of trust') ||
-      lower.includes('blocked:')
-    );
-  };
-
   const handler: ProxyHandler<any> = {
     get(target, prop, receiver) {
       if (cache.has(prop)) return cache.get(prop);
@@ -184,10 +293,11 @@ function createInstrumentedPool(
         const originalPublish = target.publish.bind(target);
         const wrapped = (relays: string[], event: any, ...rest: any[]) => {
           try {
-            const promises: Promise<any>[] = originalPublish(relays, event, ...rest);
-            // Count attempts per relay (nostr-tools returns array of promises)
+            const result = originalPublish(relays, event, ...rest);
+            const { promises, isArray } = normalizePublishResults(result);
+
             publishMetrics.totalAttempts += Array.isArray(relays) ? relays.length : 1;
-            return promises.map((p, idx) => p.catch((err: any) => {
+            const wrappedPromises = promises.map((p, idx) => p.catch((err: any) => {
               const reason = err instanceof Error ? err.message : String(err);
               const url = Array.isArray(relays) ? relays[idx] : undefined;
               trackPublishFailure(url, reason, addServerLog);
@@ -205,6 +315,7 @@ function createInstrumentedPool(
               }
               throw err;
             }));
+            return isArray ? wrappedPromises : wrappedPromises[0];
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
@@ -247,6 +358,12 @@ function createInstrumentedClient(
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
+            if (isBenignPublishError(reason) && ALLOW_BENIGN_PUBLISH_SWALLOW) {
+              if (addServerLog) {
+                addServerLog('warning', 'Benign publish error suppressed (client)', { reason });
+              }
+              return false;
+            }
             throw err;
           }
         };
@@ -293,6 +410,12 @@ function createInstrumentedNode(
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
+            if (isBenignPublishError(reason) && ALLOW_BENIGN_PUBLISH_SWALLOW) {
+              if (addServerLog) {
+                addServerLog('warning', 'Benign publish error suppressed (node)', { reason });
+              }
+              return false;
+            }
             throw err;
           }
         };
@@ -404,9 +527,9 @@ export async function filterRelaysForKindSupport(
 
     const checks = relays.map(async (url) => {
       try {
-        const results = pool.publish([url], event);
-        // publish returns an array (one per relay); we used single relay, index 0
-        const outcome = await Promise.allSettled(results);
+        const publishResult = pool.publish([url], event);
+        const { promises } = normalizePublishResults(publishResult);
+        const outcome = await Promise.allSettled(promises);
         const ok = outcome.length > 0 && outcome[0].status === 'fulfilled';
         if (!ok && addServerLog) {
           const reason = outcome[0].status === 'rejected' ? String((outcome[0] as PromiseRejectedResult).reason) : 'unknown';
@@ -1378,6 +1501,26 @@ export async function createNodeWithCredentials(
     }
   }
 
+  let startupPolicies = configPolicies ? [...configPolicies] : undefined;
+
+  try {
+    const fallbackPolicies = await loadFallbackPeerPolicies();
+    if (fallbackPolicies.length > 0) {
+      startupPolicies = mergePolicyInputs(startupPolicies, fallbackPolicies);
+      if (addServerLog) {
+        addServerLog('info', `Restored ${fallbackPolicies.length} stored peer polic${fallbackPolicies.length === 1 ? 'y' : 'ies'} for headless/API clients`);
+      }
+    }
+  } catch (error) {
+    if (addServerLog) {
+      addServerLog('warn', 'Failed to restore stored peer policies', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    } else {
+      console.warn('[node] Failed to restore stored peer policies', error);
+    }
+  }
+
   // Minimal startup self-test: drop relays that reject kind 20004 (Bifrost)
   try {
     const tested = await filterRelaysForKindSupport(relays, 20004, addServerLog);
@@ -1415,7 +1558,7 @@ export async function createNodeWithCredentials(
           relays,
           connectionTimeout: 30000,  // Increased to 30 seconds
           autoReconnect: true,       // Enable auto-reconnection
-          ...(configPolicies ? { policies: configPolicies } : {})
+          ...(startupPolicies ? { policies: startupPolicies } : {})
         }, {
           enableLogging: false,      // Disable internal logging to avoid duplication
           logLevel: 'error'          // Only log errors from igloo-core
@@ -1423,10 +1566,32 @@ export async function createNodeWithCredentials(
         
         if (result.node) {
           const node = result.node as unknown as ServerBifrostNode;
-          
+
+          try {
+            const timeoutMs = getOpTimeoutMs();
+            const boundedTimeout = Math.max(5000, Math.min(timeoutMs, 120000));
+            const client: any = node?.client;
+            if (client && typeof client === 'object' && client.config && typeof client.config === 'object') {
+              const currentTimeout = Number(client.config.req_timeout);
+              const needsUpdate = !Number.isFinite(currentTimeout) || currentTimeout !== boundedTimeout;
+              if (needsUpdate) {
+                client.config.req_timeout = boundedTimeout;
+                if (addServerLog) {
+                  addServerLog('debug', `Adjusted node request timeout to ${boundedTimeout}ms`);
+                }
+              }
+            }
+          } catch (error) {
+            if (addServerLog) {
+              addServerLog('warn', 'Failed to adjust node request timeout', {
+                error: error instanceof Error ? error.message : String(error)
+              });
+            }
+          }
+
           if (addServerLog) {
             addServerLog('info', 'Node connected and ready');
-            
+
             // Log connection state info
             if (result.state) {
               addServerLog('info', `Connected to ${result.state.connectedRelays.length}/${relays.length} relays`);

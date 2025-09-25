@@ -1,291 +1,301 @@
-import React, { useState, useEffect } from 'react'
-import { SignerSession, PermissionPolicy } from './types'
-import { NIP46Controller } from './controller'
+import React, { useEffect, useMemo, useState } from 'react'
+import type { Nip46SessionApi, PermissionPolicy } from './types'
+import { Button } from '../ui/button'
+import { Badge } from '../ui/badge'
 import { PermissionsDropdown } from './Permissions'
-import { QRScanner } from './QRScanner'
-import { isValidImageUrl } from './utils'
-import { QrCode } from 'lucide-react'
-import { Input } from '../ui/input'
+import { getFallbackAvatar, isValidImageUrl } from './utils'
+import { cn } from '../../lib/utils'
 
-function safeHostname(url?: string | null): string | null {
-  if (!url) return null
-  try {
-    return new URL(url).hostname
-  } catch {
-    return null
-  }
+interface SessionsProps {
+  sessions: Nip46SessionApi[]
+  loading?: boolean
+  onRevoke: (pubkey: string) => Promise<void>
+  onUpdatePolicy: (pubkey: string, policy: PermissionPolicy) => Promise<void>
 }
 
-function safeHttpUrl(url?: string | null): string | null {
-  if (!url) return null
-  try {
-    const u = new URL(url)
-    return (u.protocol === 'http:' || u.protocol === 'https:') ? u.toString() : null
-  } catch {
-    return null
-  }
+const formatTimestamp = (value?: string | null) => {
+  if (!value) return 'N/A'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleString()
 }
 
-interface SessionsProps { controller: NIP46Controller | null }
+const truncate = (hex: string, size = 12) =>
+  hex.length <= size * 2 ? hex : `${hex.slice(0, size)}...${hex.slice(-size)}`
 
-export function Sessions({ controller }: SessionsProps) {
-  const [activeSessions, setActiveSessions] = useState<SignerSession[]>([])
-  const [pendingSessions, setPendingSessions] = useState<SignerSession[]>([])
-  const [connectString, setConnectString] = useState('')
-  const [error, setError] = useState<string | null>(null)
-  const [expandedPermissions, setExpandedPermissions] = useState<Set<string>>(new Set())
-  const [editingPermissions, setEditingPermissions] = useState<Record<string, PermissionPolicy>>({})
+const normalizePolicy = (policy?: PermissionPolicy | null): PermissionPolicy => ({
+  methods: { ...(policy?.methods ?? {}) },
+  kinds: { ...(policy?.kinds ?? {}) }
+})
+
+export function Sessions({ sessions, loading = false, onRevoke, onUpdatePolicy }: SessionsProps) {
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [editingPolicies, setEditingPolicies] = useState<Record<string, PermissionPolicy>>({})
+  const [newEventKinds, setNewEventKinds] = useState<Record<string, string>>({})
+  const [saving, setSaving] = useState<Record<string, boolean>>({})
   const [copiedPubkey, setCopiedPubkey] = useState<string | null>(null)
-  const [newEventKind, setNewEventKind] = useState<Record<string, string>>({})
-  const [isScanning, setIsScanning] = useState(false)
-  const [history, setHistory] = useState<Record<string, { recent_kinds?: number[]; recent_methods?: string[]; last_active_at?: string; status?: string }>>({})
 
-  const normalizePolicy = (policy?: PermissionPolicy | null): PermissionPolicy => {
-    const normalized: PermissionPolicy = { methods: {}, kinds: {} }
-    if (!policy) return normalized
-    if (policy.methods && typeof policy.methods === 'object') {
-      for (const [key, value] of Object.entries(policy.methods)) {
-        if (value === true) normalized.methods[key] = true
-        else if (value === false) normalized.methods[key] = false
-      }
-    }
-    if (policy.kinds && typeof policy.kinds === 'object') {
-      for (const [key, value] of Object.entries(policy.kinds)) {
-        const safeKey = String(key)
-        if (value === true) normalized.kinds[safeKey] = true
-        else if (value === false) normalized.kinds[safeKey] = false
-      }
-    }
-    return normalized
-  }
+  const sortedSessions = useMemo(() => {
+    return [...sessions].sort((a, b) => a.pubkey.localeCompare(b.pubkey))
+  }, [sessions])
 
   useEffect(() => {
-    if (!controller) return
-    let lastA = 0, lastP = 0
-    const update = () => {
-      const a = controller.getActiveSessions()
-      const p = controller.getPendingSessions()
-      if (a.length !== lastA || p.length !== lastP) { lastA = a.length; lastP = p.length }
-      setActiveSessions(a)
-      setPendingSessions(p)
-    }
-    update()
-    controller.on('session:active', update)
-    controller.on('session:pending', update)
-    controller.on('session:updated', update)
-    return () => {
-      controller.off('session:active', update)
-      controller.off('session:pending', update)
-      controller.off('session:updated', update)
-    }
-  }, [controller])
+    setEditingPolicies(prev => {
+      const next = { ...prev }
+      expanded.forEach(pubkey => {
+        if (!next[pubkey]) {
+          const session = sortedSessions.find(s => s.pubkey === pubkey)
+          if (session) {
+            next[pubkey] = normalizePolicy(session.policy)
+          }
+        }
+      })
+      return next
+    })
+  }, [expanded, sortedSessions])
 
-  // Fetch compact session history: last_active, recent approvals, revoked list
-  async function fetchHistory() {
+  const collapse = (pubkey: string) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      next.delete(pubkey)
+      return next
+    })
+    setEditingPolicies(prev => {
+      const { [pubkey]: _omit, ...rest } = prev
+      return rest
+    })
+    setNewEventKinds(prev => {
+      const { [pubkey]: _omit, ...rest } = prev
+      return rest
+    })
+  }
+
+  const toggleExpanded = (pubkey: string, policy?: PermissionPolicy) => {
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(pubkey)) {
+        next.delete(pubkey)
+      } else {
+        next.add(pubkey)
+      }
+      return next
+    })
+    setEditingPolicies(prev => {
+      if (prev[pubkey]) return prev
+      return { ...prev, [pubkey]: normalizePolicy(policy) }
+    })
+    setNewEventKinds(prev => ({ ...prev, [pubkey]: prev[pubkey] ?? '' }))
+  }
+
+  const handleSavePolicy = async (pubkey: string, session: Nip46SessionApi) => {
+    const policy = normalizePolicy(editingPolicies[pubkey] ?? session.policy)
+    setSaving(prev => ({ ...prev, [pubkey]: true }))
     try {
-      const res = await fetch('/api/nip46/history', { headers: { 'Content-Type': 'application/json' } })
-      if (!res.ok) return
-      const data = await res.json()
-      const sessions: any[] = Array.isArray(data.sessions) ? data.sessions : []
-      const map: Record<string, any> = {}
-      for (const s of sessions) {
-        const uniqueKinds = Array.isArray(s.recent_kinds) ? Array.from(new Set(s.recent_kinds)) : []
-        const uniqueMethods = Array.isArray(s.recent_methods) ? Array.from(new Set(s.recent_methods)) : []
-        map[s.pubkey] = { recent_kinds: uniqueKinds, recent_methods: uniqueMethods, last_active_at: s.last_active_at, status: s.status }
-      }
-      setHistory(map)
-    } catch {}
-  }
-
-  useEffect(() => {
-    fetchHistory()
-    if (!controller) return
-    const refresh = () => fetchHistory()
-    controller.on('session:active', refresh)
-    controller.on('session:updated', refresh)
-    return () => {
-      controller.off('session:active', refresh)
-      controller.off('session:updated', refresh)
+      await onUpdatePolicy(pubkey, policy)
+      collapse(pubkey)
+    } catch (error) {
+      console.error('Failed to update NIP-46 policy', error)
+    } finally {
+      setSaving(prev => ({ ...prev, [pubkey]: false }))
     }
-  }, [controller])
-
-  const handleConnect = async () => {
-    if (!controller || !connectString) return
-    try { setError(null); await controller.connectToClient(connectString); setConnectString('') } catch (err: any) { setError(err?.message || 'Failed to connect') }
   }
-  const handleRevokeSession = (pubkey: string) => controller?.revokeSession(pubkey)
 
-  const togglePermissionsDropdown = (pubkey: string) => {
-    const s = new Set(expandedPermissions)
-    if (s.has(pubkey)) {
-      s.delete(pubkey)
-      const e = { ...editingPermissions }; delete e[pubkey]; setEditingPermissions(e)
-      const n = { ...newEventKind }; delete n[pubkey]; setNewEventKind(n)
-    } else {
-      s.add(pubkey)
-      const session = [...activeSessions, ...pendingSessions].find(s => s.pubkey === pubkey)
-      if (session) setEditingPermissions(prev => ({ ...prev, [pubkey]: normalizePolicy(session.policy || { methods: {}, kinds: {} }) }))
+  const handleCopyPubkey = async (value: string) => {
+    try {
+      await navigator.clipboard.writeText(value)
+      setCopiedPubkey(value)
+      setTimeout(() => {
+        setCopiedPubkey(prev => (prev === value ? null : prev))
+      }, 1600)
+    } catch (error) {
+      console.error('Failed to copy session pubkey', error)
     }
-    setExpandedPermissions(s)
   }
 
-  const handlePermissionChange = (pubkey: string, permissions: PermissionPolicy) => {
-    setEditingPermissions(prev => ({ ...prev, [pubkey]: normalizePolicy(permissions) }))
-  }
-  const handleEventKindChange = (pubkey: string, kind: string) => setNewEventKind(prev => ({ ...prev, [pubkey]: kind }))
-  const handleUpdateSession = async (pubkey: string, policyOverride?: PermissionPolicy, options?: { keepOpen?: boolean }) => {
-    const session = [...activeSessions, ...pendingSessions].find(s => s.pubkey === pubkey)
-    if (!controller || !session) return
-    const policyToPersist = normalizePolicy(policyOverride || editingPermissions[pubkey] || session.policy || { methods: {}, kinds: {} })
-    controller.updateSession(pubkey, policyToPersist)
-
-    if (options?.keepOpen) {
-      setEditingPermissions(prev => ({ ...prev, [pubkey]: policyToPersist }))
-      setNewEventKind(prev => ({ ...prev, [pubkey]: '' }))
-      return
-    }
-
-    const s = new Set(expandedPermissions); s.delete(pubkey); setExpandedPermissions(s)
-    const e = { ...editingPermissions }; delete e[pubkey]; setEditingPermissions(e)
-    const n = { ...newEventKind }; delete n[pubkey]; setNewEventKind(n)
+  if (loading) {
+    return <div className="text-sm text-gray-400">Loading sessions...</div>
   }
 
-  const copyToClipboard = (text: string) => { navigator.clipboard.writeText(text); setCopiedPubkey(text); setTimeout(() => setCopiedPubkey(null), 2000) }
-  const handleScanResult = (result: string) => { setConnectString(result); setIsScanning(false) }
-
-  const allSessions = [
-    ...activeSessions.map(s => ({ ...s, status: 'active' as const })),
-    ...pendingSessions.map(s => ({ ...s, status: 'pending' as const }))
-  ].filter(s => /^[0-9a-f]{64}$/i.test(s.pubkey))
+  if (!sortedSessions.length) {
+    return <div className="text-sm text-gray-500 italic">No active sessions.</div>
+  }
 
   return (
-    <div className="sessions-container">
-      <h2 className="text-lg font-semibold text-blue-300 mb-4">Client Sessions</h2>
+    <div className="space-y-3">
+      {sortedSessions.map(session => {
+        const { pubkey, profile, relays, status, recent_kinds, recent_methods } = session
+        const imageSrc = profile?.image && isValidImageUrl(profile.image)
+          ? profile.image
+          : getFallbackAvatar(pubkey)
+        const isExpanded = expanded.has(pubkey)
+        const editingPolicy = editingPolicies[pubkey] ?? normalizePolicy(session.policy)
+        const newKindValue = newEventKinds[pubkey] ?? ''
+        const sessionPolicy = normalizePolicy(session.policy)
+        const autoMethods = Object.entries(sessionPolicy.methods || {})
+          .filter(([, value]) => value)
+          .map(([method]) => method)
+          .sort()
+        const wildcardKinds = sessionPolicy.kinds?.['*'] === true
+        const specificAutoKinds = Object.entries(sessionPolicy.kinds || {})
+          .filter(([key, value]) => key !== '*' && value)
+          .map(([key]) => Number(key))
+          .filter(value => Number.isFinite(value))
+          .sort((a, b) => a - b)
+        const hasPolicySummary = autoMethods.length > 0 || wildcardKinds || specificAutoKinds.length > 0
+        const relayList = Array.isArray(relays) ? relays.filter(relay => typeof relay === 'string' && relay.trim().length > 0) : []
+        const visibleRelays = relayList.slice(0, 2)
+        const extraRelays = Math.max(0, relayList.length - visibleRelays.length)
+        const statusVariant: 'success' | 'warning' | 'default' =
+          status === 'active' ? 'success' : status === 'pending' ? 'warning' : 'default'
+        const isSaving = saving[pubkey] === true
 
-      <div className="sessions-section">
-        {allSessions.length === 0 ? (
-          <p className="session-empty">No sessions</p>
-        ) : (
-          <div className="sessions-list">
-            {allSessions.map((session) => {
-              const truncated = session.pubkey.slice(0, 12) + '...' + session.pubkey.slice(-12)
-              const profileHref = safeHttpUrl(session.profile.url)
-              const profileLabel = safeHostname(session.profile.url) || session.profile.url
-              return (
-                <div key={session.pubkey} className="session-card">
-                  <span className={`session-badge ${session.status}`}>{session.status}</span>
-                  <div className="session-header">
-                    <div className="session-info">
-                      <div className="session-name-container">
-                        {session.profile.image && isValidImageUrl(session.profile.image) && (
-                          <img src={session.profile.image} alt={`${session.profile.name || 'Unknown'} icon`} className="session-icon" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }} />
-                        )}
-                        <span className="session-name">{session.profile.name || 'Unknown Application'}</span>
-                      </div>
-                      {session.profile.url && profileLabel && (
-                        profileHref ? (
-                          <a href={profileHref} target="_blank" rel="noopener noreferrer" className="session-url">
-                            {profileLabel}
-                          </a>
-                        ) : (
-                          <span className="session-url">{profileLabel}</span>
-                        )
-                      )}
-                      <div className="session-pubkey-container">
-                        <span className="session-pubkey">{truncated}</span>
-                        <button onClick={() => copyToClipboard(session.pubkey)} className="copy-pubkey-btn" title="Copy full public key">
-                          {copiedPubkey === session.pubkey ? '✓' : '📋'}
-                        </button>
-                      </div>
-                      {session.relays && session.relays.length > 0 && (
-                        <span className="session-created">Relays: {session.relays.join(', ')}</span>
-                      )}
-                      <span className="session-created">Created: {new Date(session.created_at * 1000).toLocaleString()}</span>
-                      {session.last_active_at && (
-                        <span className="session-created">Last Active: {new Date(session.last_active_at * 1000).toLocaleString()}</span>
-                      )}
-                    </div>
+        const cardClasses = cn(
+          'rounded-md border border-blue-900/30 bg-gray-900/30 p-4 transition-colors',
+          isExpanded ? 'border-blue-500/40 bg-gray-900/40 shadow-lg' : 'hover:border-blue-500/40 hover:bg-blue-900/15'
+        )
+
+        return (
+          <article
+            key={pubkey}
+            className={cardClasses}
+          >
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="flex items-start gap-3">
+                <img
+                  src={imageSrc}
+                  onError={(event) => {
+                    const target = event.currentTarget
+                    const fallback = getFallbackAvatar(pubkey)
+                    if (target.src !== fallback) {
+                      target.src = fallback
+                    }
+                  }}
+                  alt={profile?.name ? `${profile.name} icon` : 'session icon'}
+                  className="h-10 w-10 rounded-md border border-blue-900/40 object-cover"
+                />
+                <div className="space-y-1">
+                  <div className="flex flex-wrap items-center gap-2 text-sm">
+                    <span className="font-semibold text-blue-100">
+                      {profile?.name || 'Unknown application'}
+                    </span>
+                    <Badge variant={statusVariant}>{status.toUpperCase()}</Badge>
                   </div>
-
-                  <div className="session-permissions-toggle">
-                    <button onClick={() => togglePermissionsDropdown(session.pubkey)} className="session-permissions-btn">
-                      {expandedPermissions.has(session.pubkey) ? 'Hide' : 'Show'} Permissions
+                  {profile?.url ? (
+                    <a
+                      href={profile.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-blue-400 transition hover:text-blue-300"
+                    >
+                      {profile.url}
+                    </a>
+                  ) : null}
+                  <div className="flex items-center gap-2 text-xs text-gray-400">
+                    <span className="font-mono text-blue-200">{truncate(pubkey)}</span>
+                    <button
+                      type="button"
+                      className="rounded border border-blue-900/40 px-2 py-0.5 text-[11px] uppercase tracking-wide text-blue-200 transition hover:border-blue-500/60 hover:text-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                      onClick={() => handleCopyPubkey(pubkey)}
+                    >
+                      {copiedPubkey === pubkey ? 'Copied' : 'Copy'}
                     </button>
                   </div>
-
-                  {(((history[session.pubkey]?.recent_kinds?.length ?? 0) + (history[session.pubkey]?.recent_methods?.length ?? 0)) > 0) && (
-                    <div className="mt-2 text-xs text-gray-400">
-                      {history[session.pubkey]?.recent_kinds?.length ? (
-                        <div>
-                          <span className="text-gray-500 mr-1">Recent kinds approved:</span>
-                          {history[session.pubkey]!.recent_kinds!.map((k: number) => (
-                            <span key={k} className="inline-block bg-purple-900/40 text-purple-200 rounded px-1.5 py-0.5 mr-1">{k}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                      {history[session.pubkey]?.recent_methods?.length ? (
-                        <div className="mt-1">
-                          <span className="text-gray-500 mr-1">Recent methods:</span>
-                          {history[session.pubkey]!.recent_methods!.map((m: string) => (
-                            <span key={m} className="inline-block bg-blue-900/40 text-blue-200 rounded px-1.5 py-0.5 mr-1">{m}</span>
-                          ))}
-                        </div>
-                      ) : null}
-                    </div>
-                  )}
-
-                  {expandedPermissions.has(session.pubkey) && (
-                    <PermissionsDropdown
-                      session={session}
-                      editingPermissions={editingPermissions[session.pubkey] || normalizePolicy(session.policy || { methods: {}, kinds: {} })}
-                      newEventKind={newEventKind[session.pubkey] || ''}
-                      requestedPermissions={session.requested}
-                      onPermissionChange={(p) => handlePermissionChange(session.pubkey, p)}
-                      onEventKindChange={(k) => handleEventKindChange(session.pubkey, k)}
-                      onUpdateSession={(policy, options) => handleUpdateSession(session.pubkey, policy, options)}
-                    />
-                  )}
-
-                  <div className="session-card-actions-bottom">
-                    <button onClick={() => handleRevokeSession(session.pubkey)} className="session-revoke-btn">Revoke</button>
-                  </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="sessions-section">
-        <div className="session-input-row">
-          <Input type="text" value={connectString} onChange={(e) => setConnectString(e.target.value)} placeholder="Paste nostrconnect:// string here" className="session-input bg-gray-900/60 border-blue-900/30" />
-          <button onClick={() => setIsScanning(true)} className="qr-scan-btn" disabled={isScanning} title="Scan QR Code">
-            <QrCode className="h-5 w-5 text-blue-200" />
-          </button>
-        </div>
-        <button onClick={handleConnect} className="session-btn-primary">Connect</button>
-        {error && <p className="session-error">{error}</p>}
-
-        {isScanning && (
-          <div className="scanner-modal">
-            <div className="scanner-overlay" onClick={() => setIsScanning(false)} />
-            <div className="scanner-container-modal">
-              <QRScanner
-                onResult={(r) => handleScanResult(r)}
-                onError={(e) => { console.error('QR scan error:', e); setError(e.message) }}
-              />
-              <div className="qr-reticule">
-                <div className="qr-corner qr-corner-tl"></div>
-                <div className="qr-corner qr-corner-tr"></div>
-                <div className="qr-corner qr-corner-bl"></div>
-                <div className="qr-corner qr-corner-br"></div>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {isSaving ? <Badge variant="info">Saving…</Badge> : null}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => (isExpanded ? collapse(pubkey) : toggleExpanded(pubkey, session.policy))}
+                >
+                  {isExpanded ? 'Close permissions' : 'Edit permissions'}
+                </Button>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={() => onRevoke(pubkey)}
+                  disabled={isSaving}
+                >
+                  Revoke
+                </Button>
               </div>
             </div>
-          </div>
-        )}
-      </div>
 
-      {/* Revoked sessions are not persisted anymore; no separate section */}
+            <div className="mt-3 grid gap-3 text-xs text-gray-400 sm:grid-cols-2">
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">Created</div>
+                <div>{formatTimestamp(session.created_at)}</div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">Last activity</div>
+                <div>{formatTimestamp(session.last_active_at)}</div>
+              </div>
+            </div>
+
+            {relayList.length ? (
+              <div className="mt-3 text-xs text-gray-400">
+                <div className="text-[11px] uppercase tracking-wide text-gray-500">Relays</div>
+                <div className="mt-1 flex flex-wrap gap-2">
+                  {visibleRelays.map(relay => (
+                    <Badge key={`${pubkey}-relay-${relay}`} variant="info" className="bg-blue-900/30">
+                      {relay}
+                    </Badge>
+                  ))}
+                  {extraRelays > 0 ? (
+                    <Badge variant="default">+{extraRelays} more</Badge>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {hasPolicySummary ? (
+              <div className="mt-3 text-xs text-gray-400 space-y-2">
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Auto-approved methods</div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {autoMethods.length ? (
+                      autoMethods.map(method => (
+                        <Badge key={`${pubkey}-method-${method}`} variant="info">{method}</Badge>
+                      ))
+                    ) : (
+                      <span className="italic text-gray-500">None</span>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] uppercase tracking-wide text-gray-500">Auto-approved kinds</div>
+                  <div className="mt-1 flex flex-wrap gap-2">
+                    {wildcardKinds ? (
+                      <Badge variant="info">All kinds</Badge>
+                    ) : specificAutoKinds.length ? (
+                      specificAutoKinds.map(kind => (
+                        <Badge key={`${pubkey}-kind-${kind}`} variant="purple">{kind}</Badge>
+                      ))
+                    ) : (
+                      <span className="italic text-gray-500">None</span>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+
+                {isExpanded ? (
+                  <div className="mt-4 rounded-md border border-blue-900/30 bg-gray-900/40 p-4">
+                    <PermissionsDropdown
+                      session={session}
+                      editingPolicy={editingPolicy}
+                  newEventKind={newKindValue}
+                  saving={isSaving}
+                  onPolicyChange={(policy) => setEditingPolicies(prev => ({ ...prev, [pubkey]: policy }))}
+                  onEventKindChange={(value) => setNewEventKinds(prev => ({ ...prev, [pubkey]: value }))}
+                  onSave={() => void handleSavePolicy(pubkey, session)}
+                  onCancel={() => collapse(pubkey)}
+                />
+              </div>
+            ) : null}
+          </article>
+        )
+      })}
     </div>
   )
 }

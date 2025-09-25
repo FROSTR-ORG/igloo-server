@@ -3,54 +3,40 @@ export interface PermissionPolicy {
   kinds: Record<string, boolean>
 }
 
+export interface PolicyPatch {
+  methods?: Record<string, boolean>
+  kinds?: Record<string, boolean>
+}
+
 export interface SessionProfile {
   name?: string
   url?: string
   image?: string
 }
 
-export interface SignerSession {
+export interface Nip46SessionApi {
   pubkey: string
-  created_at: number
-  updated_at?: number
-  last_active_at?: number
+  status: 'active' | 'pending' | 'revoked'
+  profile: SessionProfile
   relays?: string[]
-  profile: SessionProfile
   policy?: PermissionPolicy
-  status?: 'active' | 'pending'
-  // Not persisted: requested permissions parsed from nostrconnect URI or connect params
-  requested?: PermissionPolicy
+  created_at: string
+  updated_at?: string
+  last_active_at?: string | null
+  recent_kinds?: number[]
+  recent_methods?: string[]
 }
 
-export interface PermissionRequest {
+export interface Nip46RequestApi {
   id: string
+  user_id: number | string
+  session_pubkey: string
   method: string
-  params: string[]
-  session: SignerSession
-  stamp: number
-  deniedReason?: string
-}
-
-export interface NIP46Request {
-  id: string
-  method: string
-  source: string
-  content: unknown
-  timestamp: number
-  session_origin: {
-    name?: string
-    image?: string
-    pubkey: string
-    url?: string
-  }
-  request_type: 'note_signature' | 'base'
-  status: 'pending' | 'approved' | 'denied'
-  deniedReason?: string
-}
-
-export interface NIP46Config {
-  relays: string[]
-  policy: PermissionPolicy
-  profile: SessionProfile
-  timeout?: number
+  params: string
+  status: 'pending' | 'approved' | 'denied' | 'completed' | 'failed' | 'expired'
+  result?: string | null
+  error?: string | null
+  created_at: string
+  updated_at: string
+  expires_at?: string | null
 }

@@ -160,7 +160,13 @@ export async function handleRequest(
   let authInfo: RequestAuth | null = null;
   const finalizeAuth = () => {
     if (authInfo?.destroySecrets) {
-      try { authInfo.destroySecrets(); } catch {}
+      try {
+        authInfo.destroySecrets();
+      } catch (cleanupError) {
+        if (process.env.NODE_ENV !== 'production') {
+          console.error('[routes] Failed to destroy auth secrets:', cleanupError);
+        }
+      }
     }
     authInfo = null;
   };
@@ -275,6 +281,14 @@ export async function handleRequest(
     }
   }
 
+  if (!HEADLESS && url.pathname.startsWith('/api/nip46/')) {
+    const nip46Result = await handleNip46Route(req, url, privilegedContext, authInfo);
+    if (nip46Result) {
+      finalizeAuth();
+      return nip46Result;
+    }
+  }
+
   // Try each non-privileged route handler in order
   // Note: These handlers now accept auth as an optional parameter
   const routeHandlers = [
@@ -284,7 +298,6 @@ export async function handleRequest(
     handleSignRoute,
     handleNip44Route,
     handleNip04Route,
-    handleNip46Route,
     handleRecoveryRoute,
     handleSharesRoute,
   ];

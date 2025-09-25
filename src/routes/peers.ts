@@ -15,6 +15,10 @@ import { RouteContext, PeerStatus, RequestAuth } from './types.js';
 import type { NodePolicySummary } from '@frostr/igloo-core';
 import { readEnvFile, getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { HEADLESS } from '../const.js';
+import { saveFallbackPeerPolicies } from '../node/peer-policy-store.js';
+import { sanitizePeerPolicyEntries } from '../util/peer-policy.js';
+
+type StoredPeerPolicy = import('../db/database.js').StoredPeerPolicy;
 
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
@@ -71,6 +75,70 @@ function serializePolicy(
     effectiveReceive,
     hasExplicitPolicy: Boolean(summary)
   };
+}
+
+function resolveDatabaseUserId(auth?: RequestAuth | null): number | bigint | null {
+  if (!auth || !auth.authenticated) return null;
+  const rawId = auth.userId;
+  if (typeof rawId === 'number' && Number.isSafeInteger(rawId) && rawId > 0) {
+    return rawId;
+  }
+  if (typeof rawId === 'string' && /^\d+$/.test(rawId)) {
+    try {
+      return BigInt(rawId);
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+async function persistUserPeerPolicies(
+  context: RouteContext,
+  auth?: RequestAuth | null
+): Promise<void> {
+  const summaries = context.node ? getNodePolicies(context.node) : [];
+  const rawPolicies = summaries.map(summary => ({
+    pubkey: summary.pubkey,
+    allowSend: typeof summary.allowSend === 'boolean' ? summary.allowSend : null,
+    allowReceive: typeof summary.allowReceive === 'boolean' ? summary.allowReceive : null,
+    label: typeof summary.label === 'string' ? summary.label : null,
+    note: typeof summary.note === 'string' ? summary.note : null
+  }));
+  const sanitizedPolicies = sanitizePeerPolicyEntries(rawPolicies) as StoredPeerPolicy[];
+  const hasPolicies = sanitizedPolicies.length > 0;
+
+  if (HEADLESS) {
+    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    return;
+  }
+
+  const userId = resolveDatabaseUserId(auth);
+  if (userId === null) {
+    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    return;
+  }
+
+  try {
+    const { updateUserPeerPolicies } = await import('../db/database.js');
+
+    if (!context.node || summaries.length === 0) {
+      updateUserPeerPolicies(userId, null);
+      await saveFallbackPeerPolicies(null);
+      return;
+    }
+
+    const success = updateUserPeerPolicies(userId, sanitizedPolicies);
+    if (!success) {
+      console.warn('Failed to persist peer policies for user', userId);
+      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    } else {
+      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    }
+  } catch (error) {
+    console.error('Failed to persist peer policies:', error);
+    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+  }
 }
 
 // Helper function to get credentials based on mode
@@ -450,6 +518,7 @@ async function handlePeerPolicyRoute(
           allowReceive: policy.allowReceive
         });
       } catch {}
+      await persistUserPeerPolicies(context, auth);
       return Response.json({ policy }, { headers });
     } catch (error) {
       console.error('Failed to update peer policy:', error);
@@ -481,6 +550,7 @@ async function handlePeerPolicyRoute(
       try {
         context.addServerLog('info', 'Peer policy removed', { pubkey: normalized });
       } catch {}
+      await persistUserPeerPolicies(context, auth);
       return Response.json({ removed: true, policy }, { headers });
     } catch (error) {
       console.error('Failed to remove peer policy:', error);

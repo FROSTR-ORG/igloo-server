@@ -1,5 +1,6 @@
 import db from './database.js'
 import { runMigrations } from './migrator.js'
+import { randomBytes } from 'node:crypto'
 
 // Types for persisted NIP-46 sessions
 export type Nip46Status = 'pending' | 'active' | 'revoked'
@@ -90,6 +91,31 @@ function verifyAndCreateMissingTables(): void {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       )`
+    },
+    {
+      name: 'nip46_relays',
+      sql: `CREATE TABLE IF NOT EXISTS nip46_relays (
+        user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+        relays TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      )`
+    },
+    {
+      name: 'nip46_requests',
+      sql: `CREATE TABLE IF NOT EXISTS nip46_requests (
+        id TEXT PRIMARY KEY,
+        user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        session_pubkey TEXT NOT NULL,
+        method TEXT NOT NULL,
+        params TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','completed','failed','expired')) DEFAULT 'pending',
+        result TEXT,
+        error TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        expires_at DATETIME
+      )`
     }
   ]
 
@@ -109,6 +135,8 @@ function verifyAndCreateMissingTables(): void {
           db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id)')
         } else if (table.name === 'nip46_session_events') {
           db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
+        } else if (table.name === 'nip46_requests') {
+          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_user_status ON nip46_requests(user_id, status, created_at DESC)')
         }
       }
     } catch (error) {
@@ -118,9 +146,27 @@ function verifyAndCreateMissingTables(): void {
   }
 }
 
+// Maximum number of relays to persist for the NIP-46 transport pool
+const MAX_NIP46_RELAYS = 32;
+
 // Maximum size for JSON fields to prevent memory exhaustion
 // Increased from 10KB to 50KB to accommodate larger relay lists and policies
-const MAX_JSON_FIELD_SIZE = 50000 // 50KB per field
+export const MAX_JSON_FIELD_SIZE = 50000 // 50KB per field
+export type Nip46RequestStatus = 'pending' | 'approved' | 'denied' | 'completed' | 'failed' | 'expired'
+
+export interface Nip46RequestRecord {
+  id: string
+  user_id: number | bigint
+  session_pubkey: string
+  method: string
+  params: string
+  status: Nip46RequestStatus
+  result?: string | null
+  error?: string | null
+  created_at: string
+  updated_at: string
+  expires_at?: string | null
+}
 
 function rowToSession(row: any): Nip46Session {
   let relays: string[] | null = null
@@ -195,6 +241,138 @@ export function listSessions(userId: number | bigint, opts?: { includeRevoked?: 
     )
     .all(userId, includeRevoked ? 1 : 0, 'revoked') as any[]
   return rows.map(rowToSession)
+}
+
+export function getSession(userId: number | bigint, client_pubkey: string): Nip46Session | null {
+  const key = (client_pubkey || '').trim().toLowerCase()
+  if (!key || !/^[0-9a-f]{64}$/.test(key)) return null
+  const row = db
+    .prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?')
+    .get(userId, key)
+  return row ? rowToSession(row) : null
+}
+
+export function getNip46Relays(userId: number | bigint): string[] {
+  const row = db.prepare('SELECT relays FROM nip46_relays WHERE user_id = ?').get(userId) as { relays?: string } | undefined
+  if (!row || typeof row.relays !== 'string') return []
+  if (row.relays.length > MAX_JSON_FIELD_SIZE) {
+    console.error('[nip46] Relay list exceeds maximum size; ignoring stored value')
+    return []
+  }
+  try {
+    const parsed = JSON.parse(row.relays)
+    if (!Array.isArray(parsed)) return []
+    const relays = parsed.filter((value: unknown): value is string => typeof value === 'string')
+    return relays.slice(0, MAX_NIP46_RELAYS)
+  } catch (error) {
+    console.error('[nip46] Failed to parse stored relay list:', error)
+    return []
+  }
+}
+
+export function setNip46Relays(userId: number | bigint, relays: string[]): string[] {
+  const cleaned = Array.from(new Set(relays.filter(r => typeof r === 'string'))).slice(0, MAX_NIP46_RELAYS)
+  const payload = JSON.stringify(cleaned)
+  if (payload.length > MAX_JSON_FIELD_SIZE) {
+    throw new Error('[nip46] Relay payload exceeds maximum allowed size')
+  }
+
+  db.prepare(`
+    INSERT INTO nip46_relays (user_id, relays)
+    VALUES (?, ?)
+    ON CONFLICT(user_id) DO UPDATE SET relays = excluded.relays, updated_at = CURRENT_TIMESTAMP
+  `).run(userId, payload)
+
+  return cleaned
+}
+
+export function mergeNip46Relays(userId: number | bigint, relays: string[]): string[] {
+  const current = new Set(getNip46Relays(userId))
+  for (const relay of relays) {
+    if (typeof relay === 'string') current.add(relay)
+  }
+  const merged = Array.from(current).slice(0, MAX_NIP46_RELAYS)
+  setNip46Relays(userId, merged)
+  return merged
+}
+
+function randomRequestId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID().replace(/-/g, '')
+  }
+  return randomBytes(16).toString('hex')
+}
+
+export function createNip46Request(params: {
+  userId: number | bigint
+  session_pubkey: string
+  method: string
+  payload: Record<string, any> | string
+  expiresAt?: Date
+}): Nip46RequestRecord {
+  const id = randomRequestId()
+  const payload = typeof params.payload === 'string' ? params.payload : JSON.stringify(params.payload)
+  if (payload.length > MAX_JSON_FIELD_SIZE) {
+    throw new Error('Request payload too large to persist')
+  }
+
+  const normalizedPubkey = params.session_pubkey.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(normalizedPubkey)) {
+    throw new Error('Invalid session pubkey for request')
+  }
+
+  const expires = params.expiresAt ? params.expiresAt.toISOString() : null
+
+  db.prepare(`
+    INSERT INTO nip46_requests (id, user_id, session_pubkey, method, params, status, expires_at)
+    VALUES (?, ?, ?, ?, ?, 'pending', ?)
+  `).run(id, params.userId, normalizedPubkey, params.method, payload, expires)
+
+  return getNip46RequestById(id) as Nip46RequestRecord
+}
+
+export function getNip46RequestById(id: string): Nip46RequestRecord | null {
+  const row = db.prepare('SELECT * FROM nip46_requests WHERE id = ?').get(id) as Nip46RequestRecord | undefined
+  return row ?? null
+}
+
+export function listNip46Requests(
+  userId: number | bigint,
+  opts?: { status?: Nip46RequestStatus[]; limit?: number }
+): Nip46RequestRecord[] {
+  const statuses = opts?.status && opts.status.length ? opts.status : null
+  const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500)
+  if (statuses) {
+    const placeholders = statuses.map(() => '?').join(',')
+    const stmt = db.prepare(
+      `SELECT * FROM nip46_requests WHERE user_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`
+    )
+    return stmt.all(userId, ...statuses, limit) as Nip46RequestRecord[]
+  }
+  const stmt = db.prepare(
+    'SELECT * FROM nip46_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+  )
+  return stmt.all(userId, limit) as Nip46RequestRecord[]
+}
+
+export function updateNip46RequestStatus(
+  id: string,
+  status: Nip46RequestStatus,
+  options?: { result?: string | null; error?: string | null }
+): Nip46RequestRecord | null {
+  db.prepare(`
+    UPDATE nip46_requests
+    SET status = ?,
+        result = COALESCE(?, result),
+        error = COALESCE(?, error),
+        updated_at = CURRENT_TIMESTAMP
+    WHERE id = ?
+  `).run(status, options?.result ?? null, options?.error ?? null, id)
+  return getNip46RequestById(id)
+}
+
+export function deleteNip46Request(id: string): void {
+  db.prepare('DELETE FROM nip46_requests WHERE id = ?').run(id)
 }
 
 // Transport key persistence (per-user)

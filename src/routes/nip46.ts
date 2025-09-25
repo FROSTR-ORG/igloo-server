@@ -1,13 +1,24 @@
 import { HEADLESS } from '../const.js'
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js'
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js'
 import type { PrivilegedRouteContext, RequestAuth } from './types.js'
-import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey } from '../db/nip46.js'
+import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey, getNip46Relays, setNip46Relays, mergeNip46Relays, listNip46Requests, updateNip46RequestStatus, deleteNip46Request, type Nip46RequestStatus, getSession, getNip46RequestById } from '../db/nip46.js'
+import { getNip46Service } from '../nip46/index.js'
+
+const DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX = HEADLESS ? 30 : 120;
+const DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS = 3600; // Keep a 1 hour window by default
 
 // Rate limiting configuration for NIP-46 session creation
 const NIP46_RATE_LIMIT = {
-  // Slightly relaxed default for local testing; override in production via env
-  MAX: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_MAX || '30'),
-  WINDOW_MS: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_WINDOW || '3600') * 1000 // Default: 1 hour
+  // Slightly relaxed default for headless/local testing, significantly higher default once persisted to the database
+  MAX: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_MAX || String(DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX)),
+  WINDOW_MS: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_WINDOW || String(DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS)) * 1000
+}
+
+const MAX_NIP46_RELAYS = 32;
+
+interface PolicyPatch {
+  methods?: Record<string, boolean>
+  kinds?: Record<string, boolean>
 }
 
 function isValidHex(str: string): boolean {
@@ -20,6 +31,122 @@ function parsePubkeyFromPath(pathname: string): string | null {
   const idx = parts.findIndex(p => p === 'sessions')
   if (idx >= 0 && parts.length > idx + 1) return parts[idx + 1]
   return null
+}
+
+function canonicalizeRelayUrl(value: string): string | null {
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== 'ws:' && url.protocol !== 'wss:') return null
+    if (url.pathname === '/' && !url.search && !url.hash) {
+      return `${url.protocol}//${url.host}`
+    }
+    return `${url.protocol}//${url.host}${url.pathname}${url.search}${url.hash}`
+  } catch {
+    return null
+  }
+}
+
+function isValidRelayUrl(value: string): boolean {
+  return canonicalizeRelayUrl(value) !== null
+}
+
+function normalizeRelayPayload(input: unknown): string[] {
+  if (!Array.isArray(input)) return []
+  const normalized: string[] = []
+  const seen = new Set<string>()
+  for (const raw of input) {
+    if (typeof raw !== 'string') continue
+    const trimmed = raw.trim()
+    if (!trimmed) continue
+    const canonical = canonicalizeRelayUrl(trimmed)
+    if (!canonical) continue
+    if (seen.has(canonical)) continue
+    seen.add(canonical)
+    normalized.push(canonical)
+    if (normalized.length >= MAX_NIP46_RELAYS) break
+  }
+  return normalized
+}
+
+function parsePolicyPatch(value: unknown): PolicyPatch | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const patch: PolicyPatch = {}
+
+  if (value && typeof (value as any).methods === 'object' && !Array.isArray((value as any).methods)) {
+    const methods: Record<string, boolean> = {}
+    for (const [name, flag] of Object.entries((value as any).methods)) {
+      if (typeof flag === 'boolean' && name.trim()) {
+        methods[name.trim()] = flag
+      }
+    }
+    if (Object.keys(methods).length) patch.methods = methods
+  }
+
+  if (value && typeof (value as any).kinds === 'object' && !Array.isArray((value as any).kinds)) {
+    const kinds: Record<string, boolean> = {}
+    for (const [rawKind, flag] of Object.entries((value as any).kinds)) {
+      if (typeof flag === 'boolean') {
+        const key = String(rawKind).trim()
+        if (!key) continue
+        if (/^\d+$/.test(key) || key === '*') {
+          kinds[key] = flag
+        }
+      }
+    }
+    if (Object.keys(kinds).length) patch.kinds = kinds
+  }
+
+  return Object.keys(patch).length ? patch : null
+}
+
+function applyPolicyPatch(current: Nip46Policy | null | undefined, patch: PolicyPatch): Nip46Policy {
+  const baseMethods = { ...(current?.methods ?? {}) }
+  const baseKinds = { ...(current?.kinds ?? {}) }
+  const result: Nip46Policy = {}
+
+  if (patch.methods) {
+    for (const [name, allow] of Object.entries(patch.methods)) {
+      if (allow) baseMethods[name] = true
+      else delete baseMethods[name]
+    }
+    result.methods = baseMethods
+  }
+
+  if (patch.kinds) {
+    for (const [kind, allow] of Object.entries(patch.kinds)) {
+      if (allow) baseKinds[kind] = true
+      else delete baseKinds[kind]
+    }
+    result.kinds = baseKinds
+  }
+
+  if (result.methods && Object.keys(result.methods).length === 0) {
+    result.methods = {}
+  }
+  if (result.kinds && Object.keys(result.kinds).length === 0) {
+    result.kinds = {}
+  }
+
+  return result
+}
+
+const REQUEST_ACTION_STATUS: Record<string, Nip46RequestStatus> = {
+  approve: 'approved',
+  deny: 'denied',
+  fail: 'failed',
+  complete: 'completed'
+}
+
+function parseStatusFilter(value: string | null): Nip46RequestStatus[] | null {
+  if (!value) return null
+  const parts = value.split(',').map(part => part.trim().toLowerCase()).filter(Boolean)
+  const statuses: Nip46RequestStatus[] = []
+  for (const part of parts) {
+    if (part === 'pending' || part === 'approved' || part === 'denied' || part === 'completed' || part === 'failed' || part === 'expired') {
+      statuses.push(part)
+    }
+  }
+  return statuses.length ? statuses : null
 }
 
 /**
@@ -120,6 +247,171 @@ export async function handleNip46Route(
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Failed to set transport key'
       return Response.json({ error: msg }, { status: 400, headers })
+    }
+  }
+
+  if (url.pathname === '/api/nip46/relays') {
+    if (req.method === 'GET') {
+      const relays = getNip46Relays(userId)
+      return Response.json({ relays }, { headers })
+    }
+
+    if (req.method === 'PUT' || req.method === 'POST') {
+      let body: any
+      try {
+        body = await parseJsonRequestBody(req)
+      } catch (error) {
+        return Response.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, { status: 400, headers })
+      }
+
+      if (!('relays' in body) || (body.relays !== null && !Array.isArray(body.relays))) {
+        return Response.json({ error: 'Field "relays" must be an array (or null to clear)' }, { status: 400, headers })
+      }
+
+      const sanitized = normalizeRelayPayload(body.relays)
+      if (body.relays !== null && sanitized.length === 0 && Array.isArray(body.relays) && body.relays.length > 0) {
+        return Response.json({ error: 'All relay URLs must use ws:// or wss:// and be valid URLs' }, { status: 400, headers })
+      }
+
+      try {
+        const result = req.method === 'PUT'
+          ? setNip46Relays(userId, body.relays === null ? [] : sanitized)
+          : mergeNip46Relays(userId, sanitized)
+        const service = getNip46Service()
+        if (service) {
+          service.setActiveUser(userId)
+          await service.reloadRelays()
+        }
+        return Response.json({ relays: result }, { headers })
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : 'Failed to update relays'
+        return Response.json({ error: msg }, { status: 400, headers })
+      }
+    }
+
+    return Response.json({ error: 'Method not allowed' }, { status: 405, headers })
+  }
+
+  if (url.pathname === '/api/nip46/requests') {
+    if (req.method === 'GET') {
+      const statusFilter = parseStatusFilter(url.searchParams.get('status'))
+      const limitParam = url.searchParams.get('limit')
+      const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100
+      const requests = listNip46Requests(userId, { status: statusFilter ?? undefined, limit })
+      return Response.json({ requests }, { headers })
+    }
+
+    if (req.method === 'POST') {
+      let body: any
+      try {
+        body = await parseJsonRequestBody(req)
+      } catch (error) {
+        return Response.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, { status: 400, headers })
+      }
+
+      const id = typeof body?.id === 'string' ? body.id.trim() : ''
+      if (!id) {
+        return Response.json({ error: 'Field "id" is required' }, { status: 400, headers })
+      }
+
+      const action = typeof body?.action === 'string' ? body.action.trim().toLowerCase() : ''
+      const status = REQUEST_ACTION_STATUS[action]
+      if (!status) {
+        return Response.json({ error: 'Unsupported action. Use approve, deny, fail, or complete.' }, { status: 400, headers })
+      }
+
+      const result = typeof body?.result === 'string' ? body.result : null
+      const errorMessage = typeof body?.error === 'string' ? body.error : null
+
+       const policyPatch = parsePolicyPatch(body?.policy)
+       let existingRecord = policyPatch ? getNip46RequestById(id) : null
+       if (policyPatch) {
+         if (!existingRecord) {
+           return Response.json({ error: 'Request not found' }, { status: 404, headers })
+         }
+         const recordUserId = typeof existingRecord.user_id === 'bigint'
+           ? existingRecord.user_id.toString()
+           : String(existingRecord.user_id)
+         const requestUserId = typeof userId === 'bigint' ? userId.toString() : String(userId)
+         if (recordUserId !== requestUserId) {
+           return Response.json({ error: 'Request not found' }, { status: 404, headers })
+         }
+
+         const session = getSession(userId, existingRecord.session_pubkey)
+         if (!session) {
+           return Response.json({ error: 'Session not found for policy update' }, { status: 404, headers })
+         }
+
+         try {
+           const mergedPolicy = applyPolicyPatch(session.policy, policyPatch)
+           updatePolicy(userId, existingRecord.session_pubkey, mergedPolicy)
+         } catch (error) {
+           const message = error instanceof Error ? error.message : 'Failed to update policy'
+           return Response.json({ error: message }, { status: 400, headers })
+         }
+       }
+
+      const record = updateNip46RequestStatus(id, status, { result, error: errorMessage })
+      if (!record) {
+        return Response.json({ error: 'Request not found' }, { status: 404, headers })
+      }
+
+      const service = getNip46Service()
+      service?.onRequestStatusUpdated(record)
+
+      return Response.json({ request: record }, { headers })
+    }
+
+    if (req.method === 'DELETE') {
+      let body: any
+      try {
+        body = await parseJsonRequestBody(req)
+      } catch (error) {
+        return Response.json({ error: error instanceof Error ? error.message : 'Invalid JSON body' }, { status: 400, headers })
+      }
+
+      const id = typeof body?.id === 'string' ? body.id.trim() : ''
+      if (!id) {
+        return Response.json({ error: 'Field "id" is required' }, { status: 400, headers })
+      }
+
+      deleteNip46Request(id)
+      return Response.json({ ok: true }, { headers })
+    }
+
+    return Response.json({ error: 'Method not allowed' }, { status: 405, headers })
+  }
+
+  if (url.pathname === '/api/nip46/connect' && req.method === 'POST') {
+    let body: any
+    try {
+      body = await parseJsonRequestBody(req)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid JSON body'
+      return Response.json({ error: message }, { status: 400, headers })
+    }
+
+    const uriRaw = typeof body?.uri === 'string' ? body.uri.trim() : ''
+    if (!uriRaw) {
+      return Response.json({ error: 'Field "uri" is required' }, { status: 400, headers })
+    }
+    if (!uriRaw.toLowerCase().startsWith('nostrconnect://')) {
+      return Response.json({ error: 'Field "uri" must be a nostrconnect:// URL' }, { status: 400, headers })
+    }
+
+    const service = getNip46Service()
+    if (!service) {
+      return Response.json({ error: 'NIP-46 service unavailable' }, { status: 503, headers })
+    }
+
+    try {
+      service.setActiveUser(userId)
+      await service.ensureStarted()
+      const result = await service.connectFromUri(userId, uriRaw)
+      return Response.json(result, { headers })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to process connect string'
+      return Response.json({ error: message }, { status: 400, headers })
     }
   }
 

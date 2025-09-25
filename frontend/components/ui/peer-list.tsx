@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
-import { Badge } from './badge';
+import { Badge, type BadgeProps } from './badge';
 import { Tooltip } from './tooltip';
 import { RefreshCw, ChevronDown, ChevronUp, Radio, SlidersHorizontal, HelpCircle } from 'lucide-react';
 import { cn } from '../../lib/utils';
@@ -98,6 +98,7 @@ interface PolicyStateLabels {
   buttonLabel: string;
   statusLabel: string;
   isAllowed: boolean;
+  explicitValue: boolean | null;
 }
 
 const derivePolicyState = (
@@ -108,7 +109,8 @@ const derivePolicyState = (
     return {
       buttonLabel: 'Allow',
       statusLabel: 'allow',
-      isAllowed: true
+      isAllowed: true,
+      explicitValue: true
     };
   }
 
@@ -116,7 +118,8 @@ const derivePolicyState = (
     return {
       buttonLabel: 'Block',
       statusLabel: 'block',
-      isAllowed: false
+      isAllowed: false,
+      explicitValue: false
     };
   }
 
@@ -124,7 +127,8 @@ const derivePolicyState = (
     return {
       buttonLabel: 'Default (Allow)',
       statusLabel: 'default (allow)',
-      isAllowed: true
+      isAllowed: true,
+      explicitValue: null
     };
   }
 
@@ -132,15 +136,23 @@ const derivePolicyState = (
     return {
       buttonLabel: 'Default (Block)',
       statusLabel: 'default (block)',
-      isAllowed: false
+      isAllowed: false,
+      explicitValue: null
     };
   }
 
   return {
     buttonLabel: 'Default',
     statusLabel: 'default',
-    isAllowed: true
+    isAllowed: effectiveValue ?? true,
+    explicitValue: null
   };
+};
+
+const hasCustomPolicy = (policy: PeerPolicy): boolean => {
+  const sendOverride = typeof policy.allowSend === 'boolean' && policy.allowSend === false;
+  const receiveOverride = typeof policy.allowReceive === 'boolean' && policy.allowReceive === false;
+  return sendOverride || receiveOverride;
 };
 
 const PeerList: React.FC<PeerListProps> = ({
@@ -701,7 +713,16 @@ const PeerList: React.FC<PeerListProps> = ({
                   );
                   const sendAllowed = outboundPolicy.isAllowed;
                   const receiveAllowed = inboundPolicy.isAllowed;
-                  const hasExplicitPolicy = policySummary.hasExplicitPolicy;
+                  const isCustomPolicy = hasCustomPolicy(policySummary);
+                  const hasExplicitPolicy = isCustomPolicy;
+                  const policyBadgeVariant: BadgeProps['variant'] = isCustomPolicy
+                    ? (sendAllowed && receiveAllowed
+                        ? 'success'
+                        : sendAllowed || receiveAllowed
+                          ? 'warning'
+                          : 'error')
+                    : 'info';
+                  const policyBadgeLabel = isCustomPolicy ? 'Custom policy' : 'Default policy';
                   const canEditPolicies = isSignerRunning && !disabled;
 
                   return (
@@ -727,7 +748,7 @@ const PeerList: React.FC<PeerListProps> = ({
                             <div className="text-blue-300 text-sm font-mono break-all sm:truncate">
                               {peer.pubkey.slice(0, 16)}...{peer.pubkey.slice(-8)}
                             </div>
-                            <div className="flex flex-wrap items-center gap-1 sm:gap-2 text-xs text-gray-400">
+                            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-gray-400">
                               <span className="whitespace-nowrap">Status: {peer.online ? 'Online' : 'Offline'}</span>
                               {peer.latency && <span className="whitespace-nowrap">• Ping: {peer.latency}ms</span>}
                               {peer.lastSeen && peer.lastSeen instanceof Date && !isNaN(peer.lastSeen.getTime()) && (
@@ -736,18 +757,16 @@ const PeerList: React.FC<PeerListProps> = ({
                               {!peer.online && peer.lastPingAttempt && peer.lastPingAttempt instanceof Date && !isNaN(peer.lastPingAttempt.getTime()) && (
                                 <span className="whitespace-nowrap">• Last attempt: {peer.lastPingAttempt.toLocaleTimeString()}</span>
                               )}
-                              <span className="whitespace-nowrap">
-                                • Policy: out {outboundPolicy.statusLabel}, in {inboundPolicy.statusLabel}
-                              </span>
                             </div>
-                            {hasExplicitPolicy && (
+                            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
+                              <span className="whitespace-nowrap">Policy: out {outboundPolicy.statusLabel}, in {inboundPolicy.statusLabel}</span>
                               <Badge
-                                variant={sendAllowed && receiveAllowed ? 'success' : sendAllowed || receiveAllowed ? 'warning' : 'error'}
-                                className="mt-1 text-xs px-1.5 py-0.5 whitespace-nowrap"
+                                variant={policyBadgeVariant as any}
+                                className="text-xs px-2 py-0.5 whitespace-nowrap"
                               >
-                                Policy override active
+                                {policyBadgeLabel}
                               </Badge>
-                            )}
+                            </div>
                           </div>
                         </div>
 

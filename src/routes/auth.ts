@@ -222,6 +222,8 @@ function validateSessionSecret(): string | null {
   return sessionSecret;
 }
 
+const DEFAULT_RATE_LIMIT_MAX = HEADLESS ? 300 : 600;
+
 // Authentication configuration from environment variables
 export const AUTH_CONFIG = {
   // Enable/disable authentication (default: true for security)
@@ -239,8 +241,8 @@ export const AUTH_CONFIG = {
   // Rate limiting
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED !== 'false',
   RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW || '900') * 1000, // 15 minutes
-  // Loosen default a bit for local testing (300 per 15m); override via env for prod
-  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || '300'),
+  // Default is 300 per 15m in headless mode, 600 per 15m when backed by the database; override for production
+  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || String(DEFAULT_RATE_LIMIT_MAX)),
 };
 
 // Use centralized crypto constants for consistency

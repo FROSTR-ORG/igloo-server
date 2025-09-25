@@ -178,18 +178,17 @@ export async function handleAdminRoute(
           }
 
           // Perform atomic delete with last-admin guard inside a DB transaction
-          try {
-            const { success, error } = deleteUserSafely(normalizedUserId);
-            if (!success) {
-              const status = error === 'User not found' ? 404 : (error === 'Cannot delete the last admin user' ? 400 : 500);
-              return Response.json({ error: error || 'Deletion failed' }, { status, headers });
-            }
-            return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
-          } catch (err: any) {
-              console.error(`[admin] Error during user deletion for userId ${normalizedUserId}:`, err.message);
-              const status = err.message === 'User not found' ? 404 : (err.message === 'Cannot delete the last admin user' ? 400 : 500);
-              return Response.json({ error: err.message || 'Deletion failed' }, { status, headers });
+          const { success, error } = deleteUserSafely(normalizedUserId);
+          if (!success) {
+            console.error(`[admin] Error during user deletion for userId ${normalizedUserId}:`, error);
+            const status = error === 'User not found'
+              ? 404
+              : error === 'Cannot delete the last admin user'
+              ? 400
+              : 500;
+            return Response.json({ error: error || 'Deletion failed' }, { status, headers });
           }
+          return Response.json({ success: true, message: 'User deleted successfully' }, { headers });
         }
         break;
 

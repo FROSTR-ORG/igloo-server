@@ -1,342 +1,509 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react'
-import { NIP46Controller } from './nip46/controller'
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Sessions } from './nip46/Sessions'
 import { Requests } from './nip46/Requests'
-import { NIP46Config } from './nip46/types'
+import { RelaySettings } from './nip46/RelaySettings'
+import { Nip46SessionApi, Nip46RequestApi, PermissionPolicy, PolicyPatch } from './nip46/types'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './ui/tabs'
 import { Button } from './ui/button'
-import { Alert } from './ui/alert'
 import { Badge } from './ui/badge'
 import { StatusIndicator } from './ui/status-indicator'
+import { Input } from './ui/input'
+import { Alert } from './ui/alert'
+import { QRScanner } from './nip46/QRScanner'
 import Spinner from './ui/spinner'
-import { Shield, Users, Bell, HelpCircle, Copy as CopyIcon, Check as CheckIcon, Eye, EyeOff } from 'lucide-react'
-import { Tooltip } from './ui/tooltip'
-import { IconButton } from './ui/icon-button'
+import { Users, Bell, HelpCircle, Copy as CopyIcon, Check as CheckIcon, Eye, EyeOff, Radio, QrCode, X as CloseIcon } from 'lucide-react'
 
 interface NIP46Props {
-  privateKey?: string
   authHeaders?: Record<string, string>
-  groupCred?: string
-  shareCred?: string
-  bifrostNode?: any
 }
 
-export function NIP46({ privateKey, authHeaders, groupCred, shareCred }: NIP46Props) {
-  const [controller, setController] = useState<NIP46Controller | null>(null)
-  const [isConnected, setIsConnected] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+interface RequestActionOptions {
+  policyPatch?: PolicyPatch
+}
+
+const truncate = (hex?: string | null, size = 8) => {
+  if (!hex) return ''
+  return hex.length <= size * 2 ? hex : `${hex.slice(0, size)}...${hex.slice(-size)}`
+}
+
+export function NIP46({ authHeaders }: NIP46Props) {
+  const [sessions, setSessions] = useState<Nip46SessionApi[]>([])
+  const [sessionsLoading, setSessionsLoading] = useState(true)
+  const [requests, setRequests] = useState<Nip46RequestApi[]>([])
+  const [requestsLoading, setRequestsLoading] = useState(true)
+  const [requestsError, setRequestsError] = useState<string | null>(null)
+  const [requestActionPending, setRequestActionPending] = useState(false)
+  const [nip46Relays, setNip46Relays] = useState<string[]>([])
+  const [relaysLoading, setRelaysLoading] = useState(true)
+  const [relaySaving, setRelaySaving] = useState(false)
+  const [relaysError, setRelaysError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState('sessions')
-  const [requestCount, setRequestCount] = useState(0)
-  const [sessionCount, setSessionCount] = useState(0)
-  const cleanupRef = useRef<(() => void) | null>(null)
-  const [initializing, setInitializing] = useState(true)
   const [showFullKeys, setShowFullKeys] = useState(false)
   const [copied, setCopied] = useState<{ transport?: boolean; user?: boolean }>({})
+  const [transportKey, setTransportKey] = useState<string | null>(null)
+  const [isConnected, setIsConnected] = useState(false)
+  const [connectUri, setConnectUri] = useState('')
+  const [connectError, setConnectError] = useState<string | null>(null)
+  const [connectSuccess, setConnectSuccess] = useState<string | null>(null)
+  const [connecting, setConnecting] = useState(false)
+  const [showScanner, setShowScanner] = useState(false)
+  const sessionsSignature = useRef('')
 
-  const defaultConfig: NIP46Config = useMemo(() => ({
-    relays: [
-      'wss://relay.damus.io',
-      'wss://nos.lol',
-      'wss://relay.nostr.band',
-      'wss://bucket.coracle.social',
-      'wss://relay.nsec.app/'
-    ],
-    policy: {
-      methods: {
-        'sign_event': true,
-        'get_public_key': true,
-        'nip44_encrypt': true,
-        'nip44_decrypt': true,
-        // NIP-04 is not implemented in ServerSigner; keep disabled by default
-        'nip04_encrypt': false,
-        'nip04_decrypt': false
-      },
-      kinds: {}
-    },
-    profile: {
-      name: 'Igloo Server',
-      url: typeof window !== 'undefined' ? window.location.origin : undefined,
-      image: '/assets/frostr-logo-transparent.png'
-    },
-    timeout: 30
-  }), [])
+  const headers = useMemo(() => ({ 'Content-Type': 'application/json', ...(authHeaders || {}) }), [authHeaders])
+  const sessionsInitialized = useRef(false)
+  const requestsInitialized = useRef(false)
 
-  // Obtain a stable transport key for this user from the server (DB-backed)
-  const fetchTransportKey = async (): Promise<string | undefined> => {
+  const fetchSessions = useCallback(async () => {
+    if (!sessionsInitialized.current) {
+      setSessionsLoading(true)
+    }
     try {
-      const res = await fetch('/api/nip46/transport', { headers: { 'Content-Type': 'application/json', ...(authHeaders || {}) } })
+      const res = await fetch('/api/nip46/sessions?history=true', { headers })
       if (res.ok) {
         const data = await res.json()
-        const sk = typeof data?.transport_sk === 'string' ? data.transport_sk : ''
-        if (/^[0-9a-fA-F]{64}$/.test(sk)) return sk.toLowerCase()
+        const rawSessions: Nip46SessionApi[] = Array.isArray(data.sessions) ? data.sessions : []
+        const normalized = [...rawSessions].sort((a, b) => a.pubkey.localeCompare(b.pubkey))
+        const signature = JSON.stringify(normalized)
+        if (signature !== sessionsSignature.current) {
+          sessionsSignature.current = signature
+          setSessions(normalized)
+        }
       }
-    } catch (e) {
-      console.warn('[NIP46] Failed to fetch transport key from server; falling back to local storage', e)
+    } finally {
+      sessionsInitialized.current = true
+      setSessionsLoading(false)
     }
-    // Fallback: persist locally to avoid signer identity churn within the browser
+  }, [headers])
+
+  const fetchRequests = useCallback(async () => {
+    if (!requestsInitialized.current) {
+      setRequestsLoading(true)
+    }
     try {
-      const storageKey = 'igloo:nip46:transport_sk'
-      const storage = typeof window !== 'undefined' ? window.sessionStorage : undefined
-      if (!storage) return undefined
-      let sk = storage.getItem(storageKey) || ''
-      if (sk && /^[0-9a-fA-F]{64}$/.test(sk)) return sk.toLowerCase()
-      const bytes = new Uint8Array(32)
-      crypto.getRandomValues(bytes)
-      sk = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
-      storage.setItem(storageKey, sk)
-      return sk
+      const res = await fetch('/api/nip46/requests?status=pending', { headers })
+      if (res.ok) {
+        const data = await res.json()
+        setRequests(Array.isArray(data.requests) ? data.requests : [])
+      }
+    } finally {
+      requestsInitialized.current = true
+      setRequestsLoading(false)
+    }
+  }, [headers])
+
+  const fetchRelays = useCallback(async () => {
+    setRelaysLoading(true)
+    try {
+      const res = await fetch('/api/nip46/relays', { headers })
+      if (res.ok) {
+        const data = await res.json()
+        setNip46Relays(Array.isArray(data.relays) ? data.relays : [])
+      }
+    } finally {
+      setRelaysLoading(false)
+    }
+  }, [headers])
+
+  const fetchTransport = useCallback(async () => {
+    try {
+      const res = await fetch('/api/nip46/transport', { headers })
+      if (res.ok) {
+        const data = await res.json()
+        if (typeof data?.transport_sk === 'string') {
+          setTransportKey(data.transport_sk)
+          setIsConnected(true)
+        }
+      }
     } catch {
-      return undefined
+      setIsConnected(false)
     }
-  }
+  }, [headers])
 
-  useEffect(() => {
-    let cancelled = false
-    const boot = async () => {
-      if (groupCred && shareCred) {
-        setInitializing(true)
-        const stableSk = await fetchTransportKey()
-        // Fetch server relays to align NIP-46 with backend
-        let serverRelays: string[] = []
-        try {
-          const res = await fetch('/api/status', { headers: { ...(authHeaders || {}) } })
-          if (res.ok) {
-            const data = await res.json()
-            if (Array.isArray(data?.relays)) {
-              serverRelays = data.relays.filter((r: any) => typeof r === 'string' && r.startsWith('ws'))
-            }
-          }
-        } catch {}
-        if (!cancelled) await initializeController(stableSk, authHeaders, serverRelays)
-      } else if (privateKey) {
-        setInitializing(true)
-        let serverRelays: string[] = []
-        try {
-          const res = await fetch('/api/status', { headers: { ...(authHeaders || {}) } })
-          if (res.ok) {
-            const data = await res.json()
-            if (Array.isArray(data?.relays)) {
-              serverRelays = data.relays.filter((r: any) => typeof r === 'string' && r.startsWith('ws'))
-            }
-          }
-        } catch {}
-        if (!cancelled) await initializeController(privateKey, authHeaders, serverRelays)
-      } else {
-        setInitializing(false)
-      }
-    }
-    boot()
-
-    return () => {
-      // Detach event listeners and close socket cleanly
-      try { cleanupRef.current?.() } catch {}
-      cleanupRef.current = null
-      controller?.disconnect().catch(() => {})
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [privateKey, groupCred, shareCred, authHeaders])
-
-  const initializeController = async (key?: string, auth?: Record<string, string>, serverRelays?: string[]) => {
+  const performRequestAction = useCallback(async (
+    targets: Nip46RequestApi[],
+    action: 'approve' | 'deny',
+    options?: RequestActionOptions
+  ) => {
+    if (!targets.length) return
+    setRequestsError(null)
+    setRequestActionPending(true)
     try {
-      setError(null)
-      const nip46Controller = new NIP46Controller(defaultConfig)
-
-      // Bind handlers with stable references for cleanup
-      const onConnected = () => { setIsConnected(true); setError(null) }
-      const onDisconnected = () => setIsConnected(false)
-      const onError = (err: Error) => setError(err.message)
-      const updateCounts = () => {
-        const sessions = nip46Controller.getActiveSessions().length + nip46Controller.getPendingSessions().length
-        setSessionCount(sessions)
-        setRequestCount(nip46Controller.getPendingRequests().length)
+      await Promise.all(targets.map(async target => {
+        const payload: Record<string, any> = { id: target.id, action }
+        if (options?.policyPatch) {
+          payload.policy = options.policyPatch
+        }
+        const res = await fetch('/api/nip46/requests', {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(payload)
+        })
+        if (!res.ok) {
+          const text = await res.text().catch(() => '')
+          throw new Error(text || 'Failed to update request')
+        }
+      }))
+      await fetchRequests()
+      if (options?.policyPatch) {
+        await fetchSessions()
       }
-      const onRequestApproved = () => { updateCounts(); setError(null) }
-      const onRequestDenied = () => { updateCounts() }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update request'
+      setRequestsError(message)
+    } finally {
+      setRequestActionPending(false)
+    }
+  }, [headers, fetchRequests, fetchSessions])
 
-      nip46Controller.on('connected', onConnected)
-      nip46Controller.on('disconnected', onDisconnected)
-      nip46Controller.on('error', onError)
-      nip46Controller.on('session:active', updateCounts)
-      nip46Controller.on('session:pending', updateCounts)
-      nip46Controller.on('session:updated', updateCounts)
-      nip46Controller.on('request:new', updateCounts)
-      nip46Controller.on('request:approved', onRequestApproved)
-      nip46Controller.on('request:denied', onRequestDenied)
+  useEffect(() => {
+    fetchSessions()
+    fetchRequests()
+    fetchRelays()
+    fetchTransport()
 
-      // Initialize transport (derive deterministic key only if explicitly provided)
-      // Use the provided key for deterministic identity, or ephemeral if undefined
-      await nip46Controller.initialize(key, auth, Array.isArray(serverRelays) ? serverRelays : [])
+    const interval = setInterval(() => {
+      fetchSessions()
+      fetchRequests()
+    }, 5000)
+    return () => clearInterval(interval)
+  }, [fetchSessions, fetchRequests, fetchRelays, fetchTransport])
 
-      // Prime counts immediately
-      updateCounts()
+  useEffect(() => {
+    const handleNip46Event = (event: Event) => {
+      const detail = (event as CustomEvent<{ type?: string }>).detail
+      const type = typeof detail?.type === 'string' ? detail.type : ''
+      if (!type.startsWith('nip46:')) return
 
-      // Save controller and a cleanup function to detach listeners
-      setController(nip46Controller)
-      setInitializing(false)
-      cleanupRef.current = () => {
-        try {
-          nip46Controller.off('connected', onConnected)
-          nip46Controller.off('disconnected', onDisconnected)
-          nip46Controller.off('error', onError)
-          nip46Controller.off('session:active', updateCounts)
-          nip46Controller.off('session:pending', updateCounts)
-          nip46Controller.off('session:updated', updateCounts)
-          nip46Controller.off('request:new', updateCounts)
-          nip46Controller.off('request:approved', onRequestApproved)
-          nip46Controller.off('request:denied', onRequestDenied)
-        } catch {}
+      if (type === 'nip46:request') {
+        void fetchRequests()
+      } else if (type === 'nip46:request_status') {
+        void fetchRequests()
+        void fetchSessions()
+      } else if (type === 'nip46:session_pending') {
+        void fetchSessions()
       }
-    } catch (err: any) {
-      setError(err?.message || 'Failed to initialize NIP-46')
-      setInitializing(false)
+    }
+
+    window.addEventListener('nip46Event', handleNip46Event as EventListener)
+    return () => {
+      window.removeEventListener('nip46Event', handleNip46Event as EventListener)
+    }
+  }, [fetchRequests, fetchSessions])
+
+  const handleCopy = async (which: 'transport' | 'user', text?: string | null) => {
+    if (!text) return
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(prev => ({ ...prev, [which]: true }))
+      setTimeout(() => setCopied(prev => ({ ...prev, [which]: false })), 1500)
+    } catch {}
+  }
+
+  const handleApproveRequest = useCallback(async (request: Nip46RequestApi, options?: RequestActionOptions) => {
+    await performRequestAction([request], 'approve', options)
+  }, [performRequestAction])
+
+  const handleDenyRequest = useCallback(async (request: Nip46RequestApi, options?: RequestActionOptions) => {
+    await performRequestAction([request], 'deny', options)
+  }, [performRequestAction])
+
+  const handleApproveMany = useCallback(async (targets: Nip46RequestApi[], options?: RequestActionOptions) => {
+    await performRequestAction(targets, 'approve', options)
+  }, [performRequestAction])
+
+  const handleDenyMany = useCallback(async (targets: Nip46RequestApi[], options?: RequestActionOptions) => {
+    await performRequestAction(targets, 'deny', options)
+  }, [performRequestAction])
+
+  const policyBySession = useMemo(() => {
+    const map: Record<string, PermissionPolicy> = {}
+    sessions.forEach(session => {
+      map[session.pubkey] = {
+        methods: { ...(session.policy?.methods ?? {}) },
+        kinds: { ...(session.policy?.kinds ?? {}) }
+      }
+    })
+    return map
+  }, [sessions])
+
+  const handleRevokeSession = async (pubkey: string) => {
+    await fetch(`/api/nip46/sessions/${pubkey}`, {
+      method: 'DELETE',
+      headers
+    })
+    await fetchSessions()
+  }
+
+  const handleUpdateSessionPolicy = useCallback(async (pubkey: string, policy: PermissionPolicy) => {
+    await fetch(`/api/nip46/sessions/${pubkey}/policy`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        methods: policy.methods,
+        kinds: policy.kinds
+      })
+    })
+    await fetchSessions()
+  }, [headers, fetchSessions])
+
+  const handleAddRelay = async (relay: string) => {
+    setRelaysError(null)
+    setRelaySaving(true)
+    try {
+      const res = await fetch('/api/nip46/relays', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ relays: [relay] })
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'Failed to add relay')
+        throw new Error(text)
+      }
+      await fetchRelays()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to add relay'
+      setRelaysError(message)
+    } finally {
+      setRelaySaving(false)
     }
   }
 
-  // Auto-dismiss errors after a short delay so the UI doesn’t get stuck
-  useEffect(() => {
-    if (!error) return
-    const t = setTimeout(() => setError(null), 12000)
-    return () => clearTimeout(t)
-  }, [error])
-
-  if (!privateKey && !(groupCred && shareCred)) {
-    return (
-      <div className="space-y-6">
-        <Alert variant="warning">
-          <Shield className="h-4 w-4" />
-          <span>NIP-46 remote signing requires an active signer with loaded credentials.</span>
-        </Alert>
-      </div>
-    )
+  const handleRemoveRelay = async (relay: string) => {
+    setRelaysError(null)
+    setRelaySaving(true)
+    try {
+      const next = nip46Relays.filter(r => r !== relay)
+      const res = await fetch('/api/nip46/relays', {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ relays: next })
+      })
+      if (!res.ok) {
+        const text = await res.text().catch(() => 'Failed to remove relay')
+        throw new Error(text)
+      }
+      await fetchRelays()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to remove relay'
+      setRelaysError(message)
+    } finally {
+      setRelaySaving(false)
+    }
   }
 
-  if (initializing) {
+  const submitConnect = useCallback(async (value: string) => {
+    if (connecting) return
+    const target = value.trim()
+    if (!target) {
+      setConnectError('Enter a nostrconnect:// URI to connect.')
+      return
+    }
+    if (!target.toLowerCase().startsWith('nostrconnect://')) {
+      setConnectError('URI must start with nostrconnect://')
+      return
+    }
+
+    setConnecting(true)
+    setConnectError(null)
+    setConnectSuccess(null)
+    try {
+      const res = await fetch('/api/nip46/connect', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ uri: target })
+      })
+
+      if (!res.ok) {
+        let message = 'Failed to connect'
+        try {
+          const data = await res.json()
+          if (data?.error) message = data.error
+        } catch {
+          const text = await res.text().catch(() => '')
+          if (text) message = text
+        }
+        throw new Error(message)
+      }
+
+      const data = await res.json().catch(() => ({}))
+      const session = data?.session ?? {}
+      const displayName = session.profile?.name || session.profile?.url || truncate(session.pubkey, 8) || 'client'
+      setConnectSuccess(`Connection request sent to ${displayName}. Awaiting approval.`)
+      setConnectUri('')
+      setShowScanner(false)
+      await Promise.all([fetchSessions(), fetchRequests(), fetchRelays()])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to connect'
+      setConnectError(message)
+    } finally {
+      setConnecting(false)
+    }
+  }, [connecting, headers, fetchSessions, fetchRequests, fetchRelays])
+
+  const handleConnectSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault()
+    await submitConnect(connectUri)
+  }
+
+  const handleScanResult = useCallback((uri: string) => {
+    setConnectUri(uri)
+    setShowScanner(false)
+    void submitConnect(uri)
+  }, [submitConnect])
+
+  const handleScannerError = useCallback((error: Error) => {
+    setConnectError(error.message)
+  }, [])
+
+  if (sessionsLoading && requestsLoading && relaysLoading) {
     return (
       <div className="space-y-6">
-        <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4">
-          <Spinner label="Initializing NIP‑46…" size="md" />
+            <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4">
+              <Spinner label="Loading NIP-46..." size="md" />
         </div>
       </div>
     )
-  }
-
-  const renderKey = (hex?: string | null) => {
-    if (!hex) return ''
-    return showFullKeys ? hex : `${hex.slice(0, 8)}...${hex.slice(-4)}`
-  }
-  const copy = async (which: 'transport' | 'user', text?: string | null) => {
-    if (!text) return
-    try { await navigator.clipboard.writeText(text) } catch {}
-    setCopied(prev => ({ ...prev, [which]: true }))
-    setTimeout(() => setCopied(prev => ({ ...prev, [which]: false })), 1500)
   }
 
   return (
     <div className="space-y-6">
       <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4">
         <div className="flex flex-col gap-2 md:gap-1">
-          {/* Row 1: status + counts */}
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-4 flex-wrap">
               <StatusIndicator status={isConnected ? 'success' : 'idle'} label={isConnected ? 'NIP-46 Ready' : 'NIP-46 Disconnected'} />
               <div className="flex items-center gap-4 text-sm">
                 <div className="flex items-center gap-1">
                   <Users className="h-4 w-4 text-blue-400" />
-                  <span className="text-gray-400">{sessionCount} {sessionCount === 1 ? 'session' : 'sessions'}</span>
+                  <span className="text-gray-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Bell className="h-4 w-4 text-blue-400" />
-                  <span className="text-gray-400">{requestCount} {requestCount === 1 ? 'request' : 'requests'}</span>
+                  <span className="text-gray-400">{requests.filter(r => r.status === 'pending').length} pending requests</span>
                 </div>
               </div>
             </div>
+            <Button variant="ghost" size="sm" onClick={() => setShowFullKeys(v => !v)}>
+              {showFullKeys ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+            </Button>
           </div>
 
-          {/* Row 2: identities + controls; wraps on small screens */}
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 text-xs">
-              <IconButton
-                variant="ghost"
-                size="sm"
-                icon={showFullKeys ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                tooltip={showFullKeys ? 'Show shortened keys' : 'Show full keys'}
-                onClick={() => setShowFullKeys(v => !v)}
-              />
+          {transportKey && (
+            <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
+              <div className="flex items-center gap-1">
+                <span>Transport</span>
+                <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
+                <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
+                  {showFullKeys ? transportKey : truncate(transportKey, 8)}
+                </span>
+                <Button variant="ghost" size="icon" onClick={() => handleCopy('transport', transportKey)}>
+                  {copied.transport ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
+                </Button>
+              </div>
             </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs md:justify-end">
-              {controller && controller.getTransportPubkey() && (
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">Transport</span>
-                  <Tooltip
-                    trigger={<HelpCircle className="h-3.5 w-3.5 text-blue-400 cursor-pointer" />}
-                    width="w-72"
-                    content={
-                      <>
-                        <p className="mb-1 font-semibold">Remote‑signer pubkey</p>
-                        <p className="text-xs text-gray-300">Key used for nostr‑connect traffic (kind 24133). Clients address this key; distinct from the user pubkey returned by get_public_key.</p>
-                      </>
-                    }
-                  />
-                  <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
-                    {renderKey(controller.getTransportPubkey())}
-                  </span>
-                  <IconButton
-                    variant="ghost"
-                    size="sm"
-                    icon={copied.transport ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
-                    tooltip={copied.transport ? 'Copied' : 'Copy transport pubkey'}
-                    onClick={() => copy('transport', controller.getTransportPubkey())}
-                  />
-                </div>
-              )}
-              {controller && controller.getIdentityPubkey() && (
-                <div className="flex items-center gap-2">
-                  <span className="text-gray-500">User</span>
-                  <Shield className="h-3 w-3 text-blue-400" />
-                  <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
-                    {renderKey(controller.getIdentityPubkey())}
-                  </span>
-                  <IconButton
-                    variant="ghost"
-                    size="sm"
-                    icon={copied.user ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
-                    tooltip={copied.user ? 'Copied' : 'Copy user pubkey'}
-                    onClick={() => copy('user', controller.getIdentityPubkey())}
-                  />
-                </div>
-              )}
-            </div>
-          </div>
+          )}
         </div>
       </div>
 
-      {error && (
-        <Alert variant="error" onClose={() => setError(null)} dismissAfterMs={12000}>
-          {error}
-        </Alert>
-      )}
+      <div className="bg-gray-800/50 border border-blue-900/30 rounded-lg p-4 space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h3 className="text-sm font-medium text-blue-200">Add Signing Client</h3>
+            <p className="text-xs text-gray-400">Paste a nostrconnect:// URI or scan a QR code to register a client.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowScanner(prev => !prev)}
+              aria-label={showScanner ? 'Hide QR scanner' : 'Show QR scanner'}
+            >
+              {showScanner ? <CloseIcon className="h-4 w-4" /> : <QrCode className="h-4 w-4" />}
+              <span className="sr-only">{showScanner ? 'Hide QR scanner' : 'Show QR scanner'}</span>
+            </Button>
+          </div>
+        </div>
+        <form className="flex flex-col sm:flex-row gap-2" onSubmit={handleConnectSubmit}>
+          <Input
+            value={connectUri}
+            onChange={(event) => setConnectUri(event.target.value)}
+            placeholder="nostrconnect://..."
+            className="bg-gray-900/40 border-blue-900/30 font-mono text-xs sm:text-sm"
+            spellCheck={false}
+          />
+          <Button type="submit" disabled={connecting || !connectUri.trim()}>
+            {connecting ? 'Connecting…' : 'Connect'}
+          </Button>
+        </form>
+        {connectError && (
+          <Alert variant="error" onClose={() => setConnectError(null)} dismissAfterMs={10000}>
+            {connectError}
+          </Alert>
+        )}
+        {connectSuccess && (
+          <Alert variant="success" onClose={() => setConnectSuccess(null)} dismissAfterMs={6000}>
+            {connectSuccess}
+          </Alert>
+        )}
+        {showScanner && (
+          <div className="border border-blue-900/30 rounded-lg p-3 bg-gray-900/40">
+            <QRScanner onResult={handleScanResult} onError={handleScannerError} />
+          </div>
+        )}
+      </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid grid-cols-2 mb-4 bg-gray-800/50 w-full">
+        <TabsList className="grid grid-cols-3 mb-4 bg-gray-800/50 w-full">
           <TabsTrigger value="sessions" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
             <Users className="h-4 w-4 mr-2" />
             Sessions
-            {sessionCount > 0 && <Badge variant="info" className="ml-2">{sessionCount}</Badge>}
+            <Badge variant="info" className="ml-2">{sessions.length}</Badge>
           </TabsTrigger>
           <TabsTrigger value="requests" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
             <Bell className="h-4 w-4 mr-2" />
             Requests
-            {requestCount > 0 && <Badge variant="warning" className="ml-2">{requestCount}</Badge>}
+            <Badge variant="warning" className="ml-2">{requests.filter(r => r.status === 'pending').length}</Badge>
+          </TabsTrigger>
+          <TabsTrigger value="relays" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
+            <Radio className="h-4 w-4 mr-2" />
+            Relays
+            <Badge className="ml-2">{nip46Relays.length}</Badge>
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="sessions">
-          <Sessions controller={controller} />
+        <TabsContent value="sessions" forceMount className="p-2 sm:p-4">
+          <Sessions
+            sessions={sessions}
+            loading={sessionsLoading}
+            onRevoke={handleRevokeSession}
+            onUpdatePolicy={handleUpdateSessionPolicy}
+          />
         </TabsContent>
 
-        <TabsContent value="requests">
-          <Requests controller={controller} />
+        <TabsContent value="requests" forceMount className="p-2 sm:p-4">
+          <Requests
+            requests={requests}
+            loading={requestsLoading}
+            actionPending={requestActionPending}
+            error={requestsError}
+            policies={policyBySession}
+            onApprove={handleApproveRequest}
+            onDeny={handleDenyRequest}
+            onApproveMany={handleApproveMany}
+            onDenyMany={handleDenyMany}
+          />
+        </TabsContent>
+
+        <TabsContent value="relays" className="p-2 sm:p-4">
+          <RelaySettings
+            relays={nip46Relays}
+            loading={relaysLoading}
+            saving={relaySaving}
+            error={relaysError}
+            onAdd={handleAddRelay}
+            onRemove={handleRemoveRelay}
+          />
         </TabsContent>
       </Tabs>
     </div>

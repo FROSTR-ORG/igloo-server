@@ -120,24 +120,24 @@ Features:
 - ❌ Frontend/UI disabled (API-only)
 
 #### Headless Peer Policies
-Use the `PEER_POLICIES` environment variable to pre-load directional allow/deny rules when the server boots. Provide a JSON array (or single JSON object) with `pubkey`, `allowSend`, and `allowReceive` fields. Example:
+Use the `PEER_POLICIES` environment variable to pre-load deviations from the default `allow`/`allow` policy when the server boots. Provide a JSON array (or single JSON object) with the peer `pubkey` and any directions you want to block (`allowSend:false` and/or `allowReceive:false`). Example:
 
 ```
-PEER_POLICIES=[{"pubkey":"abcdef...","allowSend":false,"allowReceive":true}]
+PEER_POLICIES=[{"pubkey":"abcdef...","allowSend":false}]
 ```
 
-Entries default missing flags to `true`, so you can flip only one direction if needed. Policies are applied during node creation and are treated as config-sourced in the peer UI.
+Entries that keep both directions allowed are ignored—only explicit blocks are persisted. At runtime the server also mirrors database-stored policies into `data/peer-policies.json` so headless/API-auth sessions pick up overrides after restarts.
 
 ### Mode Selection Guide
 
-| Use Case | Recommended Mode | Key Benefit |
-|----------|-----------------|-------------|
-| Personal multi-device | Database | Access from anywhere with login |
-| Team collaboration | Database | Individual user accounts |
-| Automated signing node | Headless | Simple env-based config |
-| Docker/Kubernetes | Headless | Container-friendly |
-| High-security setup | Database | Encrypted credential storage |
-| Quick testing | Headless | Minimal configuration |
+| Use Case | Recommended Mode | Why |
+|----------|-----------------|-----|
+| Personal multi-device | Database | Login-protected access with encrypted credential storage |
+| Team collaboration | Database | Per-user accounts and policy persistence |
+| Automated signing node | Headless | Minimal env-based config, API-focused |
+| Docker/Kubernetes | Headless | Container-friendly env vars |
+| High-security setup | Database | Credentials encrypted at rest; peer policies tied to accounts |
+| Quick testing | Headless | Fast bootstrap with direct env creds |
 
 To choose your mode, set the `HEADLESS` environment variable:
 ```bash
@@ -330,6 +330,9 @@ export GROUP_NAME="my-signing-group"
 # Start server (node will start automatically with valid credentials)
 bun run start
 
+# Optional: block directions per peer (defaults remain allow/allow unless you set explicit false)
+export PEER_POLICIES='[{"pubkey":"02abcdef...","allowSend":false}]'
+
 # Alternative: For development/testing only, you can use .env file
 # ⚠️ Remember: .env files are gitignored but still risky for secrets
 # cat > .env << EOF
@@ -341,7 +344,10 @@ bun run start
 # EOF
 ```
 
-**Note**: In headless mode, credentials are read from environment variables and the frontend is disabled. Use API endpoints only.
+**Notes for headless mode**
+- The React frontend is disabled; manage the server via API.
+- Leave `GROUP_CRED`/`SHARE_CRED` unset to configure credentials later through the API before the node starts.
+- `PEER_POLICIES` only persists entries that set `allowSend:false` or `allowReceive:false`. Saved overrides are mirrored to `data/peer-policies.json` so they survive restarts and are applied for API-key flows.
 
 ### Docker Deployment
 

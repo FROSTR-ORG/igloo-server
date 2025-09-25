@@ -4,12 +4,14 @@ import {
   getUserCredentials,
   updateUserCredentials,
   deleteUserCredentials,
+  getUserPeerPolicies,
   type UserCredentials
 } from '../db/database.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createNodeWithCredentials } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
+import { getNip46Service } from '../nip46/index.js';
 
 // Define route-to-methods mapping for proper 404/405 handling
 const ROUTE_METHODS: Record<string, string[]> = {
@@ -48,6 +50,23 @@ function isValidWebSocketUrl(value: string): boolean {
   } catch {
     return false;
   }
+}
+
+function resolveUserId(input: unknown): number | bigint | null {
+  if (typeof input === 'number' && Number.isSafeInteger(input) && input > 0) {
+    return input;
+  }
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    if (/^\d+$/.test(trimmed)) {
+      try {
+        return BigInt(trimmed);
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
 }
 
 export async function handleUserRoute(
@@ -176,20 +195,40 @@ export async function handleUserRoute(
               if (!context.node) {
                 context.addServerLog('info', 'Auto-starting Bifrost node for logged-in user...');
                 try {
+                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
                   const node = await createNodeWithCredentials(
                     groupCred,
                     shareCred,
                     relays?.join(','),
-                    context.addServerLog
+                    context.addServerLog,
+                    peerPoliciesJson
                   );
                   if (node) {
-                    context.updateNode(node);
+                    context.updateNode(node, {
+                      credentials: {
+                        group: groupCred,
+                        share: shareCred,
+                        relaysEnv: relays?.join(','),
+                        peerPoliciesRaw: peerPoliciesJson,
+                        source: 'dynamic'
+                      }
+                    });
                   }
                 } catch (error) {
                   context.addServerLog('error', 'Failed to auto-start node', error);
                 }
               }
             }, context);
+          }
+
+          const service = getNip46Service();
+          if (service) {
+            const resolvedId = resolveUserId(auth?.userId);
+            if (resolvedId) {
+              service.setActiveUser(resolvedId);
+              await service.ensureStarted();
+            }
           }
 
           return Response.json(credentials, { headers });
@@ -302,14 +341,30 @@ export async function handleUserRoute(
               await executeUnderNodeLock(async () => {
                 if (!context.node && credentials) {
                   context.addServerLog('info', 'Starting Bifrost node with saved credentials...');
+                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
+                  const groupCred = credentials.group_cred!;
+                  const shareCred = credentials.share_cred!;
+                  const relays = credentials.relays;
+                  const relaysEnv = relays?.length ? relays.join(',') : undefined;
+
                   const node = await createNodeWithCredentials(
-                    credentials.group_cred!,
-                    credentials.share_cred!,
-                    credentials.relays?.join(','),
-                    context.addServerLog
+                    groupCred,
+                    shareCred,
+                    relaysEnv,
+                    context.addServerLog,
+                    peerPoliciesJson
                   );
                   if (node) {
-                    context.updateNode(node);
+                    context.updateNode(node, {
+                      credentials: {
+                        group: groupCred,
+                        share: shareCred,
+                        relaysEnv,
+                        peerPoliciesRaw: peerPoliciesJson,
+                        source: 'dynamic'
+                      }
+                    });
                   }
                 } else {
                   context.addServerLog('info', 'Node already running, skipping restart');

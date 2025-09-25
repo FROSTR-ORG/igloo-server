@@ -4,9 +4,13 @@ import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
 import * as CONST from './const.js';
 import { 
-  handleRequest, 
+  handleRequest
+} from './routes/index.js';
+import type { 
   PeerStatus, 
-  ServerBifrostNode 
+  ServerBifrostNode,
+  UpdateNodeOptions,
+  NodeCredentialSnapshot
 } from './routes/index.js';
 import { assertNoSessionSecretExposure } from './routes/utils.js';
 import { 
@@ -17,6 +21,7 @@ import {
   cleanupMonitoring,
   resetHealthMonitoring
 } from './node/manager.js';
+import { initNip46Service, getNip46Service } from './nip46/index.js'
 import { clearCleanupTimers } from './routes/node-manager.js';
 
 // Node restart configuration with validation
@@ -98,6 +103,8 @@ function isBenignRelayErrorMessage(message: string | undefined): boolean {
     lower.includes('econnreset') ||
     lower.includes('network error') ||
     lower.includes('temporarily unavailable') ||
+    lower.includes('publish timed out') ||
+    lower.includes('relay publish timed out') ||
     lower.includes('policy violated') ||
     lower.includes('web of trust') ||
     lower.includes('policy violation')
@@ -144,11 +151,61 @@ const eventStreams = new Set<ServerWebSocket<EventStreamData>>();
 // Peer status tracking
 let peerStatuses = new Map<string, PeerStatus>();
 
+let node: ServerBifrostNode | null = null;
 
+type ActiveNodeCredentials = {
+  group: string;
+  share: string;
+  relaysEnv?: string;
+  peerPoliciesRaw?: string;
+  source: 'env' | 'dynamic';
+};
+
+const normalizeCredentialSnapshot = (
+  snapshot: NodeCredentialSnapshot | null | undefined,
+  fallbackSource: 'env' | 'dynamic' = 'dynamic'
+): ActiveNodeCredentials | null => {
+  if (!snapshot?.group || !snapshot?.share) {
+    return null;
+  }
+
+  return {
+    group: snapshot.group,
+    share: snapshot.share,
+    relaysEnv: snapshot.relaysEnv,
+    peerPoliciesRaw: snapshot.peerPoliciesRaw,
+    source: snapshot.source ?? fallbackSource
+  };
+};
+
+const buildEnvCredentialSnapshot = (): ActiveNodeCredentials | null => {
+  if (!CONST.hasCredentials()) {
+    return null;
+  }
+
+  return normalizeCredentialSnapshot(
+    {
+      group: CONST.GROUP_CRED!,
+      share: CONST.SHARE_CRED!,
+      relaysEnv: process.env.RELAYS,
+      peerPoliciesRaw: process.env.PEER_POLICIES,
+      source: 'env'
+    },
+    'env'
+  );
+};
+
+let activeCredentials: ActiveNodeCredentials | null = buildEnvCredentialSnapshot();
+const restartState = { blockedByCredentials: false };
 
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
+const nip46Service = initNip46Service({
+  addServerLog,
+  broadcastEvent,
+  getNode: () => node
+});
 
 // Removed global nostr-tools SimplePool monkey-patch in favor of proxy-based instrumentation
 // See: src/node/manager.ts createInstrumentedNode/createInstrumentedClient/createInstrumentedPool
@@ -307,9 +364,6 @@ initializeDatabase().catch((err) => {
 // Create the Nostr relay
 const relay = new NostrRelay();
 
-// Create and connect the Bifrost node using igloo-core only if credentials are available
-let node: ServerBifrostNode | null = null;
-
 // Node restart state management
 let isRestartInProgress = false;
 let currentRetryCount = 0;
@@ -328,10 +382,23 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     clearTimeout(restartTimeout);
     restartTimeout = null;
   }
-  
+
+  const envSnapshot = buildEnvCredentialSnapshot();
+  const credentialsToUse = activeCredentials ?? envSnapshot;
+
+  if (!credentialsToUse) {
+    addServerLog('error', 'Node restart aborted: no active credentials available');
+    restartState.blockedByCredentials = true;
+    currentRetryCount = 0;
+    return;
+  }
+
+  const credentialSnapshot: ActiveNodeCredentials = { ...credentialsToUse };
+
   isRestartInProgress = true;
+  restartState.blockedByCredentials = false;
   addServerLog('system', `Restarting node due to: ${reason} (attempt ${currentRetryCount + 1}/${RESTART_CONFIG.MAX_RETRY_ATTEMPTS})`);
-  
+
   try {
     // Clean up existing node
     if (node) {
@@ -354,33 +421,30 @@ async function restartNode(reason: string = 'health check failure', forceRestart
     // Wait a moment before recreating
     await new Promise(resolve => setTimeout(resolve, 2000));
     
-    // Recreate node if we have credentials
-    if (CONST.hasCredentials()) {
-      const newNode = await createNodeWithCredentials(
-        CONST.GROUP_CRED!,
-        CONST.SHARE_CRED!,
-        process.env.RELAYS,
-        addServerLog,
-        process.env.PEER_POLICIES
-      );
+    const newNode = await createNodeWithCredentials(
+      credentialSnapshot.group,
+      credentialSnapshot.share,
+      credentialSnapshot.relaysEnv,
+      addServerLog,
+      credentialSnapshot.peerPoliciesRaw
+    );
+
+    if (newNode) {
+      node = newNode;
+      activeCredentials = credentialSnapshot;
+      restartState.blockedByCredentials = false;
+      setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+        // Controlled restart callback to prevent infinite recursion
+        scheduleRestartWithBackoff('watchdog timeout');
+      }, credentialSnapshot.group, credentialSnapshot.share);
+      addServerLog('system', 'Node successfully restarted');
       
-      if (newNode) {
-        node = newNode;
-        setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
-          // Controlled restart callback to prevent infinite recursion
-          scheduleRestartWithBackoff('watchdog timeout');
-        }, CONST.GROUP_CRED, CONST.SHARE_CRED);
-        addServerLog('system', 'Node successfully restarted');
-        
-        // Reset retry count on successful restart
-        currentRetryCount = 0;
-        isRestartInProgress = false;
-        return;
-      } else {
-        throw new Error('Failed to create new node - createNodeWithCredentials returned null');
-      }
+      // Reset retry count on successful restart
+      currentRetryCount = 0;
+      isRestartInProgress = false;
+      return;
     } else {
-      throw new Error('Cannot restart node - no credentials available');
+      throw new Error('Failed to create new node - createNodeWithCredentials returned null');
     }
   } catch (error) {
     addServerLog('error', 'Error during node restart', error);
@@ -394,6 +458,12 @@ async function restartNode(reason: string = 'health check failure', forceRestart
 
 // Schedule restart with exponential backoff and retry limit
 function scheduleRestartWithBackoff(reason: string) {
+  if (restartState.blockedByCredentials) {
+    addServerLog('system', 'Restart scheduling skipped: waiting for credentials to be restored');
+    currentRetryCount = 0;
+    return;
+  }
+
   if (currentRetryCount >= RESTART_CONFIG.MAX_RETRY_ATTEMPTS) {
     addServerLog('error', `Max restart attempts (${RESTART_CONFIG.MAX_RETRY_ATTEMPTS}) exceeded. Node restart abandoned.`);
     currentRetryCount = 0;
@@ -435,10 +505,21 @@ if (CONST.hasCredentials()) {
     );
     
     if (node) {
-              setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
-          // Node unhealthy callback
-          scheduleRestartWithBackoff('watchdog timeout');
-        }, CONST.GROUP_CRED, CONST.SHARE_CRED);
+      activeCredentials = normalizeCredentialSnapshot(
+        {
+          group: CONST.GROUP_CRED!,
+          share: CONST.SHARE_CRED!,
+          relaysEnv: process.env.RELAYS,
+          peerPoliciesRaw: process.env.PEER_POLICIES,
+          source: 'env'
+        },
+        'env'
+      );
+      restartState.blockedByCredentials = false;
+      setupNodeEventListeners(node, addServerLog, broadcastEvent, peerStatuses, () => {
+        // Node unhealthy callback
+        scheduleRestartWithBackoff('watchdog timeout');
+      }, activeCredentials?.group, activeCredentials?.share);
     }
   } catch (error) {
     addServerLog('error', 'Failed to create initial Bifrost node', error);
@@ -448,7 +529,7 @@ if (CONST.hasCredentials()) {
 }
 
 // Create the updateNode function for privileged routes
-const updateNode = (newNode: ServerBifrostNode | null) => {
+const updateNode = (newNode: ServerBifrostNode | null, options?: UpdateNodeOptions) => {
   // Clean up the old node to prevent memory leaks
   if (node) {
     try {
@@ -466,10 +547,24 @@ const updateNode = (newNode: ServerBifrostNode | null) => {
   
   node = newNode;
   if (newNode) {
+    const normalized = options?.credentials
+      ? normalizeCredentialSnapshot(options.credentials, options.credentials.source ?? 'dynamic')
+      : activeCredentials ?? buildEnvCredentialSnapshot();
+    activeCredentials = normalized;
+    restartState.blockedByCredentials = false;
     setupNodeEventListeners(newNode, addServerLog, broadcastEvent, peerStatuses, () => {
       // Node unhealthy callback for dynamically created nodes
       scheduleRestartWithBackoff('dynamic node watchdog timeout');
-    }, CONST.GROUP_CRED, CONST.SHARE_CRED);
+    }, activeCredentials?.group, activeCredentials?.share);
+  } else {
+    if (options?.credentials === null) {
+      activeCredentials = null;
+    } else if (options?.credentials) {
+      activeCredentials = normalizeCredentialSnapshot(options.credentials, options.credentials.source ?? 'dynamic');
+    } else {
+      activeCredentials = buildEnvCredentialSnapshot();
+    }
+    restartState.blockedByCredentials = false;
   }
 };
 
@@ -657,14 +752,15 @@ const server = serve({
       addServerLog,
       broadcastEvent,
       requestId,
-      clientIp
+      clientIp,
+      restartState
     };
 
-    // Create privileged context with updateNode for trusted routes  
-    const privilegedContext = {
-      ...baseContext,
-      updateNode
-    };
+  // Create privileged context with updateNode for trusted routes  
+  const privilegedContext = {
+    ...baseContext,
+    updateNode
+  };
 
     // Handle the request using the unified router with appropriate context
     try {
@@ -727,6 +823,15 @@ async function handleShutdown(signal: string): Promise<void> {
   isShuttingDown = true;
 
   addServerLog('system', `Received ${signal}, shutting down gracefully`);
+
+  const service = getNip46Service();
+  if (service) {
+    try {
+      await service.stop();
+    } catch (error) {
+      addServerLog('error', 'Error stopping NIP-46 service', error);
+    }
+  }
 
   // Stop accepting new connections
   try {
