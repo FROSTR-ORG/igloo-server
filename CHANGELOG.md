@@ -1,5 +1,18 @@
 # CHANGELOG
 
+## [0.1.9] - 2025-09-26
+### Changes since v0.1.8:
+- Merge pull request #18 from FROSTR-ORG/dev
+- add database-backed multi-user mode with admin onboarding, session auth, and persistent node credentials
+- keep headless single-user mode via `HEADLESS=true` and expand environment/config validation
+- implement full NIP-46 remote signing stack (pairing, permissions UI, relay handling, auditing)
+- expose new NIP-44 and NIP-04 encrypt/decrypt APIs backed by the node service
+- persist peer policies and relay metadata, harden node/relay monitoring and keepalive flows
+- overhaul auth/session vault, derived-key handling, and security defaults
+- refresh frontend for onboarding, signer, and NIP-46 management with new UI components
+- document new modes, security posture, and API surface; update OpenAPI specs
+- streamline release/build scripts, Docker flow, and QR worker packaging for nostr-connect
+
 ## [0.1.8] - 2025-07-25
 ### Changes since v0.1.7:
 - Merge pull request #11 from FROSTR-ORG/dev
