@@ -1624,6 +1624,29 @@ export async function createNodeWithCredentials(
           autoReconnect: true        // Enable auto-reconnection
         };
 
+        // Normalize nostr-tools subscribeMany inputs so single-filter arrays are treated as plain objects.
+        try {
+          const poolProto: any = SimplePool?.prototype;
+          if (poolProto && !poolProto.__iglooFilterNormalizePatched) {
+            const originalSubscribeMany = poolProto.subscribeMany;
+            if (typeof originalSubscribeMany === 'function') {
+              poolProto.subscribeMany = function normalizedSubscribeMany(this: any, relays: any, filters: any, params: any) {
+                const normalizedFilters = Array.isArray(filters) && filters.length === 1 && filters[0] && typeof filters[0] === 'object' && !Array.isArray(filters[0])
+                  ? filters[0]
+                  : filters;
+                return originalSubscribeMany.call(this, relays, normalizedFilters, params);
+              };
+              poolProto.__iglooFilterNormalizePatched = true;
+            }
+          }
+        } catch (patchError) {
+          if (addServerLog) {
+            addServerLog('warn', 'Failed to normalize SimplePool filters', {
+              error: patchError instanceof Error ? patchError.message : String(patchError)
+            });
+          }
+        }
+
         const result = await createConnectedNode(enhancedConfig, {
           enableLogging: false,      // Disable internal logging to avoid duplication
           logLevel: 'error'          // Only log errors from igloo-core
