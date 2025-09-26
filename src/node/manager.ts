@@ -47,6 +47,19 @@ const isBenignPublishError = (reason: string | undefined): boolean => {
   );
 };
 
+const HEADLESS_MODE = (() => {
+  const raw = process.env.HEADLESS;
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
+
+const ENABLE_PUBLISH_METRICS = (() => {
+  const toggle = process.env.NODE_PUBLISH_METRICS;
+  if (toggle && toggle.trim().toLowerCase() === 'false') return false;
+  return !HEADLESS_MODE;
+})();
+
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
 
@@ -284,6 +297,7 @@ function createInstrumentedPool(
   pool: any,
   addServerLog?: ReturnType<typeof createAddServerLog>
 ) {
+  if (!ENABLE_PUBLISH_METRICS) return pool;
   if (!pool || typeof pool !== 'object') return pool;
 
   const cache = new Map<string | symbol, any>();
@@ -346,6 +360,7 @@ function createInstrumentedClient(
   client: any,
   addServerLog?: ReturnType<typeof createAddServerLog>
 ) {
+  if (!ENABLE_PUBLISH_METRICS) return client;
   if (!client || typeof client !== 'object') return client;
 
   // Cache per property to keep stable references
@@ -414,6 +429,7 @@ function createInstrumentedNode(
   node: any,
   addServerLog?: ReturnType<typeof createAddServerLog>
 ) {
+  if (!ENABLE_PUBLISH_METRICS) return node;
   if (!node || typeof node !== 'object') return node;
 
   const cache = new Map<string | symbol, any>();
