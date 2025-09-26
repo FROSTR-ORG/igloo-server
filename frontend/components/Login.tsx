@@ -1,11 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { Button } from './ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Input } from './ui/input';
 import { PageLayout } from './ui/page-layout';
 import { AppHeader } from './ui/app-header';
 import { ContentCard } from './ui/content-card';
 import { Alert } from './ui/alert';
+import Spinner from './ui/spinner';
 
 interface LoginProps {
   onLogin: (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => void;
@@ -27,6 +27,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [statusLoading, setStatusLoading] = useState(true);
 
   useEffect(() => {
     fetchAuthStatus();
@@ -53,6 +54,8 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
       console.error('Failed to fetch auth status:', error);
       setError('Unable to connect to the server to check authentication status.');
       setAuthStatus(null);
+    } finally {
+      setStatusLoading(false);
     }
   };
 
@@ -116,8 +119,13 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
             </Alert>
           )}
 
+          {/* Auth Status Loading */}
+          {statusLoading && (
+            <Spinner label="Checking authentication…" size="md" />
+          )}
+
           {/* Auth Method Toggle */}
-          {authStatus && (
+          {!statusLoading && authStatus && (
             <div className="flex justify-center">
               <div className="flex bg-gray-800/50 rounded-lg p-1 space-x-1">
                 {authStatus.methods.includes('basic-auth') && (
@@ -149,6 +157,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
           )}
 
           {/* Login Form */}
+          {!statusLoading && (
           <form onSubmit={handleLogin} className="space-y-4">
             {authMode === 'basic' ? (
               <>
@@ -211,12 +220,15 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
               disabled={loading}
               className="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors"
             >
-              {loading ? 'Signing in...' : 'Sign in'}
+              {loading ? (
+                <Spinner label="Signing in…" size="sm" inline />
+              ) : 'Sign in'}
             </Button>
           </form>
+          )}
 
           {/* Auth Status Info */}
-          {authStatus && (
+          {!statusLoading && authStatus && (
             <div className="mt-6 p-3 bg-gray-800/30 rounded-lg border border-gray-700/30">
               <div className="text-xs text-gray-400 space-y-1">
                 <div className="flex justify-between">

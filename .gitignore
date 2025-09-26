@@ -40,6 +40,27 @@ dist
 static/app.js
 static/app.css
 static/styles.css
+static/qr-scanner-worker.min.js
 
-#VSCode
+# VSCode
 .vscode
+
+# Database
+data/
+*.db
+igloo.db
+*.db-wal
+*.db-shm
+igloo.db-wal
+igloo.db-shm
+
+# Generated session secret file (auto-created if SESSION_SECRET not provided)
+data/.session-secret
+
+# macOS
+.DS_Store
+
+# Test files
+test-*.sh
+debug-*.js
+verify-*.md

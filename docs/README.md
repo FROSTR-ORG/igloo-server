@@ -1,10 +1,10 @@
 # Igloo Server API Documentation
 
-This directory contains the comprehensive OpenAPI 3.0 specification for the Igloo Server API.
+This directory contains the comprehensive OpenAPI 3.1 specification for the Igloo Server API.
 
 ## Files
 
-- **`openapi.yaml`** - Complete OpenAPI 3.0 specification in YAML format
+- **`openapi.yaml`** - Complete OpenAPI 3.1 specification in YAML format
 - **`README.md`** - This documentation file
 
 ## Accessing the Documentation
@@ -62,6 +62,11 @@ The OpenAPI specification includes:
 - ✅ Key recovery (`/api/recover/*`)
 - ✅ Share management (`/api/shares`)
 - ✅ Real-time events (`/api/events`)
+- ✅ Signing and encryption
+  - `/api/sign` (threshold Schnorr signing)
+  - `/api/nip44/{encrypt|decrypt}` (ECDH + NIP‑44)
+  - `/api/nip04/{encrypt|decrypt}` (ECDH + NIP‑04)
+- ✅ NIP‑46 session persistence (`/api/nip46/*`)
 - ✅ Complete request/response schemas
 - ✅ Authentication security schemes
 - ✅ Rate limiting documentation
@@ -88,6 +93,10 @@ When adding or modifying API endpoints:
 4. Validate the specification: `bun run docs:validate`
 5. Test the updated documentation in Swagger UI
 
+Timeouts for crypto endpoints
+- Configurable via `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEOUT_MS` (default 30000ms; bounds 1000–120000ms).
+- Applies to `/api/sign`, `/api/nip44/*`, `/api/nip04/*`.
+
 ## External Tools
 
 You can also use the OpenAPI specification with external tools:
@@ -101,7 +110,7 @@ You can also use the OpenAPI specification with external tools:
 
 The OpenAPI specification follows:
 
-- **OpenAPI 3.0.3** standard
+- **OpenAPI 3.1.0** standard
 - **RESTful API** design principles
 - **Comprehensive documentation** with descriptions and examples
 - **Security-first** approach with proper authentication documentation

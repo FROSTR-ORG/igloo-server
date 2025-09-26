@@ -5,7 +5,8 @@ Thank you for your interest in contributing to Igloo Server! This guide will hel
 ## Development Workflow
 
 ### Prerequisites
-- **Bun runtime** (recommended) or Node.js 18+
+- **Bun runtime** (required) - This project uses Bun-specific APIs. Install from [bun.sh](https://bun.sh/)
+- **Node.js 20+ and npm** (required for versioning and release tooling)
 - **Git** for version control
 - **Docker** (optional, for testing Docker builds)
 

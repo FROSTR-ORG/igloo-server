@@ -9,6 +9,7 @@
       "strict": true,
       "forceConsistentCasingInFileNames": true,
       "allowImportingTsExtensions": true,
+      "module": "ESNext",
       "moduleResolution": "node",
       "resolveJsonModule": true,
       "isolatedModules": true,
