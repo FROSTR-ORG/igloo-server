@@ -300,21 +300,25 @@ function createInstrumentedPool(
   if (!ENABLE_PUBLISH_METRICS) return pool;
   if (!pool || typeof pool !== 'object') return pool;
 
-  const cache = new Map<string | symbol, any>();
+  type CacheEntry = { raw: any; wrapper: any };
+  const wrapperCache = new Map<string | symbol, CacheEntry>();
 
   const handler: ProxyHandler<any> = {
     get(target, prop, receiver) {
-      if (cache.has(prop)) return cache.get(prop);
-
       if (prop === 'publish' && typeof target.publish === 'function') {
+        const cached = wrapperCache.get(prop);
+        if (cached && cached.raw === target) {
+          return cached.wrapper;
+        }
+
         const originalPublish = target.publish.bind(target);
         const wrapped = (relays: string[], event: any, ...rest: any[]) => {
           const result = originalPublish(relays, event, ...rest);
 
           try {
             publishMetrics.totalAttempts += Array.isArray(relays) ? relays.length : 1;
-            const { promises } = normalizePublishResults(result);
-            promises.forEach((p, idx) => {
+            const { promises, isArray } = normalizePublishResults(result);
+            const wrappedPromises = promises.map((p, idx) =>
               p.catch((err: any) => {
                 const reason = err instanceof Error ? err.message : String(err);
                 const url = Array.isArray(relays) ? relays[idx] : undefined;
@@ -333,23 +337,20 @@ function createInstrumentedPool(
                 }
 
                 throw err;
-              });
-            });
+              })
+            );
+            return isArray ? wrappedPromises : wrappedPromises[0];
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
             throw err;
           }
-
-          return result;
         };
-        cache.set(prop, wrapped);
+        wrapperCache.set(prop, { raw: target, wrapper: wrapped });
         return wrapped;
       }
 
-      const value = Reflect.get(target, prop, receiver);
-      cache.set(prop, value);
-      return value;
+      return Reflect.get(target, prop, receiver);
     }
   };
 
@@ -363,23 +364,25 @@ function createInstrumentedClient(
   if (!ENABLE_PUBLISH_METRICS) return client;
   if (!client || typeof client !== 'object') return client;
 
-  // Cache per property to keep stable references
-  const cache = new Map<string | symbol, any>();
+  type CacheEntry = { raw: any; wrapper: any };
+  const wrapperCache = new Map<string | symbol, CacheEntry>();
 
   const handler: ProxyHandler<any> = {
     get(target, prop, receiver) {
-      if (cache.has(prop)) return cache.get(prop);
-
-      // Wrap publish method if present
       if (prop === 'publish' && typeof target.publish === 'function') {
+        const cached = wrapperCache.get(prop);
+        if (cached && cached.raw === target) {
+          return cached.wrapper;
+        }
+
         const originalPublish = target.publish.bind(target);
         const wrapped = (...args: any[]) => {
           const result = originalPublish(...args);
 
           try {
             publishMetrics.totalAttempts++;
-            const { promises } = normalizePublishResults(result);
-            promises.forEach(p => {
+            const { promises, isArray } = normalizePublishResults(result);
+            const wrappedPromises = promises.map(p =>
               p.catch((err: any) => {
                 const reason = err instanceof Error ? err.message : String(err);
                 trackPublishFailure(undefined, reason, addServerLog);
@@ -394,31 +397,35 @@ function createInstrumentedClient(
                 }
 
                 throw err;
-              });
-            });
+              })
+            );
+            return isArray ? wrappedPromises : wrappedPromises[0];
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
             throw err;
           }
-
-          return result;
         };
-        cache.set(prop, wrapped);
+        wrapperCache.set(prop, { raw: target, wrapper: wrapped });
         return wrapped;
       }
 
-      // Expose instrumented pool via common fields if available
-      if ((prop === '_pool' || prop === 'pool') && (target._pool || target.pool)) {
+      if (prop === '_pool' || prop === 'pool') {
         const rawPool = target._pool || target.pool;
-        const instrumentedPool = createInstrumentedPool(rawPool, addServerLog);
-        cache.set(prop, instrumentedPool);
-        return instrumentedPool;
+        if (!rawPool) {
+          wrapperCache.delete(prop);
+          return rawPool;
+        }
+        const cached = wrapperCache.get(prop);
+        if (cached && cached.raw === rawPool) {
+          return cached.wrapper;
+        }
+        const wrapper = createInstrumentedPool(rawPool, addServerLog);
+        wrapperCache.set(prop, { raw: rawPool, wrapper });
+        return wrapper;
       }
 
-      const value = Reflect.get(target, prop, receiver);
-      cache.set(prop, value);
-      return value;
+      return Reflect.get(target, prop, receiver);
     }
   };
 
@@ -432,22 +439,25 @@ function createInstrumentedNode(
   if (!ENABLE_PUBLISH_METRICS) return node;
   if (!node || typeof node !== 'object') return node;
 
-  const cache = new Map<string | symbol, any>();
+  type CacheEntry = { raw: any; wrapper: any };
+  const wrapperCache = new Map<string | symbol, CacheEntry>();
 
   const handler: ProxyHandler<any> = {
     get(target, prop, receiver) {
-      if (cache.has(prop)) return cache.get(prop);
-
-      // Pass-through events and core methods
       if (prop === 'publish' && typeof target.publish === 'function') {
+        const cached = wrapperCache.get(prop);
+        if (cached && cached.raw === target) {
+          return cached.wrapper;
+        }
+
         const originalPublish = target.publish.bind(target);
         const wrapped = (...args: any[]) => {
           const result = originalPublish(...args);
 
           try {
             publishMetrics.totalAttempts++;
-            const { promises } = normalizePublishResults(result);
-            promises.forEach(p => {
+            const { promises, isArray } = normalizePublishResults(result);
+            const wrappedPromises = promises.map(p =>
               p.catch((err: any) => {
                 const reason = err instanceof Error ? err.message : String(err);
                 trackPublishFailure(undefined, reason, addServerLog);
@@ -462,31 +472,35 @@ function createInstrumentedNode(
                 }
 
                 throw err;
-              });
-            });
+              })
+            );
+            return isArray ? wrappedPromises : wrappedPromises[0];
           } catch (err: any) {
             const reason = err instanceof Error ? err.message : String(err);
             trackPublishFailure(undefined, reason, addServerLog);
             throw err;
           }
-
-          return result;
         };
-        cache.set(prop, wrapped);
+        wrapperCache.set(prop, { raw: target, wrapper: wrapped });
         return wrapped;
       }
 
-      // Provide instrumented client via both common fields
-      if ((prop === '_client' || prop === 'client') && (target as any)) {
-        const rawClient = (target as any)._client || (target as any).client;
-        const instrumentedClient = createInstrumentedClient(rawClient, addServerLog);
-        cache.set(prop, instrumentedClient);
-        return instrumentedClient;
+      if (prop === '_client' || prop === 'client') {
+        const rawClient = (target as any)?._client || (target as any)?.client;
+        if (!rawClient) {
+          wrapperCache.delete(prop);
+          return rawClient;
+        }
+        const cached = wrapperCache.get(prop);
+        if (cached && cached.raw === rawClient) {
+          return cached.wrapper;
+        }
+        const wrapper = createInstrumentedClient(rawClient, addServerLog);
+        wrapperCache.set(prop, { raw: rawClient, wrapper });
+        return wrapper;
       }
 
-      const value = Reflect.get(target, prop, receiver);
-      cache.set(prop, value);
-      return value;
+      return Reflect.get(target, prop, receiver);
     }
   };
 
