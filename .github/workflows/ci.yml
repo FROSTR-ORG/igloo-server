@@ -104,7 +104,9 @@ jobs:
 
     - name: Test Docker image
       run: |
-        docker run -d --name test-container -p 8002:8002 igloo-server:test
+        docker run -d --name test-container -p 8002:8002 \
+          -e AUTO_ADMIN_SECRET=true \
+          igloo-server:test
         sleep 10
         curl -f http://localhost:8002/api/status || exit 1
         docker stop test-container

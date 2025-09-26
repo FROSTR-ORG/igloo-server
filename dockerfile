@@ -41,6 +41,4 @@ EXPOSE 8002
 # Set environment variables for Docker
 ENV HOST_NAME=0.0.0.0
 ENV HOST_PORT=8002
-ENV AUTO_ADMIN_SECRET=true
-
 CMD ["bun", "start"]

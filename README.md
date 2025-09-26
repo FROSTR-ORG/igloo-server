@@ -365,6 +365,11 @@ docker run -p 8002:8002 \
   -e RATE_LIMIT_ENABLED="true" \
   igloo-server
 
+# Optional CI smoke test helper (auto-generates a disposable admin secret)
+# docker run -p 8002:8002 \
+#   -e AUTO_ADMIN_SECRET="true" \
+#   igloo-server
+
 # Or headless mode (traditional)
 docker run -p 8002:8002 \
   -e NODE_ENV="production" \
