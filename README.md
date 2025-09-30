@@ -631,21 +631,68 @@ cd igloo-server
 cp .env.example .env
 
 # Edit .env for non-sensitive configuration
-nano .env  # Configure HOST_NAME, ALLOWED_ORIGINS, etc.
-
-# Set sensitive environment variables (don't store in files!)
-export GROUP_CRED="bfgroup1qqsqp...your-group-credential"
-export SHARE_CRED="bfshare1qqsqp...your-share-credential"
-export API_KEY="$(openssl rand -hex 32)"
-export BASIC_AUTH_USER="admin"
-export BASIC_AUTH_PASS="$(openssl rand -base64 32)"
-
-# Deploy with Docker Compose using environment variables
-docker-compose up -d
-
-# Alternative: Use Docker secrets (recommended for production)
-# See Docker documentation for setting up secrets management
+nano .env  # Configure HOST_NAME, ALLOWED_ORIGINS, secrets, etc.
 ```
+
+##### Digital Ocean environment checklist
+
+- `ALLOWED_ORIGINS` must include the full origin (`https://yourdomain.com`) — bare domains without a scheme are rejected by browsers.
+- Set `HOST_NAME=0.0.0.0` so Bun listens on every interface inside the container.
+- Keep `NODE_ENV=production` and `TRUST_PROXY=true` when you sit behind nginx or a load balancer.
+- Provide long random values for `ADMIN_SECRET`, `SESSION_SECRET`, `BASIC_AUTH_PASS`, and (optionally) `API_KEY`. Avoid storing those secrets in git.
+- 1GB droplets can run out of memory while building; adding a 1–2GB swap file or using a 2GB droplet makes `bun install` and `docker compose build` more reliable.
+
+##### Database mode (HEADLESS=false, multi-user UI)
+
+The default database mode persists users and credentials in SQLite. In `.env` keep `HEADLESS=false` (or omit it) and set:
+
+```
+HOST_NAME=0.0.0.0
+NODE_ENV=production
+ALLOWED_ORIGINS=https://yourdomain.com
+ADMIN_SECRET=<openssl rand -hex 32>
+SESSION_SECRET=<openssl rand -hex 32>
+AUTH_ENABLED=true
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=<openssl rand -base64 32>
+TRUST_PROXY=true
+# Optional automation
+API_KEY=<openssl rand -hex 32>
+```
+
+Bring the stack up once secrets are in place:
+
+```bash
+docker compose build --progress=plain
+docker compose up -d
+curl http://127.0.0.1:8002/api/status  # Verify the backend locally on the droplet
+```
+
+##### Headless mode (HEADLESS=true, env-configured signing node)
+
+If you want an API-only signing node, flip to headless mode and provide credentials directly:
+
+```
+HEADLESS=true
+HOST_NAME=0.0.0.0
+NODE_ENV=production
+ALLOWED_ORIGINS=https://yourdomain.com
+TRUST_PROXY=true
+GROUP_CRED=bfgroup1qqsqp...  # From Igloo Desktop export
+SHARE_CRED=bfshare1qqsqp...
+SESSION_SECRET=<openssl rand -hex 32>
+API_KEY=<openssl rand -hex 32>
+BASIC_AUTH_USER=admin
+BASIC_AUTH_PASS=<openssl rand -base64 32>
+```
+
+Start the container after exporting the sensitive values (or by using an `.env` file kept off git):
+
+```bash
+docker compose --env-file .env up -d
+```
+
+Use `docker compose logs -f igloo-server` for live diagnostics. When Bun reports `Unavailable: error reading from server: EOF`, rerun the build — it usually means the registry download was interrupted rather than an application bug.
 
 #### 4. Configure Firewall
 ```bash
