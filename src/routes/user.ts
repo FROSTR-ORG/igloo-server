@@ -9,7 +9,7 @@ import {
 } from '../db/database.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
-import { createNodeWithCredentials } from '../node/manager.js';
+import { createNodeWithCredentials, sendSelfEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { getNip46Service } from '../nip46/index.js';
 
@@ -304,6 +304,8 @@ export async function handleUserRoute(
             }
           }
 
+          const credentialsBeingUpdated = 'group_cred' in body || 'share_cred' in body;
+          
           const success = updateUserCredentials(
             userId,
             updates,
@@ -334,6 +336,14 @@ export async function handleUserRoute(
             credentials = null;
           }
           if (credentials && credentials.group_cred && credentials.share_cred) {
+            if (credentialsBeingUpdated) {
+              void sendSelfEcho(credentials.group_cred, credentials.share_cred, {
+                relays: credentials.relays,
+                relaysEnv: process.env.RELAYS,
+                addServerLog: context.addServerLog,
+                contextLabel: 'db credential update'
+              });
+            }
             // Start the node under the shared lock to avoid races
             try {
               await executeUnderNodeLock(async () => {
