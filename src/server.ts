@@ -13,13 +13,14 @@ import type {
   NodeCredentialSnapshot
 } from './routes/index.js';
 import { assertNoSessionSecretExposure } from './routes/utils.js';
-import { 
+import {
   createBroadcastEvent,
-  createAddServerLog, 
-  setupNodeEventListeners, 
+  createAddServerLog,
+  setupNodeEventListeners,
   createNodeWithCredentials,
   cleanupMonitoring,
-  resetHealthMonitoring
+  resetHealthMonitoring,
+  sendSelfEcho
 } from './node/manager.js';
 import { initNip46Service, getNip46Service } from './nip46/index.js'
 import { clearCleanupTimers } from './routes/node-manager.js';
@@ -520,6 +521,14 @@ if (CONST.hasCredentials()) {
         // Node unhealthy callback
         scheduleRestartWithBackoff('watchdog timeout');
       }, activeCredentials?.group, activeCredentials?.share);
+
+      if (CONST.HEADLESS) {
+        void sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, {
+          relaysEnv: process.env.RELAYS,
+          addServerLog,
+          contextLabel: 'headless startup'
+        });
+      }
     }
   } catch (error) {
     addServerLog('error', 'Failed to create initial Bifrost node', error);
