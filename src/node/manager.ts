@@ -4,9 +4,10 @@ import {
   normalizePubkey,
   extractSelfPubkeyFromCredentials,
   normalizeNodePolicies,
-  sendEcho
+  sendEcho,
+  EchoError
 } from '@frostr/igloo-core';
-import type { NodePolicyInput } from '@frostr/igloo-core';
+import type { NodePolicyInput, NodeEventConfig } from '@frostr/igloo-core';
 import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
@@ -1571,6 +1572,7 @@ export async function sendSelfEcho(
     timeoutMs?: number;
     addServerLog?: ReturnType<typeof createAddServerLog>;
     contextLabel?: string;
+    eventConfig?: NodeEventConfig;
   }
 ): Promise<boolean> {
   if (!groupCred || !shareCred) {
@@ -1582,7 +1584,8 @@ export async function sendSelfEcho(
     relaysEnv,
     timeoutMs,
     addServerLog,
-    contextLabel
+    contextLabel,
+    eventConfig
   } = options ?? {};
 
   let resolvedRelays: string[] = [];
@@ -1604,11 +1607,18 @@ export async function sendSelfEcho(
     return SELF_ECHO_TIMEOUT_MS;
   })();
 
-  const echoOptions: { relays?: string[]; timeout?: number } = {};
+  const echoOptions: { relays?: string[]; timeout?: number; eventConfig?: NodeEventConfig } = {};
   if (uniqueRelays.length > 0) {
     echoOptions.relays = uniqueRelays;
   }
   echoOptions.timeout = timeout;
+
+  // Default to suppressing igloo-core console logging unless explicitly enabled by caller
+  const effectiveEventConfig: NodeEventConfig = {
+    enableLogging: false,
+    ...(eventConfig ?? {})
+  };
+  echoOptions.eventConfig = effectiveEventConfig;
 
   const challenge = randomBytes(32).toString('hex');
   const logSuffix = contextLabel ? ` (${contextLabel})` : '';
@@ -1624,12 +1634,26 @@ export async function sendSelfEcho(
     }
     return sent;
   } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isTimeoutError = error instanceof EchoError && /timeout/i.test(errorMessage);
+
     if (addServerLog) {
-      addServerLog('warn', `Failed to broadcast self echo${logSuffix}`, {
-        error: error instanceof Error ? error.message : String(error),
-        relays: uniqueRelays,
-        timeout
-      });
+      if (isTimeoutError) {
+        addServerLog('info', `Self echo not acknowledged before timeout${logSuffix}`, {
+          relays: uniqueRelays,
+          timeout,
+          softTimeout: true,
+          error: errorMessage
+        });
+      } else {
+        addServerLog('warn', `Failed to broadcast self echo${logSuffix}`, {
+          error: errorMessage,
+          relays: uniqueRelays,
+          timeout
+        });
+      }
+    } else if (isTimeoutError) {
+      console.info('[node] Self echo not acknowledged before timeout', errorMessage);
     } else {
       console.warn('[node] Failed to broadcast self echo', error);
     }

@@ -341,7 +341,8 @@ export async function handleUserRoute(
                 relays: credentials.relays,
                 relaysEnv: process.env.RELAYS,
                 addServerLog: context.addServerLog,
-                contextLabel: 'db credential update'
+                contextLabel: 'db credential update',
+                timeoutMs: 30000
               });
             }
             // Start the node under the shared lock to avoid races
