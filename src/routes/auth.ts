@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
-import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
+import { authenticateUser, isDatabaseInitialized, verifyApiKeyToken, markApiKeyUsed, hasActiveApiKeys } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
@@ -230,7 +230,7 @@ export const AUTH_CONFIG = {
   ENABLED: process.env.AUTH_ENABLED !== 'false',
   
   // Authentication methods
-  API_KEY: process.env.API_KEY,
+  API_KEY: HEADLESS ? process.env.API_KEY : undefined,
   BASIC_AUTH_USER: process.env.BASIC_AUTH_USER,
   BASIC_AUTH_PASS: process.env.BASIC_AUTH_PASS,
   
@@ -466,27 +466,71 @@ export async function checkRateLimit(
   };
 }
 
-// API Key authentication
-function authenticateAPIKey(req: Request): AuthResult {
+function extractApiKey(req: Request): string | null {
+  const headerKey = req.headers.get('x-api-key');
+  if (headerKey && headerKey.trim().length > 0) {
+    return headerKey.trim();
+  }
+
+  const authHeader = req.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token.length > 0) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+// API Key authentication (headless mode via environment variable)
+function authenticateHeadlessApiKey(req: Request): AuthResult {
   if (!AUTH_CONFIG.API_KEY) {
     return { authenticated: false, error: 'API key authentication not configured' };
   }
 
-  const apiKey = req.headers.get('x-api-key') || req.headers.get('authorization')?.replace('Bearer ', '');
-  
+  const apiKey = extractApiKey(req);
   if (!apiKey) {
     return { authenticated: false, error: 'API key required' };
   }
 
-  // Timing-safe comparison to prevent timing attacks
   const providedKey = Buffer.from(apiKey);
   const expectedKey = Buffer.from(AUTH_CONFIG.API_KEY);
-  
-  if (providedKey.length !== expectedKey.length || !timingSafeEqual(providedKey, expectedKey)) {
+
+  if (providedKey.length !== expectedKey.length) {
     return { authenticated: false, error: 'Invalid API key' };
   }
 
-  return { authenticated: true, userId: 'api-user' };
+  if (timingSafeEqual(providedKey, expectedKey)) {
+    return { authenticated: true, userId: 'api-user' };
+  }
+
+  return { authenticated: false, error: 'Invalid API key' };
+}
+
+// API Key authentication (database-backed multi-key support)
+function authenticateDatabaseApiKey(req: Request): AuthResult {
+  if (!hasActiveApiKeys()) {
+    return { authenticated: false, error: 'API key authentication not configured' };
+  }
+
+  const apiKey = extractApiKey(req);
+  if (!apiKey) {
+    return { authenticated: false, error: 'API key required' };
+  }
+
+  const verification = verifyApiKeyToken(apiKey);
+  if (!verification.success) {
+    const errorMessage = verification.reason === 'revoked'
+      ? 'API key revoked'
+      : 'Invalid API key';
+    return { authenticated: false, error: errorMessage };
+  }
+
+  const clientIp = getClientIP(req);
+  markApiKeyUsed(verification.apiKeyId, clientIp === 'unknown' ? null : clientIp);
+
+  return { authenticated: true, userId: `api-key:${verification.prefix}` };
 }
 
 // Basic Auth authentication
@@ -723,8 +767,15 @@ export async function authenticate(req: Request): Promise<AuthResult> {
   }
 
   // Try API Key first
-  if (AUTH_CONFIG.API_KEY) {
-    const apiResult = authenticateAPIKey(req);
+  if (HEADLESS) {
+    if (AUTH_CONFIG.API_KEY) {
+      const apiResult = authenticateHeadlessApiKey(req);
+      if (apiResult.authenticated) {
+        return apiResult;
+      }
+    }
+  } else {
+    const apiResult = authenticateDatabaseApiKey(req);
     if (apiResult.authenticated) {
       return apiResult;
     }
@@ -789,10 +840,25 @@ export async function handleLogin(req: Request): Promise<Response> {
     let userId: string | number | bigint = '';
     let userPassword: string | undefined; // Store for database users
 
-    if (apiKey && AUTH_CONFIG.API_KEY) {
-      if (timingSafeEqual(Buffer.from(apiKey), Buffer.from(AUTH_CONFIG.API_KEY))) {
-        authenticated = true;
-        userId = 'api-user';
+    if (typeof apiKey === 'string' && apiKey.trim().length > 0) {
+      if (HEADLESS && AUTH_CONFIG.API_KEY) {
+        const providedKey = Buffer.from(apiKey);
+        const expectedKey = Buffer.from(AUTH_CONFIG.API_KEY);
+
+        if (providedKey.length !== expectedKey.length) {
+          // Invalid API key, continue to next auth method
+        } else if (timingSafeEqual(providedKey, expectedKey)) {
+          authenticated = true;
+          userId = 'api-user';
+        }
+      } else if (!HEADLESS) {
+        const verification = verifyApiKeyToken(apiKey);
+        if (verification.success) {
+          authenticated = true;
+          userId = `api-key:${verification.prefix}`;
+          const clientIp = getClientIP(req);
+          markApiKeyUsed(verification.apiKeyId, clientIp === 'unknown' ? null : clientIp);
+        }
       }
     }
     
@@ -1017,7 +1083,8 @@ export function requireAuth(handler: Function) {
 function getAvailableAuthMethods(): string[] {
   const methods: string[] = [];
   
-  if (AUTH_CONFIG.API_KEY) methods.push('api-key');
+  const apiKeyEnabled = HEADLESS ? !!AUTH_CONFIG.API_KEY : hasActiveApiKeys();
+  if (apiKeyEnabled) methods.push('api-key');
   if (AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) methods.push('basic-auth');
   if (AUTH_CONFIG.SESSION_SECRET) methods.push('session');
   

@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { password as BunPassword } from 'bun';
-import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
+import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, createHash, timingSafeEqual } from 'node:crypto';
 import path from 'path';
 import { existsSync, mkdirSync, chmodSync } from 'fs';
 import { sanitizePeerPolicyEntries, type PeerPolicyRecord } from '../util/peer-policy.js';
@@ -619,6 +619,307 @@ export const deleteUserCredentials = (userId: number | bigint): boolean => {
   }
 };
 
+// API key constants
+const API_KEY_PREFIX_LENGTH = 12;
+const API_KEY_TOKEN_BYTES = 32;
+
+const hashApiKey = (token: string): Buffer => {
+  return createHash('sha256').update(token, 'utf8').digest();
+};
+
+const toSerializableId = (id: number | bigint): number | string => (
+  typeof id === 'bigint' ? id.toString() : id
+);
+
+const normalizeOptionalId = (id: number | bigint | null): number | string | null => {
+  if (id === null || id === undefined) return null;
+  return typeof id === 'bigint' ? id.toString() : id;
+};
+
+type ApiKeyRow = {
+  id: number | bigint;
+  prefix: string;
+  key_hash: string;
+  label: string | null;
+  created_by_user_id: number | bigint | null;
+  created_by_admin: number;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+};
+
+export type ApiKeySummary = {
+  id: number | string;
+  prefix: string;
+  label: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+  createdByUserId: number | string | null;
+  createdByAdmin: boolean;
+};
+
+export type ApiKeyCreationResult = {
+  id: number | string;
+  token: string;
+  prefix: string;
+};
+
+type ApiKeyVerificationFailure = 'not_found' | 'revoked' | 'mismatch';
+
+export type ApiKeyVerificationResult =
+  | { success: true; apiKeyId: number | string; prefix: string }
+  | { success: false; reason: ApiKeyVerificationFailure };
+
+const generateApiKeyToken = (): { token: string; prefix: string } => {
+  const token = randomBytes(API_KEY_TOKEN_BYTES).toString('hex');
+  const prefix = token.slice(0, API_KEY_PREFIX_LENGTH);
+  return { token, prefix };
+};
+
+export const createApiKey = (options?: {
+  label?: string;
+  createdByUserId?: number | bigint | null;
+  createdByAdmin?: boolean;
+}): ApiKeyCreationResult => {
+  checkShutdown();
+  const label = options?.label?.trim() || null;
+  const createdByUserId = options?.createdByUserId ?? null;
+  const createdByAdmin = options?.createdByAdmin === false ? 0 : 1;
+
+  const insertStmt = db.prepare(
+    `INSERT INTO api_keys (prefix, key_hash, label, created_by_user_id, created_by_admin)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { token, prefix } = generateApiKeyToken();
+    const hashBuffer = hashApiKey(token);
+
+    try {
+      insertStmt.run(prefix, hashBuffer.toString('hex'), label, createdByUserId, createdByAdmin);
+      const idRow = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
+      if (idRow && !isSafeId(idRow.id)) {
+        console.warn(`[db] Warning: API key ID ${idRow.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+      }
+      return {
+        id: toSerializableId(idRow.id),
+        token,
+        prefix,
+      };
+    } catch (error: any) {
+      const message = error?.message || '';
+      if (message.includes('UNIQUE') && attempt < 4) {
+        continue;
+      }
+      console.error('Error creating API key:', error);
+      throw error;
+    }
+  }
+
+  throw new Error('Failed to generate unique API key prefix');
+};
+
+export const listApiKeys = (): ApiKeySummary[] => {
+  checkShutdown();
+  try {
+    const rows = db
+      .prepare(`
+        SELECT 
+          id,
+          prefix,
+          label,
+          created_by_user_id,
+          created_by_admin,
+          created_at,
+          updated_at,
+          last_used_at,
+          last_used_ip,
+          revoked_at,
+          revoked_reason
+        FROM api_keys
+        ORDER BY revoked_at IS NULL DESC, created_at DESC, id DESC
+      `)
+      .all() as ApiKeyRow[];
+
+    return rows.map(row => {
+      if (!isSafeId(row.id)) {
+        console.warn(`[db] Warning: API key ID ${row.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+      }
+      const createdByUserId = row.created_by_user_id;
+      if (createdByUserId !== null && !isSafeId(createdByUserId)) {
+        console.warn(`[db] Warning: API key created_by_user_id ${createdByUserId} exceeds Number.MAX_SAFE_INTEGER.`);
+      }
+      return {
+        id: toSerializableId(row.id),
+        prefix: row.prefix,
+        label: row.label,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        lastUsedAt: row.last_used_at,
+        lastUsedIp: row.last_used_ip,
+        revokedAt: row.revoked_at,
+        revokedReason: row.revoked_reason,
+        createdByUserId: normalizeOptionalId(createdByUserId),
+        createdByAdmin: row.created_by_admin === 1,
+      };
+    });
+  } catch (error) {
+    console.error('Error listing API keys:', error);
+    return [];
+  }
+};
+
+export const hasActiveApiKeys = (): boolean => {
+  checkShutdown();
+  try {
+    const row = db
+      .prepare('SELECT EXISTS(SELECT 1 FROM api_keys WHERE revoked_at IS NULL LIMIT 1) AS present')
+      .get() as { present: number } | undefined;
+    return !!row && row.present === 1;
+  } catch (error) {
+    console.error('Error checking active API keys:', error);
+    return false;
+  }
+};
+
+export const verifyApiKeyToken = (token: string | null | undefined): ApiKeyVerificationResult => {
+  checkShutdown();
+  if (!token || typeof token !== 'string') {
+    return { success: false, reason: 'not_found' };
+  }
+
+  const candidate = token.trim();
+  if (candidate.length === 0) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  const prefix = candidate.slice(0, API_KEY_PREFIX_LENGTH);
+  if (prefix.length < API_KEY_PREFIX_LENGTH) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  let row: ApiKeyRow | undefined;
+  try {
+    row = db
+      .prepare('SELECT * FROM api_keys WHERE prefix = ? LIMIT 1')
+      .get(prefix) as ApiKeyRow | undefined;
+  } catch (error) {
+    console.error('Error retrieving API key for verification:', error);
+    return { success: false, reason: 'not_found' };
+  }
+
+  if (!row) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  if (row.revoked_at) {
+
+    return { success: false, reason: 'revoked' };
+
+  }
+
+  const providedHash = hashApiKey(candidate);
+
+  const storedHash = Buffer.from(row.key_hash, 'hex');
+
+  const EXPECTED_LENGTH = 32;
+
+  const normalizedStoredHash = Buffer.alloc(EXPECTED_LENGTH);
+
+  storedHash.copy(normalizedStoredHash, 0, 0, Math.min(storedHash.length, EXPECTED_LENGTH));
+
+  try {
+
+    if (!timingSafeEqual(normalizedStoredHash, providedHash)) {
+
+      return { success: false, reason: 'mismatch' };
+
+    }
+
+  } catch (error) {
+
+    console.error('Error performing timing-safe comparison for API key:', error);
+
+    return { success: false, reason: 'mismatch' };
+
+  }
+
+  if (!isSafeId(row.id)) {
+    console.warn(`[db] Warning: API key ID ${row.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+  }
+
+  return {
+    success: true,
+    apiKeyId: toSerializableId(row.id),
+    prefix: row.prefix,
+  };
+};
+
+export const markApiKeyUsed = (apiKeyId: number | string, ip?: string | null): void => {
+  checkShutdown();
+  try {
+    if (ip && ip.trim().length > 0) {
+      db.prepare(
+        `UPDATE api_keys
+         SET last_used_at = CURRENT_TIMESTAMP,
+             last_used_ip = ?
+         WHERE id = ?`
+      ).run(ip, apiKeyId);
+    } else {
+      db.prepare(
+        `UPDATE api_keys
+         SET last_used_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      ).run(apiKeyId);
+    }
+  } catch (error) {
+    console.error('Error updating API key usage metadata:', error);
+  }
+};
+
+export const revokeApiKey = (
+  apiKeyId: number | bigint,
+  reason?: string
+): { success: boolean; error?: 'not_found' | 'already_revoked' | 'failed' } => {
+  checkShutdown();
+  try {
+    const stmt = db.prepare(
+      `UPDATE api_keys
+       SET revoked_at = CURRENT_TIMESTAMP,
+           revoked_reason = COALESCE(?, revoked_reason)
+       WHERE id = ? AND revoked_at IS NULL`
+    );
+
+    stmt.run(reason && reason.trim().length > 0 ? reason.trim() : null, apiKeyId);
+    const result = db.query('SELECT changes() AS changes').get() as { changes: number } | null;
+    if (result && result.changes > 0) {
+      return { success: true };
+    }
+
+    const existing = db
+      .prepare('SELECT revoked_at FROM api_keys WHERE id = ? LIMIT 1')
+      .get(apiKeyId) as { revoked_at: string | null } | undefined;
+
+    if (!existing) {
+      return { success: false, error: 'not_found' };
+    }
+    if (existing.revoked_at) {
+      return { success: false, error: 'already_revoked' };
+    }
+    return { success: false, error: 'failed' };
+  } catch (error) {
+    console.error('Error revoking API key:', error);
+    return { success: false, error: 'failed' };
+  }
+};
+
 /**
  * Get all users from the database for admin listing
  * @returns Array of users with basic info and credential status
@@ -651,24 +952,6 @@ export const getAllUsers = (): AdminUserListItem[] => {
     console.error('Error fetching all users:', error);
     return [];
   }
-};
-
-export type DeleteUserResult = { success: true } | { success: false; error: string };
-
-/**
- * Delete a user from the database using the guarded transactional path.
- * @param userId - The ID of the user to delete (supports both number and bigint)
- * @returns Detailed result including failure reasons when deletion is blocked
- */
-export const deleteUser = (userId: number | bigint): DeleteUserResult => {
-  const { success, error } = deleteUserSafely(userId);
-  if (success) {
-    return { success: true };
-  }
-
-  const message = error ?? 'Deletion failed';
-  console.warn(`[db] deleteUser reported: ${message}`);
-  return { success: false, error: message };
 };
 
 /**

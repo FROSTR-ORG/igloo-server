@@ -348,6 +348,7 @@ export PEER_POLICIES='[{"pubkey":"02abcdef...","allowSend":false}]'
 - The React frontend is disabled; manage the server via API.
 - Leave `GROUP_CRED`/`SHARE_CRED` unset to configure credentials later through the API before the node starts.
 - `PEER_POLICIES` only persists entries that set `allowSend:false` or `allowReceive:false`. Saved overrides are mirrored to `data/peer-policies.json` so they survive restarts and are applied for API-key flows.
+- API key auth stays env-managed: set `API_KEY` before launch, and note `/api/env` can't create or rotate it—only that one configured value is accepted today.
 
 ### Docker Deployment
 
@@ -425,6 +426,31 @@ POST /api/auth/logout
 # Get authentication status
 GET /api/auth/status
 ```
+
+### Admin API Keys (database mode)
+```bash
+# List API keys (requires ADMIN_SECRET)
+GET /api/admin/api-keys
+
+# Create a new API key (token returned once in response)
+POST /api/admin/api-keys
+Authorization: Bearer $ADMIN_SECRET
+Content-Type: application/json
+{
+  "label": "automation bot",
+  "userId": 1
+}
+
+# Revoke an API key by id
+POST /api/admin/api-keys/revoke
+Authorization: Bearer $ADMIN_SECRET
+Content-Type: application/json
+{
+  "apiKeyId": 3,
+  "reason": "rotating credentials"
+}
+```
+> ⚠️ Admin-issued tokens are only shown in the creation response—store them securely.
 
 ### Environment Management
 ```bash
@@ -812,7 +838,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `HOST_PORT` | Server port | `8002` | ❌ |
 | **Security** | | | |
 | `AUTH_ENABLED` | Enable authentication | `true` | ⚠️ |
-| `API_KEY` | API key for programmatic access | - | ❌ |
+| `API_KEY` | Headless-mode API key for programmatic access (database mode uses admin-issued keys) | - | ❌ |
 | `BASIC_AUTH_USER` | Basic auth username | - | ❌ |
 | `BASIC_AUTH_PASS` | Basic auth password | - | ❌ |
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |

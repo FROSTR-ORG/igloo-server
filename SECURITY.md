@@ -18,6 +18,7 @@ Igloo Server supports two operation modes with different security models:
 - **Traditional deployment** for backward compatibility
 - **No database required**
 - **Peer policies**: only explicit blocks are honored via `PEER_POLICIES` or `data/peer-policies.json`
+- **API key**: set via the `API_KEY` environment variable; only one value is supported and rotation requires updating the env var and restarting the server
 
 ### Security Comparison Table
 
@@ -103,6 +104,14 @@ Starting with this version, Igloo Server **automatically generates and persists*
 2. Creates username and password
 3. User logs in with credentials
 4. Credentials stored encrypted with user's password as key
+
+#### API Key Management (Database Mode)
+- **Admin-issued keys**: Create, list, and revoke keys via `/api/admin/api-keys` endpoints authenticated with the ADMIN_SECRET bearer token.
+- **One-time disclosure**: The full API key is only returned in the creation response; the server stores a SHA-256 hash plus a 12-character prefix for constant-time comparisons.
+- **Revocation workflow**: `/api/admin/api-keys/revoke` marks keys as revoked with an optional reason and timestamp, preventing further use.
+- **Usage telemetry**: Each key records `last_used_at` and `last_used_ip` to help detect compromise or unexpected automation.
+- **Least privilege**: Issue distinct keys per automation or integration, and revoke unused keys promptly.
+- **Admin secret hygiene**: Treat `ADMIN_SECRET` like root credentials—store it in a secrets manager, avoid hardcoding it in CI/CD, and rotate it after incident response.
 
 #### User Type Separation (Security Design)
 Igloo Server distinguishes between two user types for security:
