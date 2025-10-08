@@ -582,6 +582,16 @@ export class Nip46Service {
 
   private handleSocketClosed() {
     this.log('warn', 'NIP-46 socket closed, attempting restart')
+    if (this.stopping) {
+      return
+    }
+
+    // Drop existing agent state so ensureStarted() performs a full restart.
+    this.removeAgentListeners()
+    this.agent = null
+    this.signer = null
+    this.started = false
+
     if (this.activeUserId != null) {
       void this.ensureStarted()
     }
