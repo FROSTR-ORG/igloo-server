@@ -3,16 +3,20 @@ import {
   readEnvFile,
   readPublicEnvFile,
   writeEnvFile,
+  writeEnvFileWithTimestamp,
   validateEnvKeys,
   getSecureCorsHeaders,
   mergeVaryHeaders,
-  parseJsonRequestBody
+  parseJsonRequestBody,
+  getCredentialsSavedAt
 } from './utils.js';
-import { HEADLESS } from '../const.js';
-import { getUserCredentials } from '../db/database.js';
-import { validateAdminSecret } from './onboarding.js';
+import { hasCredentials, HEADLESS } from '../const.js';
 import { createNodeWithCredentials } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
+import { validateShare, validateGroup } from '@frostr/igloo-core';
+import { AUTH_CONFIG } from './auth.js';
+import { validateAdminSecret } from './onboarding.js';
+import { getUserCredentials } from '../db/database.js';
 
 // Helper function to validate relay URLs
 function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
@@ -78,67 +82,6 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   
   const mergedVary = mergeVaryHeaders(corsHeaders);
   
-  // Authentication and admin privileges required for POST requests in both modes
-  if (req.method === 'POST') {
-    if (!auth || typeof auth !== 'object' || !auth.authenticated) {
-      return Response.json(
-        { error: 'Authentication required for environment modifications' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-      );
-    }
-    
-    // In database mode, require admin privileges
-    if (!HEADLESS) {
-      // Check for ADMIN_SECRET in X-Admin-Secret header or Bearer token in Authorization
-      let adminSecret = req.headers.get('X-Admin-Secret') ?? undefined;
-      if (!adminSecret) {
-        const authHeader = req.headers.get('Authorization');
-        if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-          adminSecret = authHeader.substring(7).trim();
-        }
-      }
-      
-      const isAdmin = await validateAdminSecret(adminSecret);
-      if (!isAdmin) {
-        // Also allow the first user (admin user) to modify environment
-        const validUserId = (typeof auth.userId === 'number' && auth.userId === 1) ||
-                           (typeof auth.userId === 'string' && auth.userId === '1');
-        if (!validUserId) {
-          return Response.json(
-            { error: 'Admin privileges required for environment modifications' },
-            { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-          );
-        }
-      }
-    }
-  }
-
-  // Validate auth parameter structure when needed in database mode
-  if (!HEADLESS && req.method === 'GET') {
-    if (!auth || typeof auth !== 'object') {
-      return Response.json(
-        { error: 'Authentication required' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-      );
-    }
-    
-    if (!auth.authenticated) {
-      return Response.json(
-        { error: 'Invalid authentication' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-      );
-    }
-    
-    const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) ||
-                       (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId) && BigInt(auth.userId) > 0n);
-    if (!validUserId) {
-      return Response.json(
-        { error: 'Invalid user authentication' },
-        { status: 401, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-      );
-    }
-  }
-
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
@@ -149,76 +92,138 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     return new Response(null, { status: 200, headers });
   }
 
+  const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
+
+  if ((AUTH_CONFIG.ENABLED || !HEADLESS) && isWrite) {
+    if (!auth || typeof auth !== 'object' || !auth.authenticated) {
+      return Response.json(
+        { error: 'Authentication required for environment modifications' },
+        { status: 401, headers }
+      );
+    }
+  }
+
   try {
     switch (url.pathname) {
       case '/api/env':
         if (req.method === 'GET') {
-          // In headless mode, return env vars
-          // In database mode, try to return user credentials in env format for compatibility
           if (HEADLESS) {
             const publicEnv = await readPublicEnvFile();
             return Response.json(publicEnv, { headers });
+          }
+
+          if (!auth || !auth.authenticated) {
+            return Response.json({ error: 'Authentication required' }, { status: 401, headers });
+          }
+
+          const validUserId = (typeof auth.userId === 'number' && auth.userId > 0) ||
+            (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId) && BigInt(auth.userId) > 0n);
+          if (!validUserId) {
+            return Response.json({ error: 'Invalid user authentication' }, { status: 401, headers });
+          }
+
+          let secret: string | Uint8Array | null = null;
+          let isDerivedKey = false;
+          const password = auth.getPassword?.();
+          if (password) {
+            secret = password;
           } else {
-            // Database mode - return empty or user's credentials if available
-            if (auth?.authenticated && (typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)))) {
-              // Use secure getters to access sensitive data
-              let secret: string | Uint8Array | null = null;
-              let isDerivedKey = false;
-              
-              // Try to get password first (direct auth) - only use secure getter
-              const password = auth.getPassword?.();
-              if (password) {
-                secret = password;
-                isDerivedKey = false;
-              } else {
-                // Try to get derived key (session auth) - only use secure getter
-                const derivedKey = auth.getDerivedKey?.();
-                if (!derivedKey) return Response.json({}, { headers });
-                // Keep binary; database layer will accept binary and convert as needed
-                secret = derivedKey;
-                isDerivedKey = true;
-              }
-              
-              if (!secret) return Response.json({}, { headers });
-              let credentials;
-              try {
-                // Convert string userId to bigint for database operation
-                const dbUserId = typeof auth.userId === 'string' ? BigInt(auth.userId) : auth.userId;
-                credentials = getUserCredentials(
-                  dbUserId,
-                  secret,
-                  isDerivedKey
-                );
-              } catch (error) {
-                console.error('Failed to retrieve user credentials for env:', error);
-                return Response.json({}, { headers });
-              }
-              if (credentials) {
-                // In database mode, don't return credential placeholders as they can be misinterpreted
-                // The frontend should use /api/user/credentials to get actual values
-                return Response.json({
-                  // Don't return placeholders - return undefined for security
-                  GROUP_CRED: undefined,
-                  SHARE_CRED: undefined,
-                  // Safe to return non-sensitive metadata
-                  GROUP_NAME: credentials.group_name || undefined,
-                  RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : undefined,
-                  // Add metadata to indicate credentials exist
-                  hasCredentials: !!(credentials.group_cred && credentials.share_cred)
-                }, { headers });
-              }
+            const derivedKey = auth.getDerivedKey?.();
+            if (derivedKey) {
+              secret = derivedKey;
+              isDerivedKey = true;
             }
+          }
+
+          if (!secret) {
+            return Response.json({}, { headers });
+          }
+
+          try {
+            const dbUserId = typeof auth.userId === 'string' ? BigInt(auth.userId!) : auth.userId!;
+            const credentials = await getUserCredentials(dbUserId, secret, isDerivedKey);
+            if (!credentials) {
+              return Response.json({}, { headers });
+            }
+
+            return Response.json({
+              GROUP_CRED: undefined,
+              SHARE_CRED: undefined,
+              GROUP_NAME: credentials.group_name || undefined,
+              RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : undefined,
+              hasCredentials: !!(credentials.group_cred && credentials.share_cred)
+            }, { headers });
+          } catch (error) {
+            console.error('Failed to retrieve user credentials for env:', error);
             return Response.json({}, { headers });
           }
         }
         
         if (req.method === 'POST') {
-          if (HEADLESS) {
+          if (!HEADLESS) {
+            let body;
+            try {
+              body = await parseJsonRequestBody(req);
+            } catch (error) {
+              return Response.json(
+                { error: error instanceof Error ? error.message : 'Invalid request body' },
+                { status: 400, headers }
+              );
+            }
+
+            const env = await readEnvFile();
+            const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
+
+            if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
+              const relayValidation = validateRelayUrls(body.RELAYS);
+              if (!relayValidation.valid) {
+                return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
+              }
+            }
+
+            const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+            const isAdminSecret = await validateAdminSecret(adminSecret);
+            const firstUser = auth && auth.authenticated && ((typeof auth.userId === 'number' && auth.userId === 1) || (typeof auth.userId === 'string' && auth.userId === '1'));
+            if (!isAdminSecret && !firstUser) {
+              return Response.json(
+                { error: 'Admin privileges required for environment modifications' },
+                { status: 403, headers }
+              );
+            }
+
+            for (const key of validKeys) {
+              if (body[key] !== undefined) {
+                env[key] = body[key];
+              }
+            }
+
+            if (await writeEnvFile(env)) {
+              try {
+                if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
+                  process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
+                }
+                if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
+                  process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
+                }
+              } catch {}
+
+              const responseMessage = rejectedKeys.length > 0
+                ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
+                : 'Environment variables updated';
+
+              return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
+            }
+
+            return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+          }
+
+          if (AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
             return Response.json(
-              { error: 'Environment modifications are not allowed in headless mode' },
-              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+              { error: 'Authentication required for environment modifications' },
+              { status: 401, headers }
             );
           }
+
           let body;
           try {
             body = await parseJsonRequestBody(req);
@@ -228,35 +233,27 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               { status: 400, headers }
             );
           }
-          
+
           const env = await readEnvFile();
-          
-          // Validate which keys are allowed to be updated
           const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
-          
-          // Validate relays before updating
+
           if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
             const relayValidation = validateRelayUrls(body.RELAYS);
             if (!relayValidation.valid) {
-              return Response.json({ 
-                success: false, 
-                error: relayValidation.error 
-              }, { status: 400, headers });
+              return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
             }
           }
-          
-          // Update only allowed keys
+
           const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
           const updatingRelays = validKeys.includes('RELAYS');
-          
+
           for (const key of validKeys) {
             if (body[key] !== undefined) {
               env[key] = body[key];
             }
           }
-          
+
           if (await writeEnvFile(env)) {
-            // Hot-apply a subset of safe settings without restart
             try {
               if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
                 process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
@@ -265,7 +262,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
               }
             } catch {}
-            // If credentials or relays were updated, recreate the node (with lock)
+
             if (updatingCredentials || updatingRelays) {
               try {
                 await executeUnderNodeLock(async () => {
@@ -273,51 +270,119 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 }, context);
               } catch (error) {
                 context.addServerLog('error', 'Error recreating Bifrost node', error);
-                // Continue anyway - the env vars were saved
               }
             }
-            
-            const responseMessage = rejectedKeys.length > 0 
+
+            const responseMessage = rejectedKeys.length > 0
               ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
               : 'Environment variables updated';
-            
-            return Response.json({ 
-              success: true, 
-              message: responseMessage,
-              rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined
-            }, { headers });
-          } else {
-            return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+
+            return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
           }
+
+          return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+        }
+        break;
+
+      case '/api/env/shares':
+        if (!HEADLESS) {
+          return Response.json({ error: 'Not found' }, { status: 404, headers });
+        }
+
+        if (req.method === 'GET') {
+          const shares: Array<Record<string, unknown>> = [];
+          if (hasCredentials()) {
+            const savedAt = await getCredentialsSavedAt();
+            shares.push({
+              hasShareCredential: true,
+              hasGroupCredential: true,
+              isValid: true,
+              savedAt: savedAt || null,
+              id: 'env-stored-share',
+              source: 'environment'
+            });
+          }
+          return Response.json(shares, { headers });
+        }
+
+        if (req.method === 'POST') {
+          if (AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
+            return Response.json(
+              { error: 'Authentication required for environment modifications' },
+              { status: 401, headers }
+            );
+          }
+          let body;
+          try {
+            body = await parseJsonRequestBody(req);
+          } catch (error) {
+              return Response.json(
+              { error: error instanceof Error ? error.message : 'Invalid request body' },
+              { status: 400, headers }
+            );
+          }
+
+          const { shareCredential, groupCredential } = body ?? {};
+          if (!shareCredential || !groupCredential) {
+            return Response.json(
+              { success: false, error: 'Missing shareCredential or groupCredential' },
+              { status: 400, headers }
+            );
+          }
+
+          const shareValidation = validateShare(shareCredential);
+          const groupValidation = validateGroup(groupCredential);
+
+          if (!shareValidation.isValid || !groupValidation.isValid) {
+            return Response.json(
+              { success: false, error: 'Invalid credentials provided' },
+              { status: 400, headers }
+            );
+          }
+
+          const env = await readEnvFile();
+          env.SHARE_CRED = shareCredential;
+          env.GROUP_CRED = groupCredential;
+
+          if (await writeEnvFileWithTimestamp(env)) {
+            return Response.json(
+              { success: true, message: 'Share saved successfully' },
+              { headers }
+            );
+          }
+
+          return Response.json(
+            { success: false, error: 'Failed to save share' },
+            { status: 500, headers }
+          );
         }
         break;
 
       case '/api/env/delete':
         if (req.method === 'POST') {
-          if (HEADLESS) {
+          if (HEADLESS && AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
             return Response.json(
-              { error: 'Environment modifications are not allowed in headless mode' },
-              { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
+              { error: 'Authentication required for environment modifications' },
+              { status: 401, headers }
             );
           }
-          
-          // Require admin privileges in database mode
-          const adminSecret = req.headers.get('X-Admin-Secret') || 
-                             req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-          
-          const isAdmin = await validateAdminSecret(adminSecret);
-          if (!isAdmin) {
-            // Also allow the first user (admin user) to delete environment vars
-            const validUserId = (auth && ((typeof auth.userId === 'number' && auth.userId === 1) ||
-                               (typeof auth.userId === 'string' && auth.userId === '1')));
-            if (!validUserId) {
-              return Response.json(
-                { error: 'Admin privileges required for deleting environment variables' },
-                { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders, 'Vary': mergedVary } }
-              );
+          if (!HEADLESS) {
+            const adminSecret = req.headers.get('X-Admin-Secret') ??
+              req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+
+            const isAdmin = await validateAdminSecret(adminSecret);
+            if (!isAdmin) {
+              const validUserId = auth && ((typeof auth.userId === 'number' && auth.userId === 1) ||
+                (typeof auth.userId === 'string' && auth.userId === '1'));
+              if (!validUserId) {
+                return Response.json(
+                  { error: 'Admin privileges required for deleting environment variables' },
+                  { status: 403, headers }
+                );
+              }
             }
           }
-          
+
           let body;
           try {
             body = await parseJsonRequestBody(req);

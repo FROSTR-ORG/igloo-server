@@ -56,11 +56,11 @@ The API supports multiple authentication methods:
 The OpenAPI specification includes:
 
 - ✅ All authentication endpoints (`/api/auth/*`)
-- ✅ Environment management (`/api/env`)
+- ✅ Environment management (`/api/env` — headless mode only)
 - ✅ Server status (`/api/status`)
 - ✅ Peer management (`/api/peers/*`)
 - ✅ Key recovery (`/api/recover/*`)
-- ✅ Share management (`/api/shares`)
+- ✅ Share management (`/api/env/shares`)
 - ✅ Real-time events (`/api/events`)
 - ✅ Signing and encryption
   - `/api/sign` (threshold Schnorr signing)

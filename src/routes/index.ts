@@ -1,9 +1,7 @@
 // Export all route handlers
 export { handleStatusRoute } from './status.js';
-export { handleEventsRoute } from './events.js';
 export { handlePeersRoute } from './peers.js';
 export { handleRecoveryRoute } from './recovery.js';
-export { handleSharesRoute } from './shares.js';
 export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
 export { handleSignRoute } from './sign.js';
@@ -18,10 +16,8 @@ export * from './utils.js';
 import { RouteContext, PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createRequestAuth } from './auth-factory.js';
 import { handleStatusRoute } from './status.js';
-import { handleEventsRoute } from './events.js';
 import { handlePeersRoute } from './peers.js';
 import { handleRecoveryRoute } from './recovery.js';
-import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { handleSignRoute } from './sign.js';
@@ -311,13 +307,11 @@ export async function handleRequest(
   // Note: These handlers now accept auth as an optional parameter
   const routeHandlers = [
     handleStatusRoute,    // Allow unauthenticated for health checks
-    handleEventsRoute,
     handlePeersRoute,
     handleSignRoute,
     handleNip44Route,
     handleNip04Route,
     handleRecoveryRoute,
-    handleSharesRoute,
   ];
 
   for (const handler of routeHandlers) {

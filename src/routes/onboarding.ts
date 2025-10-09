@@ -51,6 +51,117 @@ if (!HEADLESS) {
   startClientIdCleanup();
 }
 
+async function processOnboardingSecretRequest(
+  req: Request,
+  headers: Record<string, string>,
+  context: RouteContext,
+  mode: 'validate' | 'setup'
+): Promise<Response> {
+  const rateLimited = await checkPerIpRateLimit(context, req);
+  if (rateLimited) {
+    await addUniformDelay();
+    return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+  }
+
+  await addUniformDelay();
+
+  let initialized = false;
+  try {
+    initialized = isDatabaseInitialized();
+  } catch (err: any) {
+    console.error('[onboarding] Database initialization check failed:', err);
+    return Response.json(
+      { error: 'Database initialization check failed' },
+      { status: 500, headers }
+    );
+  }
+
+  if (initialized) {
+    return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+  }
+
+  const authHeader = req.headers.get('Authorization');
+  let adminSecret: string | undefined;
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+    adminSecret = authHeader.substring(7).trim();
+  }
+
+  const isAdminValid = await validateAdminSecret(adminSecret);
+  if (!isAdminValid) {
+    return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+  }
+
+  if (mode === 'validate') {
+    return Response.json(
+      { success: true, message: 'Admin secret validated' },
+      { headers }
+    );
+  }
+
+  let body;
+  try {
+    body = await parseJsonRequestBody(req);
+  } catch (error) {
+    console.error('Failed to parse JSON in onboarding/setup:', error);
+    return Response.json(
+      { error: error instanceof Error ? error.message : 'Invalid request body' },
+      { status: 400, headers }
+    );
+  }
+
+  const { username, password } = body;
+
+  if (!username || !password) {
+    return Response.json(
+      {
+        error: 'validation_error',
+        message: 'Username and password are required'
+      },
+      { status: 400, headers }
+    );
+  }
+
+  if (username.length < 3 || username.length > 50) {
+    return Response.json(
+      {
+        error: 'invalid_username',
+        message: 'Username must be between 3 and 50 characters'
+      },
+      { status: 400, headers }
+    );
+  }
+
+  const passwordError = validatePasswordStrength(password, username);
+  if (passwordError) {
+    return Response.json(
+      {
+        error: 'invalid_password',
+        message: passwordError
+      },
+      { status: 400, headers }
+    );
+  }
+
+  const result = await createUser(username, password, { role: 'admin' });
+
+  if (!result.success) {
+    if (result.error === 'Username already exists') {
+      return Response.json(
+        { error: 'Username already taken' },
+        { status: 409, headers }
+      );
+    }
+
+    console.error('[onboarding] Failed to create initial user:', result.error);
+    return Response.json(UNIFORM_SETUP_ERROR, { status: 500, headers });
+  }
+
+  return Response.json(
+    { success: true, message: 'Setup complete' },
+    { headers }
+  );
+}
+
 // Helper function to add uniform delay to responses
 async function addUniformDelay(): Promise<void> {
   await new Promise(resolve => setTimeout(resolve, UNIFORM_DELAY_MS));
@@ -350,188 +461,13 @@ export async function handleOnboardingRoute(
 
       case '/api/onboarding/validate-admin':
         if (req.method === 'POST') {
-          // Apply rate limiting BEFORE delay to prevent resource exhaustion
-          const rateLimited = await checkPerIpRateLimit(_context, req);
-          if (rateLimited) {
-            // Still add delay to rate-limited responses for timing consistency
-            await addUniformDelay();
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Add uniform delay to all non-rate-limited responses
-          await addUniformDelay();
-          
-          // Check if already initialized
-          let initialized = false;
-          try {
-            initialized = isDatabaseInitialized();
-          } catch (err: any) {
-            console.error('[onboarding] Database initialization check failed in validate-admin:', err);
-            return Response.json(
-              { error: 'Database initialization check failed' },
-              { status: 500, headers }
-            );
-          }
-          
-          if (initialized) {
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Extract admin secret from Authorization header
-          const authHeader = req.headers.get('Authorization');
-          let adminSecret: string | undefined;
-          if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-            adminSecret = authHeader.substring(7).trim();
-          }
-
-          // Use the helper function for validation
-          const isValid = await validateAdminSecret(adminSecret);
-          
-          if (!isValid) {
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Admin secret is valid, allow setup
-          return Response.json(
-            { success: true, message: 'Admin secret validated' },
-            { headers }
-          );
+          return processOnboardingSecretRequest(req, headers, _context, 'validate');
         }
         break;
 
       case '/api/onboarding/setup':
         if (req.method === 'POST') {
-          // Apply rate limiting BEFORE delay to prevent resource exhaustion
-          const rateLimited = await checkPerIpRateLimit(_context, req);
-          if (rateLimited) {
-            // Still add delay to rate-limited responses for timing consistency
-            await addUniformDelay();
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Add uniform delay to all non-rate-limited responses
-          await addUniformDelay();
-          
-          // Check if already initialized
-          let initialized = false;
-          try {
-            initialized = isDatabaseInitialized();
-          } catch (err: any) {
-            console.error('[onboarding] Database initialization check failed in setup:', err);
-            return Response.json(
-              { error: 'Database initialization check failed' },
-              { status: 500, headers }
-            );
-          }
-          
-          if (initialized) {
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Extract admin secret from Authorization header
-          const authHeader = req.headers.get('Authorization');
-          let adminSecret: string | undefined;
-          if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-            adminSecret = authHeader.substring(7).trim();
-          }
-
-          let body;
-          try {
-            body = await parseJsonRequestBody(req);
-          } catch (error) {
-            console.error('Failed to parse JSON in onboarding/setup:', error);
-            return Response.json(
-              { error: error instanceof Error ? error.message : 'Invalid request body' },
-              { status: 400, headers }
-            );
-          }
-          const { username, password } = body;
-
-          // Check for missing required fields first (these are validation errors, not auth errors)
-          if (!username || !password) {
-            return Response.json(
-              { 
-                error: 'validation_error', 
-                message: 'Username and password are required' 
-              },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate admin secret using helper function
-          const isAdminValid = await validateAdminSecret(adminSecret);
-          
-          if (!isAdminValid) {
-            return Response.json(
-              UNIFORM_AUTH_ERROR,
-              { status: 401, headers }
-            );
-          }
-
-          // Validate username (validation error, not auth error)
-          if (username.length < 3 || username.length > 50) {
-            return Response.json(
-              { 
-                error: 'invalid_username', 
-                message: 'Username must be between 3 and 50 characters' 
-              },
-              { status: 400, headers }
-            );
-          }
-
-          // Validate password strength with username check (validation error, not auth error)
-          const passwordError = validatePasswordStrength(password, username);
-          if (passwordError) {
-            return Response.json(
-              { 
-                error: 'invalid_password', 
-                message: passwordError 
-              },
-              { status: 400, headers }
-            );
-          }
-
-          // Create the first user
-          const result = await createUser(username, password, { role: 'admin' });
-
-          if (!result.success) {
-            // Check for duplicate username
-            if (result.error === 'Username already exists') {
-              return Response.json(
-                { error: 'Username already taken' },
-                { status: 409, headers }
-              );
-            }
-            // Use setup error for other creation failures
-            return Response.json(
-              UNIFORM_SETUP_ERROR,
-              { status: 500, headers }
-            );
-          }
-
-          return Response.json(
-            {
-              success: true,
-              message: 'User created successfully',
-              userId: result.userId,
-            },
-            { headers }
-          );
+          return processOnboardingSecretRequest(req, headers, _context, 'setup');
         }
         break;
     }

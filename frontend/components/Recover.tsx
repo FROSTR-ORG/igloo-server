@@ -138,7 +138,7 @@ const Recover: React.FC<RecoverProps> = ({
         // If no localStorage data, try server API
         if (!shares || shares.length === 0) {
           try {
-            const response = await fetch('/api/shares', {
+            const response = await fetch('/api/env/shares', {
               headers: authHeaders
             });
             if (response.ok) {
