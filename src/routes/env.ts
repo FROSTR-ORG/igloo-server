@@ -67,12 +67,35 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
     throw new Error(relayValidation.error);
   }
 
-  await createNodeWithCredentials(
+  const relayString = Array.isArray(env.RELAYS)
+    ? env.RELAYS.join(',')
+    : typeof env.RELAYS === 'string'
+      ? env.RELAYS
+      : undefined;
+
+  const peerPoliciesRaw = typeof env.PEER_POLICIES === 'string' ? env.PEER_POLICIES : undefined;
+
+  const node = await createNodeWithCredentials(
     env.GROUP_CRED,
     env.SHARE_CRED,
-    env.RELAYS, // Pass the raw relay string, function will parse it
-    context.addServerLog
+    relayString,
+    context.addServerLog,
+    peerPoliciesRaw
   );
+
+  if (!node) {
+    throw new Error('Failed to create node with provided credentials');
+  }
+
+  context.updateNode(node, {
+    credentials: {
+      group: env.GROUP_CRED,
+      share: env.SHARE_CRED,
+      relaysEnv: relayString,
+      peerPoliciesRaw,
+      source: 'env'
+    }
+  });
 }
 
 export async function handleEnvRoute(req: Request, url: URL, context: PrivilegedRouteContext, auth?: RequestAuth | null): Promise<Response | null> {
@@ -345,6 +368,18 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           env.GROUP_CRED = groupCredential;
 
           if (await writeEnvFileWithTimestamp(env)) {
+            try {
+              await executeUnderNodeLock(async () => {
+                await createAndConnectServerNode(env, context);
+              }, context);
+            } catch (error) {
+              console.error('Failed to restart node with updated shares:', error);
+              return Response.json(
+                { success: false, error: 'Failed to apply credentials to node' },
+                { status: 500, headers }
+              );
+            }
+
             return Response.json(
               { success: true, message: 'Share saved successfully' },
               { headers }
