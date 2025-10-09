@@ -21,6 +21,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [Docker Deployment](#docker-deployment)
 - [API Reference](#api-reference)
   - [Authentication](#authentication)
+  - [API Keys](#api-keys)
   - [Environment Management](#environment-management)
   - [Server Status](#server-status)
   - [Peer Management](#peer-management)
@@ -350,6 +351,38 @@ export PEER_POLICIES='[{"pubkey":"02abcdef...","allowSend":false}]'
 - `PEER_POLICIES` only persists entries that set `allowSend:false` or `allowReceive:false`. Saved overrides are mirrored to `data/peer-policies.json` so they survive restarts and are applied for API-key flows.
 - API key auth stays env-managed: set `API_KEY` before launch, and note `/api/env` can't create or rotate it—only that one configured value is accepted today.
 
+## API Keys
+
+Igloo Server supports API keys both in headless and database modes:
+
+- Headless mode: supply a single `API_KEY` via environment; HTTP cannot create/rotate it. Attempting to set `API_KEY` via `/api/env` is rejected by design.
+- Database mode: manage multiple keys via admin endpoints or the UI “API Keys” tab.
+
+Endpoints (database mode):
+
+- `GET /api/admin/api-keys` — list keys
+- `POST /api/admin/api-keys` — create a key `{ label?: string, userId?: number }`
+- `POST /api/admin/api-keys/revoke` — revoke `{ apiKeyId: number, reason?: string }`
+
+Authentication:
+
+- Use `Authorization: Bearer <ADMIN_SECRET>`
+- Or, if you are logged in as a user with role `admin`, your active session is accepted and you do not need to include `ADMIN_SECRET`. The first account created during onboarding is automatically promoted to `admin`.
+
+Usage notes:
+
+- The full key token is shown only once at creation; the server stores a hash and a short prefix.
+- The server records `last_used_at` and `last_used_ip` on successful API‑key auth. For `last_used_ip` behind a proxy, ensure `X‑Forwarded‑For` is forwarded from a trusted hop.
+
+Helper scripts:
+
+- `scripts/api-admin-keys.sh` — list/create/revoke admin keys (requires `jq`)
+- `scripts/api-test.sh` — quick API smoke using an issued key
+
+UI:
+
+- Logged-in admin users will see an “API Keys” tab between “NIP‑46” and “Recover”. When logged in as admin, the tab auto-loads without prompting for `ADMIN_SECRET`.
+
 ### Docker Deployment
 
 ```bash
@@ -427,14 +460,19 @@ POST /api/auth/logout
 GET /api/auth/status
 ```
 
-### Admin API Keys (database mode)
+### Admin API (database mode)
 ```bash
-# List API keys (requires ADMIN_SECRET)
+# Check admin session (used by UI). Returns 200 when caller is admin.
+GET /api/admin/whoami
+
+# List API keys (requires ADMIN_SECRET or admin session)
 GET /api/admin/api-keys
 
 # Create a new API key (token returned once in response)
 POST /api/admin/api-keys
-Authorization: Bearer $ADMIN_SECRET
+# EITHER send ADMIN_SECRET
+#   Authorization: Bearer $ADMIN_SECRET
+# OR rely on an authenticated admin session (UI path)
 Content-Type: application/json
 {
   "label": "automation bot",
@@ -443,7 +481,7 @@ Content-Type: application/json
 
 # Revoke an API key by id
 POST /api/admin/api-keys/revoke
-Authorization: Bearer $ADMIN_SECRET
+# EITHER Authorization: Bearer $ADMIN_SECRET or admin session
 Content-Type: application/json
 {
   "apiKeyId": 3,
@@ -451,6 +489,10 @@ Content-Type: application/json
 }
 ```
 > ⚠️ Admin-issued tokens are only shown in the creation response—store them securely.
+
+Admin session behavior
+- In database mode, successful logins create a minimal record in SQLite so sessions survive dev restarts. Only the session id, user id, IP, and timestamps are stored; no passwords or derived keys are persisted.
+- UI uses `GET /api/admin/whoami` to detect admin privileges instead of assuming user id `1`.
 
 ### Environment Management
 ```bash
@@ -792,6 +834,16 @@ bun run build:css     # Tailwind CSS compilation only
 ```
 
 **💡 Tip**: Use `bun run build:dev` during development to avoid caching issues. The server will automatically detect non-production builds and disable static file caching.
+
+### Tests
+```bash
+# Run all tests
+bun test
+
+# Run only API key/auth tests
+bun test tests/routes/*api-keys*.spec.ts
+```
+Tests are designed to be deterministic and self-contained; they spawn isolated processes with temporary SQLite DBs and clean up automatically.
 
 ### Frontend Structure
 ```

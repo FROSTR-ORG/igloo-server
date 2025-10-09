@@ -26,12 +26,6 @@
   ],
   "security": [
     {
-      "sessionCookie": []
-    },
-    {
-      "sessionHeader": []
-    },
-    {
       "apiKeyAuth": []
     },
     {
@@ -39,6 +33,12 @@
     },
     {
       "basicAuth": []
+    },
+    {
+      "sessionCookie": []
+    },
+    {
+      "sessionHeader": []
     }
   ],
   "tags": [
@@ -97,11 +97,37 @@
               }
             }
           },
+          "400": {
+            "$ref": "#/components/responses/BadRequest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerStatus"
+                },
+                "example": {
+                  "serverRunning": true,
+                  "nodeActive": true,
+                  "hasCredentials": true,
+                  "relayCount": 2,
+                  "relays": [
+                    "wss://relay.primal.net",
+                    "wss://relay.damus.io"
+                  ],
+                  "timestamp": "2025-01-20T12:00:00.000Z",
+                  "health": {
+                    "isHealthy": true,
+                    "lastActivity": "2025-01-20T11:59:30.000Z",
+                    "lastHealthCheck": "2025-01-20T12:00:00.000Z",
+                    "consecutiveFailures": 0,
+                    "restartCount": 0,
+                    "timeSinceLastActivity": 30000
+                  }
+                }
+              }
+            }
+          },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
-          },
-          "400": {
-            "$ref": "#/components/responses/BadRequest"
           }
         }
       }
@@ -128,7 +154,25 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "$ref": "#/components/responses/BadRequest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                },
+                "example": {
+                  "enabled": true,
+                  "methods": [
+                    "api-key",
+                    "bearer",
+                    "basic-auth",
+                    "session"
+                  ],
+                  "rateLimiting": true,
+                  "sessionTimeout": 3600
+                }
+              }
+            }
           }
         }
       }
@@ -1298,7 +1342,7 @@
     "/api/nip44/encrypt": {
       "post": {
         "operationId": "nip44Encrypt",
-        "summary": "Encrypt with NIP\u201144 (ECDH + symmetric)",
+        "summary": "Encrypt with NIP‑44 (ECDH + symmetric)",
         "tags": [
           "Crypto"
         ],
@@ -1365,7 +1409,7 @@
     "/api/nip44/decrypt": {
       "post": {
         "operationId": "nip44Decrypt",
-        "summary": "Decrypt with NIP\u201144",
+        "summary": "Decrypt with NIP‑44",
         "tags": [
           "Crypto"
         ],
@@ -1432,7 +1476,7 @@
     "/api/nip04/encrypt": {
       "post": {
         "operationId": "nip04Encrypt",
-        "summary": "Encrypt with NIP\u201104 (legacy; less secure than NIP\u201144)",
+        "summary": "Encrypt with NIP‑04 (legacy; less secure than NIP‑44)",
         "tags": [
           "Crypto"
         ],
@@ -1499,7 +1543,7 @@
     "/api/nip04/decrypt": {
       "post": {
         "operationId": "nip04Decrypt",
-        "summary": "Decrypt with NIP\u201104",
+        "summary": "Decrypt with NIP‑04",
         "tags": [
           "Crypto"
         ],
@@ -1566,9 +1610,9 @@
     "/api/nip46/sessions": {
       "get": {
         "operationId": "listNip46Sessions",
-        "summary": "List NIP\u201146 sessions",
+        "summary": "List NIP‑46 sessions",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "parameters": [
           {
@@ -1609,9 +1653,9 @@
       },
       "post": {
         "operationId": "upsertNip46Session",
-        "summary": "Create or update a NIP\u201146 session",
+        "summary": "Create or update a NIP‑46 session",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "requestBody": {
           "required": true,
@@ -1656,7 +1700,7 @@
         "operationId": "updateNip46Policy",
         "summary": "Update session policy",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "parameters": [
           {
@@ -1688,7 +1732,7 @@
         "operationId": "updateNip46Status",
         "summary": "Update session status (revoked deletes)",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "parameters": [
           {
@@ -1732,9 +1776,9 @@
     "/api/nip46/sessions/{pubkey}": {
       "delete": {
         "operationId": "deleteNip46Session",
-        "summary": "Delete a NIP\u201146 session",
+        "summary": "Delete a NIP‑46 session",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "parameters": [
           {
@@ -1769,9 +1813,9 @@
     "/api/nip46/history": {
       "get": {
         "operationId": "nip46History",
-        "summary": "Compact NIP\u201146 history summary",
+        "summary": "Compact NIP‑46 history summary",
         "tags": [
-          "NIP\u201146"
+          "NIP‑46"
         ],
         "responses": {
           "200": {
@@ -1802,13 +1846,19 @@
       "get": {
         "operationId": "listAdminApiKeys",
         "summary": "List API keys",
-        "description": "Returns metadata for all API keys managed in database mode. Requires `ADMIN_SECRET` authentication.",
+        "description": "Returns metadata for all API keys managed in database mode.\n\nAuthentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).\n",
         "tags": [
           "Admin"
         ],
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
           }
         ],
         "responses": {
@@ -1830,13 +1880,19 @@
       "post": {
         "operationId": "createAdminApiKey",
         "summary": "Create API key",
-        "description": "Creates a new API key and returns the token once. Requires `ADMIN_SECRET` authentication.",
+        "description": "Creates a new API key and returns the token once.\n\nAuthentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).\n",
         "tags": [
           "Admin"
         ],
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
           }
         ],
         "requestBody": {
@@ -1876,13 +1932,19 @@
       "post": {
         "operationId": "revokeAdminApiKey",
         "summary": "Revoke API key",
-        "description": "Revokes an existing API key by ID. Requires `ADMIN_SECRET` authentication.",
+        "description": "Revokes an existing API key by ID.\n\nAuthentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).\n",
         "tags": [
           "Admin"
         ],
         "security": [
           {
             "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
           }
         ],
         "requestBody": {
@@ -1905,14 +1967,9 @@
                   "properties": {
                     "success": {
                       "type": "boolean",
-                      "enum": [
-                        true
-                      ]
+                      "const": true
                     }
-                  },
-                  "required": [
-                    "success"
-                  ]
+                  }
                 }
               }
             }
@@ -1958,13 +2015,13 @@
         "type": "apiKey",
         "in": "header",
         "name": "X-Session-ID",
-        "description": "Session-based authentication via X-Session-ID header.\n\n**Security Requirements:**\n- HTTPS is mandatory to protect session identifiers from interception\n- Treat the header like a credential and avoid logging it\n\n**Best Practices:**\n- Combine with Secure/HttpOnly cookies when available\n- Implement CSRF protections for browser clients\n"
+        "description": "Session-based authentication via the `X-Session-ID` header.\n\n**Security Requirements:**\n- HTTPS is mandatory to protect session identifiers from interception\n- Treat the header value like a credential and avoid logging it\n\n**Best Practices:**\n- Combine with Secure/HttpOnly cookies when possible\n- Implement CSRF protection for browser-based clients\n"
       },
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
         "name": "session",
-        "description": "Session-based authentication via HttpOnly cookie.\n\n**Security Requirements:**\n- HTTPS is mandatory so cookies are only sent over encrypted channels\n- Cookies must be issued with Secure, HttpOnly, and SameSite attributes where appropriate\n\n**Best Practices:**\n- Rotate session identifiers regularly\n- Combine with CSRF protections when the cookie is used in browsers\n"
+        "description": "Session-based authentication via HttpOnly cookie.\n\n**Security Requirements:**\n- HTTPS is mandatory so cookies are only sent over encrypted channels\n- Cookies should be issued with Secure, HttpOnly, and SameSite attributes where appropriate\n\n**Best Practices:**\n- Rotate session identifiers regularly\n- Combine with CSRF protections when the cookie is used in browsers\n"
       }
     },
     "schemas": {
@@ -2407,7 +2464,7 @@
       },
       "Nip44Request": {
         "type": "object",
-        "description": "Request body for NIP\u201144 encryption/decryption operations",
+        "description": "Request body for NIP‑44 encryption/decryption operations",
         "properties": {
           "peer_pubkey": {
             "type": "string",
@@ -2470,9 +2527,44 @@
           }
         }
       },
+      "Nip46SessionInput": {
+        "type": "object",
+        "description": "Client-supplied fields when creating or updating a NIP‑46 session",
+        "properties": {
+          "client_pubkey": {
+            "type": "string",
+            "description": "Client public key (hex encoded)"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "active",
+              "revoked"
+            ],
+            "description": "Desired session status (defaults to pending)"
+          },
+          "profile": {
+            "$ref": "#/components/schemas/Nip46Profile"
+          },
+          "relays": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Preferred relays for the session"
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Nip46Policy"
+          }
+        },
+        "required": [
+          "client_pubkey"
+        ]
+      },
       "Nip46Session": {
         "type": "object",
-        "description": "Full persisted NIP\u201146 session details",
+        "description": "Full persisted NIP‑46 session details",
         "properties": {
           "pubkey": {
             "type": "string"
@@ -2517,7 +2609,7 @@
       },
       "Nip46SessionSummary": {
         "type": "object",
-        "description": "Compact summary of a NIP\u201146 session for history views",
+        "description": "Compact summary of a NIP‑46 session for history views",
         "properties": {
           "pubkey": {
             "type": "string"
@@ -2749,66 +2841,6 @@
         },
         "required": [
           "apiKeyId"
-        ]
-      },
-      "Nip46SessionInput": {
-        "type": "object",
-        "description": "Client-supplied fields when creating or updating a NIP-46 session",
-        "properties": {
-          "client_pubkey": {
-            "type": "string",
-            "description": "Client public key (hex encoded)"
-          },
-          "status": {
-            "type": "string",
-            "enum": [
-              "pending",
-              "active",
-              "revoked"
-            ],
-            "description": "Desired session status (defaults to pending)"
-          },
-          "profile": {
-            "type": "object",
-            "properties": {
-              "name": {
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              },
-              "image": {
-                "type": "string"
-              }
-            }
-          },
-          "relays": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            },
-            "description": "Preferred relays for the session"
-          },
-          "policy": {
-            "type": "object",
-            "properties": {
-              "methods": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "boolean"
-                }
-              },
-              "kinds": {
-                "type": "object",
-                "additionalProperties": {
-                  "type": "boolean"
-                }
-              }
-            }
-          }
-        },
-        "required": [
-          "client_pubkey"
         ]
       }
     },

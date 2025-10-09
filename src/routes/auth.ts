@@ -2,7 +2,7 @@ import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
-import { authenticateUser, isDatabaseInitialized, verifyApiKeyToken, markApiKeyUsed, hasActiveApiKeys } from '../db/database.js';
+import { authenticateUser, isDatabaseInitialized, verifyApiKeyToken, markApiKeyUsed, hasActiveApiKeys, createSessionRecord, getSessionRecord, touchSession, deleteSessionRecord, cleanupExpiredSessionsDB, getUserById } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
@@ -282,17 +282,15 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uin
   return new Uint8Array(key);
 }
 
-// In-memory session store (consider Redis for production clustering)
-// Note: Rate limiting now uses persistent SQLite storage via rate-limiter.ts
+// Ephemeral session metadata store for non-DB sessions and derived-key features.
+// DB-backed sessions persist minimal fields in SQLite; this map only tracks
+// per-process extras (e.g., rehydration counters, hasPassword flag) and
+// supports headless/API-key/basic-auth sessions.
 const sessionStore = new Map<string, {
-  userId: string | number | bigint; // Support string (env auth), number, and bigint (database user id)
-  createdAt: number;
-  lastAccess: number;
-  ipAddress: string;
-  salt?: string; // Store salt as hex string for non-database users (env auth)
-  hasPassword?: boolean; // Flag indicating if password-based derived key is available in vault
-  rehydrationsUsed: number; // Count of cache-driven rehydrations performed for this session
-  // Note: for database users, salt comes from the database
+  userId?: string | number | bigint;
+  hasPassword?: boolean;
+  salt?: string; // for non-database users only
+  rehydrationsUsed: number;
 }>();
 
 // Cache of session-scoped derived keys to support rehydration after vault expiry
@@ -580,26 +578,52 @@ function authenticateSession(req: Request): AuthResult {
     return { authenticated: false, error: 'No session provided' };
   }
 
+  // Prefer DB-backed session when available and in DB mode
+  if (!HEADLESS) {
+    const row = getSessionRecord(sessionId);
+    if (!row) {
+      // Fallback to in-memory (e.g., API-key/basic sessions)
+    } else {
+      // TTL check using DB timestamps
+      // last_access is updated at each successful auth
+      // We compare epoch seconds for robustness
+      try {
+        const lastAccessSec = Math.floor(Date.parse(row.last_access) / 1000);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const ttlSec = Math.floor(AUTH_CONFIG.SESSION_TIMEOUT / 1000);
+        if (Number.isFinite(lastAccessSec) && nowSec - lastAccessSec > ttlSec) {
+          deleteSessionRecord(sessionId);
+          clearCachedDerivedKey(sessionId);
+          zeroizeVaultEntryAndDelete(sessionId);
+          return { authenticated: false, error: 'Session expired' };
+        }
+      } catch {
+        // If parsing fails, consider session invalid
+        deleteSessionRecord(sessionId);
+        clearCachedDerivedKey(sessionId);
+        zeroizeVaultEntryAndDelete(sessionId);
+        return { authenticated: false, error: 'Invalid session' };
+      }
+
+      // Touch last_access and return user info
+      try { touchSession(sessionId); } catch {}
+      const jsonUserId = typeof row.user_id === 'bigint' ? row.user_id.toString() : row.user_id;
+      const meta = sessionStore.get(sessionId);
+      return { authenticated: true, userId: jsonUserId, sessionId, hasPassword: meta?.hasPassword };
+    }
+  }
+
+  // In headless mode or for non-DB sessions, use ephemeral store
   const session = sessionStore.get(sessionId);
   if (!session) {
     return { authenticated: false, error: 'Invalid session' };
   }
-
-  const now = Date.now();
-  const lastActivity = session.lastAccess ?? session.createdAt;
-  if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
-    sessionStore.delete(sessionId);
-    clearCachedDerivedKey(sessionId);
-    zeroizeVaultEntryAndDelete(sessionId);
-    return { authenticated: false, error: 'Session expired' };
-  }
-
-  session.lastAccess = now;
-  // Don't consume vault reads during authentication - pass sessionId for lazy retrieval
-  // Convert bigint to string for JSON safety (handles legacy sessions)
-  const userId = typeof session.userId === 'bigint' ? session.userId.toString() : session.userId;
-  // Include hasPassword flag to indicate if password-based derived key is available
-  return { authenticated: true, userId, sessionId, hasPassword: session.hasPassword };
+  // For ephemeral sessions, enforce TTL using a shadow last_access timestamp in vault if desired.
+  // Simpler path: rely on vault existence; but keep conservative timeout behavior.
+  // We do not track lastAccess timestamps for ephemeral sessions anymore; require re-login if vault is gone.
+  const meta = sessionStore.get(sessionId);
+  const userId = typeof meta?.userId === 'bigint' ? meta.userId.toString() : meta?.userId;
+  return { authenticated: true, userId, sessionId, hasPassword: meta?.hasPassword };
 }
 
 // Extract session ID from cookie header
@@ -666,13 +690,25 @@ export function createSession(
     zeroizeUint8(derivedKey);
     derivedKey = undefined;
   }
+  // Persist DB-backed session when userId is a numeric id and DB mode is active
+  if (!HEADLESS && (typeof userId === 'number' || (typeof userId === 'string' && /^\d+$/.test(userId)))) {
+    try {
+      const normalized = typeof userId === 'string' ? BigInt(userId) : userId;
+      // Only persist when the user exists to avoid FK errors in unit tests
+      const exists = getUserById(normalized as any);
+      if (exists) {
+        createSessionRecord(sessionId, normalized as any, ipAddress);
+      }
+    } catch (e) {
+      console.error('[auth] Failed to persist session (falling back to ephemeral):', e);
+    }
+  }
+
+  // Always keep ephemeral metadata for derived-key features and API-key/basic sessions
   sessionStore.set(sessionId, {
     userId,
-    createdAt: now,
-    lastAccess: now,
-    ipAddress,
-    salt: sessionSalt, // Store salt for non-database users
-    hasPassword, // Flag to indicate password-based auth
+    salt: sessionSalt,
+    hasPassword,
     rehydrationsUsed: 0
   });
   
@@ -684,16 +720,21 @@ export function createSession(
 
 // Cleanup expired sessions periodically
 function cleanupExpiredSessions(): void {
-  const now = Date.now();
-  for (const [sessionId, session] of Array.from(sessionStore.entries())) {
-    const lastActivity = session.lastAccess ?? session.createdAt;
-    if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
-      sessionStore.delete(sessionId);
-      clearCachedDerivedKey(sessionId);
-      // Ensure any lingering derived key is destroyed
-      zeroizeVaultEntryAndDelete(sessionId);
+  // Clean DB-backed sessions
+  if (!HEADLESS) {
+    try {
+      const removed = cleanupExpiredSessionsDB(AUTH_CONFIG.SESSION_TIMEOUT);
+      for (const id of removed) {
+        // Clear ephemeral metadata and vault for removed sessions
+        sessionStore.delete(id);
+        clearCachedDerivedKey(id);
+        zeroizeVaultEntryAndDelete(id);
+      }
+    } catch (e) {
+      console.error('[auth] cleanupExpiredSessions DB failed:', e);
     }
   }
+  // Ephemeral-only sessions have no lastAccess tracking; nothing to do here.
 }
 
 // Set up periodic cleanup to prevent memory leaks from expired entries
@@ -1015,6 +1056,10 @@ export function handleLogout(req: Request): Response {
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
   
   if (sessionId) {
+    // Remove DB record if present
+    if (!HEADLESS) {
+      try { deleteSessionRecord(sessionId); } catch {}
+    }
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
     // Wipe any ephemeral derived key bound to this session

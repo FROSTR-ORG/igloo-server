@@ -97,7 +97,15 @@ const EVENT_MAPPINGS = {
 // Simplified monitoring constants
 const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
 const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
-const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
+// Make ping timeout configurable via env, bounded for safety
+const CONNECTIVITY_PING_TIMEOUT = (() => {
+  const raw = process.env.CONNECTIVITY_PING_TIMEOUT_MS ?? process.env.PING_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed)) {
+    return Math.min(Math.max(parsed, 1000), 120000);
+  }
+  return 10000; // default 10s
+})();
 
 // Publish failure metrics tracking
 interface PublishMetrics {
@@ -765,8 +773,9 @@ async function performKeepAlivePing(
     const peers = node._peers || node.peers || [];
 
     if (peers.length === 0) {
+      // Treat absence of peers similar to lacking ping capability to avoid false negatives
       addServerLog('debug', 'No peers available for keepalive ping, relying on relay connections');
-      return { success: false, hadPingCapability: true };
+      return { success: false, hadPingCapability: false };
     }
 
     // Send a ping to the first available peer
@@ -1849,6 +1858,12 @@ export async function createNodeWithCredentials(
           
           // Create instrumented proxy and use it for subsequent operations
           const wrappedNode = createInstrumentedNode(node, addServerLog);
+
+          // Seed activity immediately upon successful connection to avoid
+          // the first connectivity check being treated as idle.
+          if (addServerLog) {
+            updateNodeActivity(addServerLog, true);
+          }
 
           // Perform initial connectivity check and await completion to avoid startup races
           if (addServerLog) {

@@ -1,7 +1,7 @@
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
-import { RouteContext } from './types.js';
-import { getAllUsers, deleteUserSafely, isDatabaseInitialized, listApiKeys, createApiKey, revokeApiKey } from '../db/database.js';
+import { RouteContext, RequestAuth } from './types.js';
+import { getAllUsers, deleteUserSafely, isDatabaseInitialized, listApiKeys, createApiKey, revokeApiKey, getUserById } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
 import { checkRateLimit } from './auth.js';
 
@@ -67,10 +67,37 @@ function normalizePositiveInteger(input: unknown): number | bigint | null {
  * Admin management routes that require ADMIN_SECRET authentication
  * These routes provide privileged operations even after initial setup
  */
+function normalizeAuthUserId(auth?: RequestAuth | null): number | bigint | null {
+  if (!auth || !auth.authenticated) return null;
+  const id = auth.userId;
+  if (typeof id === 'number' && Number.isSafeInteger(id) && id > 0) {
+    return id;
+  }
+  if (typeof id === 'string' && /^\d+$/.test(id)) {
+    try {
+      const asBigInt = BigInt(id);
+      return asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : asBigInt;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+function isSessionAdmin(auth?: RequestAuth | null): boolean {
+  const normalizedId = normalizeAuthUserId(auth);
+  if (normalizedId === null) return false;
+  const user = getUserById(normalizedId);
+  if (!user) return false;
+  const role = (user as { role?: string | null }).role;
+  return role === 'admin';
+}
+
 export async function handleAdminRoute(
   req: Request,
   url: URL,
-  _context: RouteContext
+  _context: RouteContext,
+  auth?: RequestAuth | null
 ): Promise<Response | null> {
   // Admin routes only available in non-headless mode with initialized database
   if (HEADLESS) {
@@ -133,12 +160,24 @@ export async function handleAdminRoute(
   const authHeader = req.headers.get('Authorization');
   let adminSecret: string | undefined;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    adminSecret = authHeader.substring(7);
+    adminSecret = authHeader.substring(7).trim();
+    if (adminSecret.length === 0) {
+      adminSecret = undefined;
+    }
   }
 
-  // Validate admin secret using timing-safe comparison
-  const isValid = await validateAdminSecret(adminSecret);
-  if (!isValid) {
+  const sessionAdmin = isSessionAdmin(auth);
+  let adminAuthorized = false;
+
+  if (adminSecret) {
+    adminAuthorized = await validateAdminSecret(adminSecret);
+  }
+
+  if (!adminAuthorized && sessionAdmin) {
+    adminAuthorized = true;
+  }
+
+  if (!adminAuthorized) {
     return Response.json(
       { error: 'Admin authentication required' },
       { status: 401, headers }
@@ -147,6 +186,21 @@ export async function handleAdminRoute(
 
   try {
     switch (url.pathname) {
+      case '/api/admin/whoami':
+        if (req.method === 'GET') {
+          // Simple admin check endpoint for the UI
+          if (adminAuthorized) {
+            let adminUserId: string | number | null = null;
+            const normalizedId = normalizeAuthUserId(auth);
+            if (normalizedId != null) {
+              adminUserId = typeof normalizedId === 'bigint' ? normalizedId.toString() : normalizedId;
+            }
+            return Response.json({ admin: true, userId: adminUserId }, { headers });
+          }
+          return Response.json({ error: 'Admin authentication required' }, { status: 401, headers });
+        }
+        break;
+
       case '/api/admin/users':
         if (req.method === 'GET') {
           // List all users (without sensitive data) and BigInt-safe ids
@@ -263,9 +317,9 @@ export async function handleAdminRoute(
             );
           }
 
-          const createdByAdminFlag = typeof body.createdByAdmin === 'boolean'
+          const createdByAdminFlag = sessionAdmin || (typeof body.createdByAdmin === 'boolean'
             ? body.createdByAdmin
-            : normalizedUserId == null;
+            : normalizedUserId == null);
 
           try {
             const result = createApiKey({

@@ -92,6 +92,47 @@ const ensurePeerPoliciesColumn = () => {
 
 ensurePeerPoliciesColumn();
 
+function userHasRoleColumn(): boolean {
+  try {
+    db.prepare('SELECT role FROM users LIMIT 1').get();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureFirstUserIsAdmin(): void {
+  if (!userHasRoleColumn()) return;
+  try {
+    db.exec(`UPDATE users SET role = 'admin' WHERE id = 1 AND (role IS NULL OR role = '' OR role NOT IN ('admin','user'))`);
+    // Also handle legacy databases where the column defaulted to 'user'
+    db.exec(`UPDATE users SET role = 'admin' WHERE id = 1 AND role = 'user' AND (SELECT COUNT(*) FROM users) = 1`);
+  } catch (error) {
+    console.error('[db] Failed to ensure first user is admin:', error);
+  }
+}
+
+ensureFirstUserIsAdmin();
+
+// Ensure sessions table exists via migrations (preferred), but also provide
+// defensive creation here for older installs that haven't run migrations yet.
+// This mirrors the minimal persisted state we need for authorization.
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_access DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_last_access ON sessions(last_access)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+} catch (e) {
+  console.error('[db] Warning: failed to ensure sessions table exists (will rely on migrations):', e);
+}
+
 // Dummy hash for timing attack mitigation (Argon2id hash of 'dummy')
 // This is used to perform a constant-time verification when user is not found
 const TIMING_SAFE_DUMMY_HASH = '$argon2id$v=19$m=65536,t=3,p=1$2JaKMgrWFzQ8TqnYPmqM8r8I8B3zgc5mz0IFadteOTw$XrSyLD/x6h8N+jnve8Sr0hODpCEUVmQ+qqyfGGXz+JI';
@@ -224,6 +265,7 @@ export interface User {
   group_name: string | null;
   created_at: string;
   updated_at: string;
+  role?: string | null;
 }
 
 export interface UserCredentials {
@@ -242,6 +284,98 @@ export interface AdminUserListItem {
   hasCredentials: boolean;
 }
 
+// ------------------------------
+// Session persistence (minimal)
+// ------------------------------
+
+export interface PersistedSessionRow {
+  id: string;
+  user_id: number | bigint;
+  ip_address: string | null;
+  created_at: string;
+  last_access: string;
+}
+
+export function createSessionRecord(
+  sessionId: string,
+  userId: number | bigint,
+  ipAddress?: string | null
+): boolean {
+  checkShutdown();
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO sessions (id, user_id, ip_address) VALUES (?, ?, ?)`
+    );
+    stmt.run(sessionId, userId, ipAddress ?? null);
+    return true;
+  } catch (e) {
+    console.error('[db] createSessionRecord failed:', e);
+    return false;
+  }
+}
+
+export function getSessionRecord(sessionId: string): PersistedSessionRow | null {
+  checkShutdown();
+  try {
+    const row = db
+      .prepare(
+        `SELECT id, user_id, ip_address, created_at, last_access FROM sessions WHERE id = ?`
+      )
+      .get(sessionId) as PersistedSessionRow | undefined;
+    return row ?? null;
+  } catch (e) {
+    console.error('[db] getSessionRecord failed:', e);
+    return null;
+  }
+}
+
+export function touchSession(sessionId: string): boolean {
+  checkShutdown();
+  try {
+    db.prepare(
+      `UPDATE sessions SET last_access = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(sessionId);
+    return true;
+  } catch (e) {
+    console.error('[db] touchSession failed:', e);
+    return false;
+  }
+}
+
+export function deleteSessionRecord(sessionId: string): boolean {
+  checkShutdown();
+  try {
+    db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
+    return true;
+  } catch (e) {
+    console.error('[db] deleteSessionRecord failed:', e);
+    return false;
+  }
+}
+
+// Remove sessions that have been inactive longer than ttlMs; returns removed ids
+export function cleanupExpiredSessionsDB(ttlMs: number): string[] {
+  checkShutdown();
+  try {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
+    const cutoff = nowSeconds - ttlSeconds;
+    const rows = db
+      .prepare(
+        `SELECT id FROM sessions WHERE CAST(strftime('%s', last_access) AS INTEGER) <= ?`
+      )
+      .all(cutoff) as { id: string }[];
+    if (rows.length === 0) return [];
+    const ids = rows.map(r => r.id);
+    const del = db.prepare(`DELETE FROM sessions WHERE id IN (${ids.map(() => '?').join(',')})`);
+    del.run(...ids);
+    return ids;
+  } catch (e) {
+    console.error('[db] cleanupExpiredSessionsDB failed:', e);
+    return [];
+  }
+}
+
 // Check if database is initialized (has at least one user)
 export const isDatabaseInitialized = (): boolean => {
   checkShutdown();
@@ -252,33 +386,56 @@ export const isDatabaseInitialized = (): boolean => {
 // Create a new user
 export const createUser = async (
   username: string,
-  password: string
+  password: string,
+  options?: { role?: 'admin' | 'user' }
 ): Promise<{ success: boolean; error?: string; userId?: number | bigint }> => {
   checkShutdown();
   try {
     // Hash password using Bun's built-in password API with configured Argon2id parameters
     const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
+    const isFirstUser = !isDatabaseInitialized();
+    const hasRoleColumn = userHasRoleColumn();
+    const desiredRole: 'admin' | 'user' = hasRoleColumn
+      ? (options?.role ?? (isFirstUser ? 'admin' : 'user'))
+      : 'user';
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication
     // - salt: Separate salt for PBKDF2 encryption key derivation (stored plaintext by design)
-    const stmt = db.query(`
-      INSERT INTO users (username, password_hash, salt)
-      VALUES (?, ?, ?)
-    `);
+    const stmt = hasRoleColumn
+      ? db.query(`
+        INSERT INTO users (username, password_hash, salt, role)
+        VALUES (?, ?, ?, ?)
+      `)
+      : db.query(`
+        INSERT INTO users (username, password_hash, salt)
+        VALUES (?, ?, ?)
+      `);
     
     // Generate encryption salt for PBKDF2 key derivation
     // SECURITY NOTE: This salt is intentionally separate from Argon2id's embedded salt.
     // Using different salts for authentication vs encryption is a security best practice.
     // This salt must be stored in plaintext to enable credential decryption.
     const salt = randomBytes(SALT_CONFIG.LENGTH).toString('hex');
-    stmt.run(username, passwordHash, salt);
+    if (hasRoleColumn) {
+      stmt.run(username, passwordHash, salt, desiredRole);
+    } else {
+      stmt.run(username, passwordHash, salt);
+    }
     
     // Get the last inserted ID (returns number or bigint based on size)
     const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
     
     if (!isSafeId(lastId.id)) {
       console.warn(`[db] Warning: New user ID ${lastId.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
+    }
+
+    if (hasRoleColumn && desiredRole === 'admin') {
+      try {
+        db.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', lastId.id);
+      } catch (error) {
+        console.error('[db] Failed to enforce admin role for new user:', error);
+      }
     }
 
     return {

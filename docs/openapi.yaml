@@ -1158,10 +1158,15 @@ paths:
     get:
       operationId: listAdminApiKeys
       summary: List API keys
-      description: Returns metadata for all API keys managed in database mode. Requires `ADMIN_SECRET` authentication.
+      description: |
+        Returns metadata for all API keys managed in database mode.
+
+        Authentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).
       tags: [Admin]
       security:
         - bearerAuth: []
+        - sessionHeader: []
+        - sessionCookie: []
       responses:
         '200':
           description: API key metadata retrieved successfully
@@ -1175,10 +1180,15 @@ paths:
     post:
       operationId: createAdminApiKey
       summary: Create API key
-      description: Creates a new API key and returns the token once. Requires `ADMIN_SECRET` authentication.
+      description: |
+        Creates a new API key and returns the token once.
+
+        Authentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).
       tags: [Admin]
       security:
         - bearerAuth: []
+        - sessionHeader: []
+        - sessionCookie: []
       requestBody:
         required: false
         content:
@@ -1203,10 +1213,15 @@ paths:
     post:
       operationId: revokeAdminApiKey
       summary: Revoke API key
-      description: Revokes an existing API key by ID. Requires `ADMIN_SECRET` authentication.
+      description: |
+        Revokes an existing API key by ID.
+
+        Authentication: provide `ADMIN_SECRET` as a Bearer token, or use a valid session for an admin user (first user or `role=admin`).
       tags: [Admin]
       security:
         - bearerAuth: []
+        - sessionHeader: []
+        - sessionCookie: []
       requestBody:
         required: true
         content:

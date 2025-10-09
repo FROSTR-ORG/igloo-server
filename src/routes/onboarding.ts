@@ -507,7 +507,7 @@ export async function handleOnboardingRoute(
           }
 
           // Create the first user
-          const result = await createUser(username, password);
+          const result = await createUser(username, password, { role: 'admin' });
 
           if (!result.success) {
             // Check for duplicate username

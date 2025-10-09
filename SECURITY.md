@@ -106,12 +106,22 @@ Starting with this version, Igloo Server **automatically generates and persists*
 4. Credentials stored encrypted with user's password as key
 
 #### API Key Management (Database Mode)
-- **Admin-issued keys**: Create, list, and revoke keys via `/api/admin/api-keys` endpoints authenticated with the ADMIN_SECRET bearer token.
+- **Admin-issued keys**: Create, list, and revoke keys via `/api/admin/api-keys` endpoints.
+  - Authenticate with the `ADMIN_SECRET` bearer token, or
+  - If you are already logged in as a user with role `admin`, your active session is accepted and you do not need to provide `ADMIN_SECRET` again. The initial onboarding user is automatically granted the `admin` role.
 - **One-time disclosure**: The full API key is only returned in the creation response; the server stores a SHA-256 hash plus a 12-character prefix for constant-time comparisons.
 - **Revocation workflow**: `/api/admin/api-keys/revoke` marks keys as revoked with an optional reason and timestamp, preventing further use.
 - **Usage telemetry**: Each key records `last_used_at` and `last_used_ip` to help detect compromise or unexpected automation.
 - **Least privilege**: Issue distinct keys per automation or integration, and revoke unused keys promptly.
 - **Admin secret hygiene**: Treat `ADMIN_SECRET` like root credentials—store it in a secrets manager, avoid hardcoding it in CI/CD, and rotate it after incident response.
+
+> Note on `last_used_ip`: The server derives the remote address from `X-Forwarded-For` when present; behind a proxy/load balancer, ensure it forwards the correct client IP and that you trust and control the proxy hop(s). In direct deployments, the peer TCP address may be used.
+
+Checklist for admins
+- Rotate admin‑issued API keys regularly (e.g., monthly/quarterly) and on any incident.
+- Use one key per integration or script; avoid sharing keys across systems.
+- Monitor `last_used_at` and `last_used_ip` for anomalies; revoke quickly if behavior is unexpected.
+- Keep `ADMIN_SECRET` set in production; never commit it; store in a secrets manager.
 
 #### User Type Separation (Security Design)
 Igloo Server distinguishes between two user types for security:
@@ -139,11 +149,15 @@ Igloo Server distinguishes between two user types for security:
 
 2. **Choose Authentication Method**:
    
-   **Option A: API Key (Recommended for API access)**
+**Option A: API Key (Recommended for API access)**
    ```bash
    API_KEY=<EXAMPLE_API_KEY>  # Replace with secure random API key
    ```
    Generate a secure key: `openssl rand -hex 32`
+
+   - API key management in headless mode is environment-driven. The HTTP API cannot create or rotate keys in this mode.
+   - `API_KEY` is intentionally omitted from the list of environment variables writable via `/api/env`; attempts to set it at runtime are rejected.
+   - Only a single API key value is supported; rotate by updating the environment and restarting the server.
    
    **Option B: Username/Password (Recommended for web UI)**
    ```bash
@@ -163,6 +177,12 @@ Igloo Server distinguishes between two user types for security:
    SESSION_TIMEOUT=3600  # 1 hour
    ```
    Auto-generation uses cryptographically secure random bytes
+
+#### Session Persistence Model
+- In database mode, sessions are persisted in SQLite with minimal fields: `id`, `user_id`, `ip_address`, `created_at`, `last_access`.
+- Only authorization metadata is stored. Passwords, derived keys, or other secrets are never written to disk.
+- Derived keys used for decrypting user credentials remain in memory-only vaults with TTL and bounded reads; users may need to re-enter password after a server restart to access encrypted data, even though their admin privileges remain active.
+- In headless mode, sessions remain in-memory only.
 
 ### Development vs Production
 

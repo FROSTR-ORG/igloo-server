@@ -107,6 +107,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
   'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
   'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'CONNECTIVITY_PING_TIMEOUT_MS', // Keepalive ping timeout override (ms)
   'ALLOWED_ORIGINS'     // CORS allowed origins configuration
   // SESSION_SECRET explicitly excluded - must never be exposed via API
 ]);
@@ -129,6 +130,7 @@ const PUBLIC_ENV_KEYS = new Set([
   'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
   'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
   'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'CONNECTIVITY_PING_TIMEOUT_MS', // Keepalive ping timeout override (ms)
   'ALLOWED_ORIGINS'     // CORS allowed origins configuration
   // SESSION_SECRET, SHARE_CRED, GROUP_CRED explicitly excluded from public exposure
 ]);

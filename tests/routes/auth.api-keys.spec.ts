@@ -46,14 +46,12 @@ function runScript(code: string, env: Record<string, string>): ScriptResult {
     }
 
     const stdout = result.stdout.toString().trim();
-    const lines = stdout.split('\n').filter(Boolean);
+    const lines = stdout.split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
-      const candidate = lines[i].trim();
-      if (candidate.startsWith('{') && candidate.endsWith('}')) {
-        try {
-          return JSON.parse(candidate);
-        } catch {}
-      }
+      const line = lines[i].trim();
+      if (!line.startsWith('@@RESULT@@')) continue;
+      const payload = line.slice('@@RESULT@@'.length);
+      return JSON.parse(payload);
     }
     throw new Error(`Failed to parse script output: ${stdout}`);
   } finally {
@@ -112,6 +110,8 @@ describe('database-backed API keys', () => {
 
         if (!database.isDatabaseInitialized()) {
           database.default.exec("INSERT INTO users (username, password_hash, salt) VALUES ('admin','test-hash','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')");
+          try { database.default.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('admin','user'))"); } catch {}
+          try { database.default.exec("UPDATE users SET role='admin' WHERE username='admin' OR id=1"); } catch {}
         }
 
         const created = database.createApiKey({ label: 'automation', createdByAdmin: true });
@@ -226,7 +226,7 @@ describe('database-backed API keys', () => {
           secondRevokeBody
         };
 
-        console.log(JSON.stringify(payload));
+        console.log('@@RESULT@@' + JSON.stringify(payload));
       } finally {
         const auth = await import('${projectRoot}src/routes/auth.ts');
         const database = await import('${projectRoot}src/db/database.ts');
@@ -267,6 +267,85 @@ describe('database-backed API keys', () => {
 
     rmSync(tmpDataDir, { recursive: true, force: true });
   }, { timeout: 15000 });
+
+  test('session admin can list API keys without admin secret', async () => {
+    const tmpDataDir = mkdtempSync(path.join(os.tmpdir(), 'igloo-session-admin-'));
+    const dbPath = path.join(tmpDataDir, 'api-keys.db');
+    const projectRoot = pathToFileURL(process.cwd() + '/').href;
+
+    const script = `
+      try {
+        const root = '${projectRoot}';
+        process.env.HEADLESS = 'false';
+        process.env.DB_PATH = '${dbPath.replace(/\\/g, '\\\\')}';
+        process.env.NODE_ENV = 'test';
+        process.env.AUTH_ENABLED = 'true';
+        process.env.RATE_LIMIT_ENABLED = 'false';
+        process.env.ADMIN_SECRET = process.env.ADMIN_SECRET ?? 'test-admin-secret';
+        process.env.SESSION_SECRET = process.env.SESSION_SECRET ?? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+        const admin = await import(root + 'src/routes/admin.ts');
+        const database = await import(root + 'src/db/database.ts');
+
+        database.default.exec(
+          "CREATE TABLE IF NOT EXISTS api_keys (" +
+          "id INTEGER PRIMARY KEY AUTOINCREMENT," +
+          "prefix TEXT NOT NULL UNIQUE," +
+          "key_hash TEXT NOT NULL," +
+          "label TEXT," +
+          "created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL," +
+          "created_by_admin INTEGER NOT NULL DEFAULT 1," +
+          "created_at DATETIME DEFAULT CURRENT_TIMESTAMP," +
+          "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP," +
+          "last_used_at DATETIME," +
+          "last_used_ip TEXT," +
+          "revoked_at DATETIME," +
+          "revoked_reason TEXT," +
+          "CHECK (length(prefix) >= 12)," +
+          "CHECK (length(key_hash) = 64)" +
+          ");"
+        );
+        database.default.exec("CREATE INDEX IF NOT EXISTS idx_api_keys_active_prefix ON api_keys(prefix) WHERE revoked_at IS NULL;");
+        database.default.exec("CREATE INDEX IF NOT EXISTS idx_api_keys_last_used ON api_keys(last_used_at);");
+        database.default.exec("CREATE TRIGGER IF NOT EXISTS trg_api_keys_touch_updated_at " +
+          "AFTER UPDATE ON api_keys " +
+          "FOR EACH ROW " +
+          "WHEN NEW.updated_at = OLD.updated_at " +
+          "BEGIN " +
+            "UPDATE api_keys SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id; " +
+          "END;");
+        if (!database.isDatabaseInitialized()) {
+          database.default.exec("INSERT INTO users (username, password_hash, salt) VALUES ('admin','test-hash','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')");
+          try { database.default.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('admin','user'))"); } catch {}
+          try { database.default.exec("UPDATE users SET role='admin' WHERE username='admin' OR id=1"); } catch {}
+        }
+
+        const listRes = await admin.handleAdminRoute(
+          new Request('http://localhost/api/admin/api-keys'),
+          new URL('http://localhost/api/admin/api-keys'),
+          {} as any,
+          { authenticated: true, userId: 1 }
+        );
+
+        console.log('@@RESULT@@' + JSON.stringify({ status: listRes?.status ?? null }));
+      } finally {
+        const database = await import('${projectRoot}src/db/database.ts');
+        try { await database.closeDatabase(); } catch {}
+        process.exit(0);
+      }
+    `;
+
+    const output = runScript(script, {
+      HEADLESS: 'false',
+      DB_PATH: dbPath,
+      ADMIN_SECRET: 'test-admin-secret',
+      SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      RATE_LIMIT_ENABLED: 'false'
+    });
+
+    expect(output.status).toBe(200);
+    rmSync(tmpDataDir, { recursive: true, force: true });
+  }, { timeout: 10000 });
 });
 
 describe('headless API key authentication', () => {
@@ -298,7 +377,7 @@ describe('headless API key authentication', () => {
 
         const headlessStatus = auth.getAuthStatus();
 
-        console.log(JSON.stringify({ headlessAuth, headlessInvalid, headlessStatus }));
+        console.log('@@RESULT@@' + JSON.stringify({ headlessAuth, headlessInvalid, headlessStatus }));
       } finally {
         const auth = await import('${projectRoot}src/routes/auth.ts');
         try { auth.stopAuthCleanup(); } catch {}

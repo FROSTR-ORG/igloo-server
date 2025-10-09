@@ -263,9 +263,27 @@ export async function handleRequest(
     }
   }
 
-  // Handle admin routes (database mode only, requires ADMIN_SECRET)
+  // Handle admin routes (database mode only). Admin routes primarily use ADMIN_SECRET,
+  // but when a valid session exists for an admin user we allow that too.
   if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
-    const adminResult = await handleAdminRoute(req, url, baseContext);
+    // Attempt optional authentication for admin endpoints to support session-admin access.
+    // Do not enforce auth result here; handleAdminRoute will decide based on ADMIN_SECRET or session.
+    if (AUTH_CONFIG.ENABLED && !authInfo) {
+      try {
+        const adminAuth = await authenticate(req);
+        if (adminAuth.authenticated && !adminAuth.rateLimited) {
+          authInfo = createRequestAuth({
+            userId: adminAuth.userId,
+            authenticated: true,
+            derivedKey: adminAuth.derivedKey ? adminAuth.derivedKey : undefined,
+            sessionId: adminAuth.sessionId,
+            hasPassword: adminAuth.hasPassword
+          });
+        }
+      } catch {}
+    }
+
+    const adminResult = await handleAdminRoute(req, url, baseContext, authInfo);
     if (adminResult) {
       finalizeAuth();
       return adminResult;
