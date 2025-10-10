@@ -232,7 +232,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         }
         
         // TODO: Replace with server API call for existing names
-        // const sharesResponse = await fetch('/api/shares');
+        // const sharesResponse = await fetch('/api/env/shares');
         // const shares = await sharesResponse.json();
         
         // Mock data for UI demonstration

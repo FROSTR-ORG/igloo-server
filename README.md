@@ -584,13 +584,13 @@ Content-Type: application/json
 }
 ```
 
-### Share Management
+### Share Management (Headless mode)
 ```bash
 # Get stored shares
-GET /api/shares
+GET /api/env/shares
 
 # Store new share
-POST /api/shares
+POST /api/env/shares
 Content-Type: application/json
 {
   "shareCredential": "bfshare1...",
@@ -598,9 +598,11 @@ Content-Type: application/json
 }
 ```
 
+> ℹ️ Base `/api/env` endpoints are available in both headless and database modes (writes in DB mode require admin privileges). The `/api/env/shares` sub-route remains headless-only.
+
 ### Real-time Events
 ```bash
-# Subscribe to live event stream via WebSocket
+# Subscribe to live event stream via WebSocket only
 WebSocket: ws://localhost:8002/api/events
 # Or secure WebSocket: wss://yourdomain.com/api/events
 
@@ -614,7 +616,7 @@ ws://localhost:8002/api/events?sessionId=your-session-id
 {"type":"system","message":"Connected to event stream","timestamp":"12:34:58","id":"ghi789"}
 ```
 
-💡 **Note**: Real-time events have been migrated from Server-Sent Events (SSE) to **WebSockets** for better performance and reliability. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
+💡 **Note**: HTTP fallbacks for `/api/events` have been removed; WebSockets are now the only supported transport. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
 
 ### Crypto: Sign and Encrypt
 ```bash

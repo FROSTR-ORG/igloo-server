@@ -1108,11 +1108,11 @@
         }
       }
     },
-    "/api/shares": {
+    "/api/env/shares": {
       "get": {
         "operationId": "getStoredShares",
-        "summary": "Get stored shares",
-        "description": "Retrieve currently stored share information",
+        "summary": "Get stored shares (headless mode)",
+        "description": "Retrieve currently stored share information when running in headless mode",
         "tags": [
           "Share Management"
         ],
@@ -1142,6 +1142,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
           }
@@ -1149,8 +1152,8 @@
       },
       "post": {
         "operationId": "storeNewShare",
-        "summary": "Store new share",
-        "description": "Save share and group credentials",
+        "summary": "Store new share (headless mode)",
+        "description": "Save share and group credentials when running in headless mode",
         "tags": [
           "Share Management"
         ],
@@ -1224,6 +1227,9 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
           "500": {
             "description": "Failed to save share",
             "content": {
@@ -1237,33 +1243,6 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/events": {
-      "get": {
-        "operationId": "getEventStream",
-        "summary": "Server-Sent Events stream",
-        "description": "Subscribe to real-time server events using Server-Sent Events.\n\nEvents include:\n- `system`: Server status changes\n- `sign`: Signature requests and responses\n- `bifrost`: Peer connections and network events\n- `ecdh`: ECDH protocol events\n\nNote: This endpoint uses Server-Sent Events (SSE) and requires EventSource client.\n",
-        "tags": [
-          "Events"
-        ],
-        "responses": {
-          "200": {
-            "description": "Event stream established",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "type": "string",
-                  "description": "Server-Sent Events stream"
-                },
-                "example": "data: {\"type\":\"system\",\"message\":\"Connected to event stream\",\"timestamp\":\"12:34:56\",\"id\":\"abc123\"}\n\ndata: {\"type\":\"sign\",\"message\":\"Signature request received\",\"timestamp\":\"12:35:01\",\"id\":\"def456\"}\n\ndata: {\"type\":\"bifrost\",\"message\":\"Peer connected\",\"timestamp\":\"12:35:03\",\"id\":\"ghi789\"}\n"
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }
