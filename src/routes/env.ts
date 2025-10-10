@@ -173,7 +173,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               GROUP_CRED: undefined,
               SHARE_CRED: undefined,
               GROUP_NAME: credentials.group_name || undefined,
-              RELAYS: credentials.relays ? JSON.stringify(credentials.relays) : undefined,
+              RELAYS: credentials.relays || undefined,
               hasCredentials: !!(credentials.group_cred && credentials.share_cred)
             }, { headers });
           } catch (error) {
