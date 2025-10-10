@@ -103,8 +103,9 @@ async function processOnboardingSecretRequest(
     body = await parseJsonRequestBody(req);
   } catch (error) {
     console.error('Failed to parse JSON in onboarding/setup:', error);
+    const message = error instanceof Error ? error.message : 'Invalid JSON body';
     return Response.json(
-      { error: error instanceof Error ? error.message : 'Invalid request body' },
+      { error: 'invalid_request', message },
       { status: 400, headers }
     );
   }
@@ -153,7 +154,8 @@ async function processOnboardingSecretRequest(
     }
 
     console.error('[onboarding] Failed to create initial user:', result.error);
-    return Response.json(UNIFORM_SETUP_ERROR, { status: 500, headers });
+    const errorMessage = result.error ?? 'Setup failed';
+    return Response.json({ error: errorMessage }, { status: 500, headers });
   }
 
   return Response.json(
@@ -271,9 +273,6 @@ async function checkPerIpRateLimit(_context: RouteContext, req: Request): Promis
 
 // Uniform error response for all authentication failures
 const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
-
-// Uniform error response for setup/creation failures
-const UNIFORM_SETUP_ERROR = { error: 'Setup failed' };
 
 // Password validation regex - requires at least one of each:
 // - Uppercase letter

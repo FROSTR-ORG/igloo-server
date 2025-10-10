@@ -293,6 +293,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 }, context);
               } catch (error) {
                 context.addServerLog('error', 'Error recreating Bifrost node', error);
+                throw (error instanceof Error) ? error : new Error(String(error));
               }
             }
 

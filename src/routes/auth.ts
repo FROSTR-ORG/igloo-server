@@ -300,7 +300,14 @@ const sessionDerivedKeyCache = new Map<string, Uint8Array>();
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
 const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
 const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
-const AUTH_DERIVED_KEY_MAX_REHYDRATIONS = Math.max(0, Math.min(100, parseInt(process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS || '3')));
+
+function getAuthDerivedKeyMaxRehydrations(): number {
+  const fallback = 3;
+  const raw = process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS;
+  const parsed = raw ? Number.parseInt(raw, 10) : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(100, parsed));
+}
 
 // Configurable cleanup interval for vault entries (default 2 minutes)
 const VAULT_CLEANUP_INTERVAL_MS = Math.max(
@@ -338,7 +345,9 @@ export function refreshSessionDerivedKey(sessionId: string, key: Uint8Array): vo
 }
 
 export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | undefined {
-  if (AUTH_DERIVED_KEY_MAX_REHYDRATIONS === 0) {
+  const maxRehydrations = getAuthDerivedKeyMaxRehydrations();
+
+  if (maxRehydrations === 0) {
     const cachedDisabled = sessionDerivedKeyCache.get(sessionId);
     if (cachedDisabled) {
       zeroizeUint8(cachedDisabled);
@@ -363,7 +372,7 @@ export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | unde
   if (!cached) return undefined;
 
   const used = session.rehydrationsUsed ?? 0;
-  if (used >= AUTH_DERIVED_KEY_MAX_REHYDRATIONS) {
+  if (used >= maxRehydrations) {
     console.warn('[auth] Session rehydration quota exceeded; denying rehydrate request.');
     zeroizeUint8(cached);
     sessionDerivedKeyCache.delete(sessionId);
