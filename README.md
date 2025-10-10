@@ -646,7 +646,7 @@ Content-Type: application/json
 }
 ```
 
-> ℹ️ `/api/env` is available in both headless and database modes. In headless, all env endpoints require authentication; writes require API key or Basic Auth. `/api/env/shares` is headless‑only and never returns raw credential values.
+> ℹ️ `/api/env` is available in both headless and database modes. In headless, all env endpoints require authentication; writes require API key or Basic Auth. `/api/env/shares` is headless‑only and returns metadata by default (no raw credentials). For local/dev debugging only, you may opt‑in to include raw credentials (`shareCredential`, `groupCredential`) by setting `ENV_SHARES_INCLUDE_RAW=true` in a non‑production environment and accessing via an authenticated session (not API key or Basic). This endpoint is not available in database mode.
 
 ### Real-time Events
 Subscribe to live server events via WebSocket:

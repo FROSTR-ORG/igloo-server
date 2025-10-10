@@ -407,18 +407,29 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const hasGroupCredential = !!env.GROUP_CRED;
             const isValid = hasShareCredential && hasGroupCredential;
 
-            // Return legacy fields to preserve Recovery UI behavior in headless mode.
-            // This endpoint is authenticated in headless mode (API key/Basic or session when enabled).
-            shares.push({
+            // Strict, opt-in: include raw only in non-production with explicit flag AND session-based auth
+            const debugFlag = (process.env.ENV_SHARES_INCLUDE_RAW || '').toLowerCase() === 'true';
+            const isProd = process.env.NODE_ENV === 'production';
+            const authz = req.headers.get('authorization') || '';
+            const hasBasicAuth = authz.startsWith('Basic ');
+            const hasApiKeyHeader = !!extractApiKeyFromHeaders(req);
+            const hasSessionToken = !!(req.headers.get('x-session-id') || (req.headers.get('cookie') || '').includes('session='));
+            const isSessionAuth = !!(AUTH_CONFIG.ENABLED && auth?.authenticated && hasSessionToken);
+            const allowRaw = debugFlag && !isProd && isSessionAuth && !hasBasicAuth && !hasApiKeyHeader;
+
+            const entry: Record<string, unknown> = {
               hasShareCredential,
               hasGroupCredential,
               isValid,
               savedAt: savedAt || null,
               id: 'env-stored-share',
               source: 'environment',
-              shareCredential: env.SHARE_CRED || null,
-              groupCredential: env.GROUP_CRED || null,
-            });
+            };
+            if (allowRaw) {
+              entry.shareCredential = env.SHARE_CRED || null;
+              entry.groupCredential = env.GROUP_CRED || null;
+            }
+            shares.push(entry);
           }
           return Response.json(shares, { headers });
         }
