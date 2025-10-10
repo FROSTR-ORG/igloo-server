@@ -317,10 +317,21 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           const shares: Array<Record<string, unknown>> = [];
           if (hasCredentials()) {
             const savedAt = await getCredentialsSavedAt();
+            const env = await readEnvFile();
+            const hasShareCredential = !!env.SHARE_CRED;
+            const hasGroupCredential = !!env.GROUP_CRED;
+            const includeSecrets = AUTH_CONFIG.ENABLED ? !!auth?.authenticated : true;
+
+            const shareCredential = includeSecrets && hasShareCredential ? env.SHARE_CRED! : undefined;
+            const groupCredential = includeSecrets && hasGroupCredential ? env.GROUP_CRED! : undefined;
+            const isValid = hasShareCredential && hasGroupCredential;
+
             shares.push({
-              hasShareCredential: true,
-              hasGroupCredential: true,
-              isValid: true,
+              hasShareCredential,
+              hasGroupCredential,
+              ...(shareCredential ? { shareCredential } : {}),
+              ...(groupCredential ? { groupCredential } : {}),
+              isValid,
               savedAt: savedAt || null,
               id: 'env-stored-share',
               source: 'environment'
