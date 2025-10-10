@@ -480,6 +480,64 @@ export function getSecureCorsHeaders(req: Request): Record<string, string> {
   return headers;
 } 
 
+// Parse allowed origins list from environment
+export function parseAllowedOrigins(): string[] {
+  const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+  if (!allowedOriginsEnv) return [];
+  return allowedOriginsEnv
+    .split(',')
+    .map((o) => o.trim())
+    .filter((o) => o.length > 0);
+}
+
+// Check if a given Origin is allowed for WebSocket handshakes
+// - In production, wildcard '*' is rejected and an explicit match is required
+// - In development (non-production), if ALLOWED_ORIGINS is unset, allow any
+export function isWebSocketOriginAllowed(req: Request): { allowed: boolean; reason?: string } {
+  const origin = req.headers.get('origin');
+  const allowed = parseAllowedOrigins();
+  const isProd = process.env.NODE_ENV === 'production';
+
+  // Allow origin-less WebSocket clients (non-browser stacks often omit Origin).
+  // When an Origin is present, enforce allowlist matching.
+  if (!origin) {
+    return { allowed: true };
+  }
+
+  if (allowed.length === 0) {
+    // No allowlist configured: if an Origin is present in production, reject; otherwise allowed was handled above.
+    return isProd ? { allowed: false, reason: 'ALLOWED_ORIGINS not configured' } : { allowed: true };
+  }
+
+  // Explicitly reject wildcard in production
+  if (isProd && allowed.includes('*')) {
+    return { allowed: false, reason: 'Wildcard origin not allowed in production' };
+  }
+
+  if (allowed.includes('*')) return { allowed: true };
+  if (allowed.includes(origin)) return { allowed: true };
+
+  return { allowed: false, reason: `Origin not allowed: ${origin}` };
+}
+
+// Content-Length helpers for body size limits
+export const DEFAULT_MAX_JSON_BODY = 64 * 1024; // 64KB
+
+export function getContentLength(req: Request): number | null {
+  const v = req.headers.get('content-length');
+  if (!v) return null;
+  const n = Number.parseInt(v, 10);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+export function isContentLengthWithin(req: Request, maxBytes: number): boolean {
+  const len = getContentLength(req);
+  if (len === null) return true; // Cannot determine; allow and rely on route parsing
+  return len <= maxBytes;
+}
+
+// Trust-aware client IP helper is already exported as getTrustedClientIp
+
 /**
  * Build a consolidated Vary header value for API responses.
  * Starts with Authorization, Cookie, and X-API-Key, then merges any values
@@ -500,6 +558,33 @@ export function mergeVaryHeaders(corsHeaders: Record<string, string>): string {
     for (const part of parts) if (!base.includes(part)) base.push(part);
   }
   return base.join(', ');
+}
+
+/**
+ * Returns a trusted client IP string for rate limiting and logging.
+ * - If TRUST_PROXY=true, trusts standard proxy headers (X-Forwarded-For first IP, X-Real-IP, CF-Connecting-IP).
+ * - Otherwise, uses the provided fallback (e.g., server.requestIP(req)?.address) when available.
+ * - Falls back to 'unknown' when no reliable address is available.
+ */
+export function getTrustedClientIp(req: Request, fallbackFromServer?: string | null): string {
+  const trustProxy = process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'test';
+
+  if (trustProxy) {
+    const xff = req.headers.get('x-forwarded-for');
+    if (xff) {
+      const first = xff.split(',')[0]?.trim();
+      if (first) return first;
+    }
+    const xri = req.headers.get('x-real-ip');
+    if (xri && xri.trim()) return xri.trim();
+    const cf = req.headers.get('cf-connecting-ip');
+    if (cf && cf.trim()) return cf.trim();
+  }
+
+  if (fallbackFromServer && fallbackFromServer.trim().length > 0) {
+    return fallbackFromServer.trim();
+  }
+  return 'unknown';
 }
 
 /**

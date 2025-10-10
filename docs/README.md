@@ -14,9 +14,17 @@ This directory contains the comprehensive OpenAPI 3.1 specification for the Iglo
 When the server is running, you can access interactive API documentation at:
 
 - **Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs)
+  - Self‑hosted assets for stronger security (no third‑party CDN)
   - Full-featured API explorer with request testing
   - Built-in authentication support
   - Try-it-out functionality for all endpoints
+
+If you see a “Docs assets not found” message, fetch the pinned Swagger UI assets:
+
+```bash
+bun run docs:vendor
+```
+This writes the required files to `static/docs/`.
 
 ### Raw Specification
 
@@ -28,7 +36,7 @@ When the server is running, you can access interactive API documentation at:
 ### Authentication for API Documentation
 
 - **Development**: No authentication required for easy testing
-- **Production**: Authentication required for security
+- **Production**: Authentication required for security (enforced by the server)
 
 To authenticate in Swagger UI:
 1. Use the "Authorize" button in Swagger UI
@@ -117,3 +125,22 @@ The OpenAPI specification follows:
 - **Comprehensive documentation** with descriptions and examples
 - **Security-first** approach with proper authentication documentation
 - **Type safety** with detailed schema definitions 
+
+## WebSocket Authentication & Origins
+
+The real-time event stream at `/api/events` is a WebSocket endpoint.
+
+- In production, set `ALLOWED_ORIGINS` with explicit origins; wildcard `*` is rejected for WS upgrades.
+- Do not send credentials in the URL. Use cookies (browser), headers, or subprotocol hints instead.
+- Supported subprotocol hints (pick one):
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Example client:
+
+```ts
+const proto = ['apikey.' + process.env.MY_API_KEY];
+const ws = new WebSocket('wss://yourdomain.com/api/events', proto);
+ws.onmessage = (e) => console.log('event:', e.data);
+```

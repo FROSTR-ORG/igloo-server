@@ -116,4 +116,34 @@ describe('Status & Env routes', () => {
     expect(result.status).toBe(401);
     expect(result.body?.error).toContain('Authentication required');
   });
+
+  test('headless env GET requires auth (no API key)', () => {
+    const script = `
+      const root = ${JSON.stringify(PROJECT_ROOT)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'true';
+      process.env.AUTH_ENABLED = 'false';
+
+      const { handleEnvRoute } = await import(root + 'src/routes/env.ts');
+      const context = {
+        node: null,
+        addServerLog: () => {},
+        broadcastEvent: () => {},
+        peerStatuses: new Map(),
+        eventStreams: new Set(),
+        restartState: { blockedByCredentials: false },
+        updateNode: () => {},
+      };
+
+      const req = new Request('http://localhost/api/env');
+      const res = await handleEnvRoute(req, new URL(req.url), context, null);
+      const body = await res.json();
+      console.log('@@RESULT@@' + JSON.stringify({ status: res.status, body }));
+      process.exit(0);
+    `;
+
+    const result = runRouteScript(script);
+    expect(result.status).toBe(401);
+    expect(String(result.body?.error || '').toLowerCase()).toContain('authentication');
+  });
 });

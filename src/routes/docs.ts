@@ -2,6 +2,7 @@ import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import YAML from 'yaml';
 import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getContentType } from './utils.js';
 
 /**
  * API Documentation Route Handler
@@ -40,7 +41,14 @@ function loadOpenApiSpec() {
   return { spec: openApiSpec, yaml: openApiYaml };
 }
 
-// Swagger UI HTML template
+// Allowed local asset names to serve for the docs UI
+const ALLOWED_DOCS_ASSETS = new Set([
+  'swagger-ui.css',
+  'swagger-ui-bundle.js',
+  'swagger-ui-standalone-preset.js'
+]);
+
+// Swagger UI HTML template (self-hosted assets under /api/docs/assets/*)
 const swaggerUIHtml = (specUrl: string) => `
 <!DOCTYPE html>
 <html lang="en">
@@ -48,7 +56,7 @@ const swaggerUIHtml = (specUrl: string) => `
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Igloo Server API Documentation</title>
-  <link rel="stylesheet" type="text/css" href="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui.css" />
+  <link rel="stylesheet" type="text/css" href="/api/docs/assets/swagger-ui.css" />
   <style>
     html {
       box-sizing: border-box;
@@ -75,8 +83,8 @@ const swaggerUIHtml = (specUrl: string) => `
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-bundle.js"></script>
-  <script src="https://unpkg.com/swagger-ui-dist@5.9.0/swagger-ui-standalone-preset.js"></script>
+  <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
+  <script src="/api/docs/assets/swagger-ui-standalone-preset.js"></script>
   <script>
     window.onload = function() {
       SwaggerUIBundle({
@@ -127,15 +135,51 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
     return new Response('Method not allowed', { status: 405, headers });
   }
 
+  // Serve local self-hosted assets for the docs UI
+  if (url.pathname.startsWith('/api/docs/assets/')) {
+    if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers });
+
+    const name = url.pathname.split('/').pop() || '';
+    if (!ALLOWED_DOCS_ASSETS.has(name)) {
+      return new Response('Not Found', { status: 404, headers });
+    }
+    const localPath = `static/docs/${name}`;
+    const file = Bun.file(localPath);
+    if (await file.exists()) {
+      const contentType = getContentType(localPath);
+      return new Response(file, { headers: { ...headers, 'Content-Type': contentType } });
+    }
+    // If assets are missing, guide the operator to vendor them
+    return new Response(
+      JSON.stringify({
+        error: 'Docs assets not found',
+        hint: 'Run: bun run docs:vendor to fetch swagger-ui assets into static/docs/'
+      }),
+      { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } }
+    );
+  }
+
   switch (url.pathname) {
     case '/api/docs':
     case '/api/docs/': {
       // Swagger UI interface
       const specUrl = `${url.origin}/api/docs/openapi.json`;
+      const secHeaders: Record<string, string> = {};
+      if (process.env.NODE_ENV === 'production') {
+        Object.assign(secHeaders, {
+          'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+          'X-Content-Type-Options': 'nosniff',
+          'X-Frame-Options': 'DENY',
+          'Referrer-Policy': 'no-referrer',
+          // Swagger UI needs inline styles/scripts; keep minimal CSP for UI to function
+          'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'"
+        });
+      }
       return new Response(swaggerUIHtml(specUrl), {
         headers: {
           'Content-Type': 'text/html',
-          ...headers
+          ...headers,
+          ...secHeaders
         }
       });
     }

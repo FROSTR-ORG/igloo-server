@@ -148,6 +148,29 @@ HEADLESS=false  # or omit entirely
 HEADLESS=true
 ```
 
+#### Local Dev (Headless) with API Key
+
+For local headless setups, even if `AUTH_ENABLED=false`, configuration endpoints under `/api/env*` require authentication to avoid exposing secrets. The simplest way is to set an API key and use it in requests:
+
+```bash
+export HEADLESS=true
+export AUTH_ENABLED=false   # local only; /api/env still requires a key
+export API_KEY=dev-local-key
+
+# Start the server
+bun run start
+
+# Read public env vars (headless)
+curl -sS -H "X-API-Key: $API_KEY" http://localhost:8002/api/env | jq .
+
+# Write env vars (headless)
+curl -sS -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"RATE_LIMIT_MAX":"200"}' \
+  http://localhost:8002/api/env | jq .
+```
+
 ## Architecture
 
 The server provides three integrated services:
@@ -442,7 +465,7 @@ The server provides RESTful APIs for programmatic control.
 
 ### 📖 Interactive API Documentation
 
-**Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing
+**Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing (self‑hosted assets; run `bun run docs:vendor` if assets are missing)
 **OpenAPI Spec**:
 - JSON: [http://localhost:8002/api/docs/openapi.json](http://localhost:8002/api/docs/openapi.json)
 - YAML: [http://localhost:8002/api/docs/openapi.yaml](http://localhost:8002/api/docs/openapi.yaml)
@@ -511,7 +534,7 @@ Admin session behavior
 # Get current configuration
 GET /api/env
 
-# Update configuration  
+# Update configuration (database mode): requires admin session or ADMIN_SECRET
 POST /api/env
 Content-Type: application/json
 {
@@ -522,11 +545,24 @@ Content-Type: application/json
 # Note: Only FROSTR credentials and relay settings can be updated via API
 # Authentication settings must be configured via environment variables
 
-# Delete configuration keys
+# Delete configuration keys (database mode): requires admin session or ADMIN_SECRET
 POST /api/env/delete
 Content-Type: application/json
 {
   "keys": ["GROUP_CRED", "SHARE_CRED"]
+}
+
+# Headless specifics
+# - All /api/env* routes require authentication in headless
+# - Writes require API key or Basic Auth (sessions alone are not sufficient)
+
+# Example: headless write with API key
+POST /api/env
+X-API-Key: <YOUR_API_KEY>
+Content-Type: application/json
+{
+  "GROUP_CRED": "bfgroup1...",
+  "SHARE_CRED": "bfshare1..."
 }
 ```
 
@@ -602,7 +638,7 @@ Content-Type: application/json
 GET /api/env/shares
 
 # Store new share
-POST /api/env/shares
+POST /api/env/shares  # Requires API key or Basic Auth in headless
 Content-Type: application/json
 {
   "shareCredential": "bfshare1...",
@@ -610,25 +646,46 @@ Content-Type: application/json
 }
 ```
 
-> ℹ️ Base `/api/env` endpoints are available in both headless and database modes (writes in DB mode require admin privileges). The `/api/env/shares` sub-route remains headless-only.
+> ℹ️ `/api/env` is available in both headless and database modes. In headless, all env endpoints require authentication; writes require API key or Basic Auth. `/api/env/shares` is headless‑only and never returns raw credential values.
 
 ### Real-time Events
-```bash
-# Subscribe to live event stream via WebSocket only
-WebSocket: ws://localhost:8002/api/events
-# Or secure WebSocket: wss://yourdomain.com/api/events
+Subscribe to live server events via WebSocket:
 
-# Authentication (if enabled) via URL parameters:
-ws://localhost:8002/api/events?apiKey=your-api-key
-ws://localhost:8002/api/events?sessionId=your-session-id
+```
+ws://localhost:8002/api/events
+wss://yourdomain.com/api/events
+```
 
-# Receives JSON events like:
+Authentication and security
+- Browser UI uses the session cookie after login.
+- Programmatic clients can pass credentials via headers or Sec-WebSocket-Protocol hints:
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Legacy compatibility
+- `?apiKey=` and `?sessionId=` query params are still accepted for existing clients. Prefer headers or subprotocol hints for new integrations.
+
+Example (Node/Bun):
+
+```ts
+const proto = ['apikey.' + process.env.MY_API_KEY];
+const ws = new WebSocket('wss://yourdomain.com/api/events', proto);
+ws.onmessage = (ev) => console.log(ev.data);
+```
+
+Origin policy
+- In production, set explicit `ALLOWED_ORIGINS` (comma-separated) and ensure your client Origin matches exactly.
+- Wildcard `*` is rejected for WebSocket upgrades in production.
+
+Event payloads resemble:
+```
 {"type":"sign","message":"Signature request received","timestamp":"12:34:56","id":"abc123"}
 {"type":"bifrost","message":"Peer connected","timestamp":"12:34:57","id":"def456"}
 {"type":"system","message":"Connected to event stream","timestamp":"12:34:58","id":"ghi789"}
 ```
 
-💡 **Note**: HTTP fallbacks for `/api/events` have been removed; WebSockets are now the only supported transport.
+💡 HTTP fallbacks for `/api/events` are not supported; use WebSockets.
 
 ### Crypto: Sign and Encrypt
 ```bash
@@ -845,6 +902,8 @@ bun run build:dev      # Unminified for debugging, no server caching
 # Individual builds
 bun run build:js       # Frontend JavaScript only
 bun run build:css     # Tailwind CSS compilation only
+# Vendor Swagger UI assets for API docs (self-hosted)
+bun run docs:vendor
 ```
 
 **💡 Tip**: Use `bun run build:dev` during development to avoid caching issues. The server will automatically detect non-production builds and disable static file caching.
@@ -910,7 +969,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` in development; unset blocks CORS in production | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
-| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy | `false` | ❌ |
+| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy (used for rate limiting and logs) | `false` | ❌ |
 | **Crypto Timeouts** | | | |
 | `FROSTR_SIGN_TIMEOUT` / `SIGN_TIMEOUT_MS` | Timeout (ms) for signing and ECDH crypto endpoints | `30000` | ❌ |
 | **Ephemeral Derived Keys** | | | |
@@ -1069,6 +1128,14 @@ RATE_LIMIT_ENABLED=true
 ```bash
 AUTH_ENABLED=false  # Only for local development
 # SESSION_SECRET is auto-generated if not set
+```
+
+Note for headless mode: even when `AUTH_ENABLED=false`, all `/api/env*` endpoints still require authentication (API key or Basic) to prevent accidental exposure of configuration. For local testing in headless mode, set an API key:
+
+```bash
+HEADLESS=true
+AUTH_ENABLED=false
+API_KEY=dev-local-key   # use a throwaway value locally
 ```
 
 ### 🛡️ **Security Features**
