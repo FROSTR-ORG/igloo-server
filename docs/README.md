@@ -53,7 +53,7 @@ The API supports multiple authentication methods:
 
 ## API Coverage
 
-The OpenAPI specification includes:
+The OpenAPI specification includes (major surfaces):
 
 - ✅ All authentication endpoints (`/api/auth/*`)
 - ✅ Environment management (`/api/env` — available in headless and database deployments)
@@ -67,11 +67,13 @@ The OpenAPI specification includes:
   - `/api/nip44/{encrypt|decrypt}` (ECDH + NIP‑44)
   - `/api/nip04/{encrypt|decrypt}` (ECDH + NIP‑04)
 - ✅ NIP‑46 session persistence (`/api/nip46/*`)
-- ✅ Complete request/response schemas
+- ✅ Comprehensive schemas for included endpoints
 - ✅ Authentication security schemes
 - ✅ Rate limiting documentation
 - ✅ Error response formats
 - ✅ Comprehensive examples
+
+> Note: Some supportive endpoints (e.g., onboarding `/api/onboarding/*`, admin `whoami`/`users`, and user storage `/api/user/*`) are available in the server but not yet modeled in the OpenAPI. Use the README “API Reference” and the UI for details. These may be added to the spec in a future update.
 
 ## Validation
 

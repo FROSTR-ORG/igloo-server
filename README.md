@@ -47,7 +47,6 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [📋 Quick Security Setup](#-quick-security-setup)
   - [🛡️ Security Features](#️-security-features)
 - [Security Notes](#security-notes)
-- [WebSocket Migration](WEBSOCKET_MIGRATION.md)
 - [License](#license)
 - [Contributing](#contributing)
 
@@ -63,7 +62,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Multi-Relay Support**: Connects to multiple Nostr relays for redundancy and coordination
 - **Real-time Monitoring**: Live peer status tracking and event logging
 - **Health Monitoring**: Automatic node health checks with activity tracking every 30 seconds
-- **Auto-Restart**: Automatic recovery from silent failures with watchdog timer (5-minute timeout)
+- **Auto-Restart**: Automatic recovery from silent failures after consecutive connectivity failures (checks every 60s; restarts after 3 failures)
 - **Connection Resilience**: Enhanced reconnection logic with exponential backoff and extended timeouts
 
 ### 🌐 **Modern Web Interface** 
@@ -176,10 +175,11 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 
 ### 📊 **Health Metrics**
 - **Last Activity**: Timestamp of most recent node activity
-- **Health Status**: Boolean indicating if node is healthy
-- **Consecutive Failures**: Number of consecutive health check failures
-- **Restart Count**: Total number of automatic restarts
+- **Last Connectivity Check**: Timestamp of the last connectivity probe
+- **Is Connected**: Boolean indicating current connectivity state
+- **Consecutive Failures**: Number of consecutive failed connectivity checks
 - **Time Since Activity**: Milliseconds since last activity
+- **Time Since Connectivity Check**: Milliseconds since last connectivity probe
 
 ### 🛡️ **Connection Resilience**
 - **Connectivity Monitoring**: Checks relay connections every 60 seconds
@@ -189,6 +189,18 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 - **Clean Logging**: Filters self-pings and reduces log noise for production
 
 This system addresses common issues with long-running deployments where nodes may silently stop responding after extended periods, ensuring your signing node remains operational and responsive.
+
+### 🚨 Error Circuit Breaker
+
+To avoid degraded-long running states from repeated unexpected failures, the server tracks unhandled errors in a sliding window and can exit so a supervisor restarts it.
+
+- Counting window: `ERROR_CIRCUIT_WINDOW_MS` (default 60s)
+- Threshold: `ERROR_CIRCUIT_THRESHOLD` errors within the window (default 10)
+- Exit code: `ERROR_CIRCUIT_EXIT_CODE` (default 1)
+
+Notes
+- Common relay/network rejections are filtered and do not count toward the breaker.
+- When tripped, the process requests a graceful shutdown and exits; use a supervisor (e.g., systemd, Docker, k8s) to restart.
 
 ## Quick Start
 
@@ -253,9 +265,9 @@ This mode provides user management with secure credential storage in a SQLite da
 Important: `ADMIN_SECRET` behavior and operational guidance
 
 - The startup check for `ADMIN_SECRET` is enforced only on first run (when the database is uninitialized).
-- Keep `ADMIN_SECRET` set in production even after initialization. The admin API (`/api/admin/*`) requires a valid `ADMIN_SECRET` on every call; if it is unset, admin endpoints will return 401 and cannot be used.
-- Rotate `ADMIN_SECRET` by changing its value and restarting the server. This changes the credential required for admin API access and does not affect existing users or database contents.
-- Lost `ADMIN_SECRET` but still have server access: set a new `ADMIN_SECRET` in the environment and restart. If you also need to recreate the first admin user, see “Force first-run (reinitialize)” below.
+- Keep `ADMIN_SECRET` set in production even after initialization. Admin endpoints (`/api/admin/*`) accept either a valid `ADMIN_SECRET` bearer token or a logged‑in admin session. If `ADMIN_SECRET` is unset, you can still use admin APIs with an authenticated admin session.
+- Rotate `ADMIN_SECRET` by changing its value and restarting the server. Rotation does not affect existing users or database contents.
+- Lost `ADMIN_SECRET` but still have server access: set a new `ADMIN_SECRET` in the environment and restart. If you also need to recreate the first admin user, see “Force first‑run (reinitialize)” below.
 
 Force first-run (reinitialize)
 
@@ -420,8 +432,8 @@ docker run -p 8002:8002 \
   -e RATE_LIMIT_ENABLED="true" \
   igloo-server
 
-# Or use Docker Compose
-docker-compose up -d
+# Or use Docker Compose (compose.yml)
+docker compose up -d
 ```
 
 ## API Reference
@@ -431,7 +443,7 @@ The server provides RESTful APIs for programmatic control.
 ### 📖 Interactive API Documentation
 
 **Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing
-**OpenAPI Spec**: 
+**OpenAPI Spec**:
 - JSON: [http://localhost:8002/api/docs/openapi.json](http://localhost:8002/api/docs/openapi.json)
 - YAML: [http://localhost:8002/api/docs/openapi.yaml](http://localhost:8002/api/docs/openapi.yaml)
 
@@ -616,7 +628,7 @@ ws://localhost:8002/api/events?sessionId=your-session-id
 {"type":"system","message":"Connected to event stream","timestamp":"12:34:58","id":"ghi789"}
 ```
 
-💡 **Note**: HTTP fallbacks for `/api/events` have been removed; WebSockets are now the only supported transport. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
+💡 **Note**: HTTP fallbacks for `/api/events` have been removed; WebSockets are now the only supported transport.
 
 ### Crypto: Sign and Encrypt
 ```bash
@@ -639,8 +651,8 @@ Timeouts: these endpoints honor `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEO
 
 ### NIP‑46 Sessions
 ```bash
-# List sessions (optionally include history summary)
-GET /api/nip46/sessions?history=true
+# List sessions
+GET /api/nip46/sessions
 
 # Create/update a session
 POST /api/nip46/sessions
@@ -657,7 +669,7 @@ PUT /api/nip46/sessions/{pubkey}/status
 # Delete session
 DELETE /api/nip46/sessions/{pubkey}
 
-# Compact history
+# Compact history (recent kinds/methods summary)
 GET /api/nip46/history
 ```
 
@@ -771,14 +783,14 @@ sudo certbot --nginx -d yourdomain.com
 #### 6. Monitor and Maintain
 ```bash
 # Check container status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Update deployment
 git pull
-docker-compose --env-file .env up -d --build
+docker compose --env-file .env up -d --build
 ```
 
 ### Umbrel Deployment
@@ -791,13 +803,15 @@ docker-compose --env-file .env up -d --build
 
 ### Development Mode
 ```bash
-# Start with hot reload
+# Terminal 1: frontend builders in watch mode
 bun run dev
 
-# This runs:
-# - Frontend build with watch mode
-# - Tailwind CSS compilation with watch mode
-# - Server restart on changes (if using nodemon)
+# Terminal 2: start the server
+bun run start
+
+# Notes:
+# - The `dev` script watches frontend JS/CSS only.
+# - Use an external watcher (e.g., nodemon) if you want server auto‑restart.
 ```
 
 ### Development vs Production Caching
@@ -805,14 +819,12 @@ bun run dev
 The server automatically adjusts caching behavior based on the `NODE_ENV` environment variable:
 
 **Development Mode** (`NODE_ENV !== 'production'`):
-- Static files are read fresh from disk on each request
-- No browser caching (`Cache-Control: no-cache`)
-- Perfect for seeing frontend changes immediately after rebuild
+- JS/CSS are served with no‑cache headers to avoid stale assets
+- Assets are read from disk each request
 
 **Production Mode** (`NODE_ENV=production`):
-- Static files are cached in memory for performance
-- Aggressive browser caching (24 hours for JS/CSS)
-- Optimized for production deployment
+- Cache headers are set for assets (JS/CSS: 24h; images: long‑lived)
+- HTML is served with no‑cache to keep the shell fresh
 
 ```bash
 # Force development mode (recommended for local development)
@@ -895,7 +907,7 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `API_KEY` | Headless-mode API key for programmatic access (database mode uses admin-issued keys) | - | ❌ |
 | `BASIC_AUTH_USER` | Basic auth username | - | ❌ |
 | `BASIC_AUTH_PASS` | Basic auth password | - | ❌ |
-| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
+| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` in development; unset blocks CORS in production | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
 | `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy | `false` | ❌ |
@@ -903,16 +915,20 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `FROSTR_SIGN_TIMEOUT` / `SIGN_TIMEOUT_MS` | Timeout (ms) for signing and ECDH crypto endpoints | `30000` | ❌ |
 | **Ephemeral Derived Keys** | | | |
 | `AUTH_DERIVED_KEY_TTL_MS` | Derived key vault TTL (ms) | `120000` | ❌ |
-| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `3` | ❌ |
+| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `100` | ❌ |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_WINDOW` | Rate limit window in seconds | `900` | ❌ |
-| `RATE_LIMIT_MAX` | Max requests per window | `100` | ❌ |
+| `RATE_LIMIT_MAX` | Max requests per window | `300` (headless) / `600` (database) | ❌ |
 | **Node Restart** | | | |
 | `NODE_RESTART_DELAY` | Initial delay before node restart (ms) | `30000` | ❌ |
 | `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
 | `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
 | `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` | ❌ |
+| **Error Circuit Breaker** | | | |
+| `ERROR_CIRCUIT_WINDOW_MS` | Window length for counting unhandled errors (ms) | `60000` | ❌ |
+| `ERROR_CIRCUIT_THRESHOLD` | Number of unhandled errors in window to trip breaker | `10` | ❌ |
+| `ERROR_CIRCUIT_EXIT_CODE` | Process exit code when breaker trips | `1` | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
