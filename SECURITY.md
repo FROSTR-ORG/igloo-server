@@ -81,11 +81,11 @@ Starting with this version, Igloo Server **automatically generates and persists*
    ```
 
 3. **Important ADMIN_SECRET Guidelines**:
-   - **One-time use**: Only needed for creating the first user
+   - **First‑run requirement**: Needed to create the first admin user when the DB is uninitialized
+   - **Admin API auth**: After onboarding, admin endpoints accept either a valid `ADMIN_SECRET` bearer token or an authenticated admin session
    - **Keep it secret**: Never share or commit to version control
-   - **Rotate after setup**: Change it after initial configuration
-   - **Store securely**: Use a password manager or secure vault
-   - **Container deployments**: Prefer container-native secrets (Docker/Kubernetes secrets) over environment variables
+   - **Rotate when needed**: Change it and restart the server to rotate
+   - **Store securely**: Prefer container‑native secrets (Docker/Kubernetes) or a secrets manager
    - **Process security**: Environment variables can leak via process listings (ps), crash dumps, or metadata endpoints
    - **Log sanitization**: Never log or include `ADMIN_SECRET` in error messages
 
@@ -237,7 +237,7 @@ Threshold signing and ECDH may stall due to peer/relay conditions. The server en
 - Keys are available for a short bootstrap window after login, then auto‑deleted.
 - Configuration:
   - `AUTH_DERIVED_KEY_TTL_MS` (default `120000`) – maximum residency time in ms
-  - `AUTH_DERIVED_KEY_MAX_READS` (default `3`) – maximum one-time retrievals per session
+  - `AUTH_DERIVED_KEY_MAX_READS` (default `100`) – maximum one-time retrievals per session
 - Behavior:
   - Each retrieval returns a copy and decrements the read budget; on zero or TTL expiry, the server fills the backing `Uint8Array` with zeros before removal.
   - Logout and session expiry proactively zeroize associated keys, and per-request caches are wiped once responses are sent.
@@ -521,11 +521,9 @@ grep "login" server.log
 ### If Credentials Are Compromised
 
 1. **Immediate Actions**:
-   ```bash
-   # Disable authentication temporarily
-   AUTH_ENABLED=false
-   # Restart server
-   ```
+   - Revoke any affected API keys via `/api/admin/api-keys/revoke` (or rotate `API_KEY` in headless and restart)
+   - Rotate `ADMIN_SECRET` and session secrets as needed
+   - Keep `AUTH_ENABLED=true` to prevent unauthenticated access during incident response
 
 2. **Generate New Credentials**:
    ```bash
