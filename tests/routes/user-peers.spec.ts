@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner.ts';
+import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 describe('User & Peers routes', () => {
   test('user route rejects API key identities', () => {

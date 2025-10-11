@@ -24,6 +24,7 @@ type ScriptResult = {
   badAdminStatus?: number | null;
   secondRevokeStatus?: number | null;
   secondRevokeBody?: any;
+  status?: number | null;
 };
 
 function runScript(code: string, env: Record<string, string>): ScriptResult {

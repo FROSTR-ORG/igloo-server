@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'fs';
 import path from 'path';
-import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner.ts';
+import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 describe('Onboarding routes', () => {
   test('status reports initialization state', () => {

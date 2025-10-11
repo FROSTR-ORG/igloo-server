@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner.ts';
+import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 describe('JSON body size limits', () => {
   test('env POST returns 413 when Content-Length exceeds limit', () => {
@@ -59,4 +59,3 @@ describe('JSON body size limits', () => {
     expect(result.status).toBe(413);
   });
 });
-

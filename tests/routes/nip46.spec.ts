@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner.ts';
+import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 describe('NIP-46 routes', () => {
   test('route unavailable in headless mode', () => {

@@ -4,10 +4,10 @@ process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'aaaaaaaaaaaaaaaaaaaa
 process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS = '2';
 process.env.AUTH_ENABLED = 'true';
 
-let auth: typeof import('../../src/routes/auth.ts');
+let auth: typeof import('../../src/routes/auth');
 
 beforeAll(async () => {
-  auth = await import('../../src/routes/auth.ts');
+  auth = await import('../../src/routes/auth');
 });
 
 afterAll(() => {

@@ -153,8 +153,6 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
 
   // Serve local self-hosted assets for the docs UI
   if (url.pathname.startsWith('/api/docs/assets/')) {
-    if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers });
-
     const name = url.pathname.split('/').pop() || '';
     if (!ALLOWED_DOCS_ASSETS.has(name)) {
       return new Response('Not Found', { status: 404, headers });

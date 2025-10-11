@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner.ts';
+import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 describe('WebSocket Origin policy', () => {
   test('production requires explicit ALLOWED_ORIGINS and matching Origin', () => {
