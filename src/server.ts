@@ -820,8 +820,8 @@ const server = serve({
       }
       incIp(ipKey);
 
-      const upgradeHeaders: Record<string, string> = {};
-      if (selectedSubprotocol) upgradeHeaders['Sec-WebSocket-Protocol'] = selectedSubprotocol;
+      const upgradeHeaders = new Headers();
+      if (selectedSubprotocol) upgradeHeaders.set('Sec-WebSocket-Protocol', selectedSubprotocol);
 
       const upgraded = server.upgrade(req, {
         data: { isEventStream: true, clientIp, counted: true },
@@ -872,8 +872,8 @@ const server = serve({
         const offered = protoOffer.split(',').map(p => p.trim()).filter(Boolean);
         if (offered.length > 0) relaySelectedProto = offered[0];
       }
-      const relayUpgradeHeaders: Record<string, string> = {};
-      if (relaySelectedProto) relayUpgradeHeaders['Sec-WebSocket-Protocol'] = relaySelectedProto;
+      const relayUpgradeHeaders = new Headers();
+      if (relaySelectedProto) relayUpgradeHeaders.set('Sec-WebSocket-Protocol', relaySelectedProto);
 
       const upgraded = server.upgrade(req, {
         data: { isEventStream: false, clientIp, counted: true },

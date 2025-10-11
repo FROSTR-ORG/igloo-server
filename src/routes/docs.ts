@@ -86,8 +86,24 @@ const swaggerUIHtml = (specUrl: string) => `
   <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
   <script src="/api/docs/assets/swagger-ui-standalone-preset.js"></script>
   <script>
+    function renderDocsFallback() {
+      var el = document.getElementById('swagger-ui') || document.body;
+      el.innerHTML = \`<div style="max-width:960px;margin:40px auto;padding:24px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;border:1px solid #e5e7eb;border-radius:12px;background:#fff">
+        <h1 style="margin:0 0 12px;font-size:20px;color:#111827">API docs assets not found</h1>
+        <p style="margin:0 0 12px;color:#374151">Run <code style="background:#f3f4f6;padding:2px 6px;border-radius:6px">bun run docs:vendor</code> to fetch Swagger UI files into <code style="background:#f3f4f6;padding:2px 6px;border-radius:6px">static/docs/</code>, then refresh this page.</p>
+        <p style="margin:0;color:#374151">You can still view the raw spec: <a href="/api/docs/openapi.json" style="color:#2563eb;text-decoration:underline">openapi.json</a> or <a href="/api/docs/openapi.yaml" style="color:#2563eb;text-decoration:underline">openapi.yaml</a>.</p>
+      </div>\`;
+    }
+
     window.onload = function() {
-      SwaggerUIBundle({
+      var hasBundle = typeof window.SwaggerUIBundle === 'function';
+      var hasPreset = typeof window.SwaggerUIStandalonePreset !== 'undefined';
+      if (!hasBundle || !hasPreset) {
+        renderDocsFallback();
+        return;
+      }
+
+      window.ui = SwaggerUIBundle({
         url: '${specUrl}',
         dom_id: '#swagger-ui',
         deepLinking: true,
