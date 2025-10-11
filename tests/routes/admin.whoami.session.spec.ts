@@ -16,9 +16,9 @@ describe('admin whoami with DB-backed session', () => {
     process.env.SESSION_SECRET = process.env.SESSION_SECRET || 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
     process.env.ADMIN_SECRET = 'test-admin-secret'
 
-    const database = await import('../../src/db/database.ts')
-    const auth = await import('../../src/routes/auth.ts')
-    const admin = await import('../../src/routes/admin.ts')
+    const database = await import('../../src/db/database')
+    const auth = await import('../../src/routes/auth')
+    const admin = await import('../../src/routes/admin')
 
     if (!database.isDatabaseInitialized()) {
       database.default.exec("INSERT INTO users (username, password_hash, salt) VALUES ('admin','x','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')")
@@ -30,7 +30,11 @@ describe('admin whoami with DB-backed session', () => {
     expect(sessionId).toBeString()
     database.default.exec("UPDATE sessions SET last_access = datetime('now', '-1 day') WHERE id = '" + sessionId + "'")
 
-    const req = new Request('http://localhost/api/admin/whoami')
+    const req = new Request('http://localhost/api/admin/whoami', {
+      headers: {
+        Cookie: `session=${sessionId}`
+      }
+    })
     const res = await admin.handleAdminRoute(req, new URL('http://localhost/api/admin/whoami'), {} as any, null)
     expect(res?.status).toBe(401)
 
@@ -39,6 +43,6 @@ describe('admin whoami with DB-backed session', () => {
 })
 
 afterAll(async () => {
-  try { const auth = await import('../../src/routes/auth.ts'); auth.stopAuthCleanup(); } catch {}
-  try { const db = await import('../../src/db/database.ts'); await db.closeDatabase(); } catch {}
+  try { const auth = await import('../../src/routes/auth'); auth.stopAuthCleanup(); } catch {}
+  try { const db = await import('../../src/db/database'); await db.closeDatabase(); } catch {}
 })

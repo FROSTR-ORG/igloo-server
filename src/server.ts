@@ -523,10 +523,12 @@ if (CONST.hasCredentials()) {
       }, activeCredentials?.group, activeCredentials?.share);
 
       if (CONST.HEADLESS) {
-        void sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, {
+        sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, {
           relaysEnv: process.env.RELAYS,
           addServerLog,
           contextLabel: 'headless startup'
+        }).catch((error) => {
+          try { addServerLog('warn', 'Self-echo failed at headless startup', error); } catch {}
         });
       }
     }

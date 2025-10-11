@@ -18,7 +18,7 @@ import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-loc
 import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
-import { getUserCredentials } from '../db/database.js';
+import { getUserCredentials, getUserById } from '../db/database.js';
 import { timingSafeEqual } from 'crypto';
 
 // Helper function to validate relay URLs
@@ -119,6 +119,20 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   }
 
   const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
+  // Resolve authenticated DB user id (database mode only)
+  const authenticatedNumericUserId = (!HEADLESS && auth?.authenticated && (
+    typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId))
+  )) ? BigInt(auth!.userId as any) : null;
+  const isFirstUser = authenticatedNumericUserId === 1n;
+  const isRoleAdmin = await (async () => {
+    try {
+      if (authenticatedNumericUserId === null) return false;
+      const u = await getUserById(authenticatedNumericUserId);
+      return !!(u && u.role === 'admin');
+    } catch {
+      return false;
+    }
+  })();
 
   // Headless hardening helpers
   const extractApiKeyFromHeaders = (r: Request): string | null => {
@@ -290,8 +304,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
             const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
             const isAdminSecret = await validateAdminSecret(adminSecret);
-            const firstUser = auth && auth.authenticated && ((typeof auth.userId === 'number' && auth.userId === 1) || (typeof auth.userId === 'string' && auth.userId === '1'));
-            if (!isAdminSecret && !firstUser) {
+            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for environment modifications' },
                 { status: 403, headers }
@@ -540,17 +553,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           if (!HEADLESS) {
             const adminSecret = req.headers.get('X-Admin-Secret') ??
               req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-
-            const isAdmin = await validateAdminSecret(adminSecret);
-            if (!isAdmin) {
-              const validUserId = auth && ((typeof auth.userId === 'number' && auth.userId === 1) ||
-                (typeof auth.userId === 'string' && auth.userId === '1'));
-              if (!validUserId) {
-                return Response.json(
-                  { error: 'Admin privileges required for deleting environment variables' },
-                  { status: 403, headers }
-                );
-              }
+            const isAdminSecret = await validateAdminSecret(adminSecret);
+            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
+              return Response.json(
+                { error: 'Admin privileges required for deleting environment variables' },
+                { status: 403, headers }
+              );
             }
           }
 

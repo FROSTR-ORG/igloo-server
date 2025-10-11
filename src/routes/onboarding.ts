@@ -115,7 +115,20 @@ async function processOnboardingSecretRequest(
 
   const { username, password } = body;
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return Response.json(
+      {
+        error: 'invalid_input',
+        message: 'Username and password must be strings'
+      },
+      { status: 400, headers }
+    );
+  }
+
+  const trimmedUsername = username.trim();
+  const trimmedPassword = password.trim();
+
+  if (!trimmedUsername || !trimmedPassword) {
     return Response.json(
       {
         error: 'validation_error',
@@ -125,7 +138,7 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  if (username.length < 3 || username.length > 50) {
+  if (trimmedUsername.length < 3 || trimmedUsername.length > 50) {
     return Response.json(
       {
         error: 'invalid_username',
@@ -135,7 +148,8 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  const passwordError = validatePasswordStrength(password, username);
+  // Validate the exact password string as typed (no trimming) to keep validation consistent with storage
+  const passwordError = validatePasswordStrength(password, trimmedUsername);
   if (passwordError) {
     return Response.json(
       {
@@ -146,7 +160,8 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  const result = await createUser(username, password, { role: 'admin' });
+  // Preserve exact password (including leading/trailing whitespace) for hashing
+  const result = await createUser(trimmedUsername, password, { role: 'admin' });
 
   if (!result.success) {
     if (result.error === 'Username already exists') {

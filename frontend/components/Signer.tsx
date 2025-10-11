@@ -663,17 +663,36 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     }
   }, [initialData]);
 
+  const copyTimeoutGroupRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const copyTimeoutShareRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const handleCopy = async (text: string, field: 'group' | 'share') => {
     try {
       await navigator.clipboard.writeText(text);
       setCopiedStates(prev => ({ ...prev, [field]: true }));
-      setTimeout(() => {
+      const ref = field === 'group' ? copyTimeoutGroupRef : copyTimeoutShareRef
+      if (ref.current) clearTimeout(ref.current)
+      ref.current = setTimeout(() => {
         setCopiedStates(prev => ({ ...prev, [field]: false }));
-      }, 2000);
+        ref.current = null
+      }, 2000)
     } catch (err) {
       console.error('Failed to copy:', err);
     }
   };
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutGroupRef.current) {
+        clearTimeout(copyTimeoutGroupRef.current)
+        copyTimeoutGroupRef.current = null
+      }
+      if (copyTimeoutShareRef.current) {
+        clearTimeout(copyTimeoutShareRef.current)
+        copyTimeoutShareRef.current = null
+      }
+    }
+  }, [])
 
   const toggleExpanded = (id: 'group' | 'share') => {
     setExpandedItems(prev => ({

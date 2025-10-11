@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Alert } from './ui/alert'
@@ -50,6 +50,9 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
   const [copiedField, setCopiedField] = useState<string | null>(null)
   const [revokeTarget, setRevokeTarget] = useState<ApiKeyRecord | null>(null)
   const [revokeReason, setRevokeReason] = useState('')
+
+  // Track copy timeout to avoid leaks if component unmounts before it fires
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const combinedHeaders = useCallback(
     (contentType = true) => {
@@ -104,7 +107,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
     } finally {
       setLoading(false)
     }
-  }, [adminSecret, combinedHeaders, headlessMode])
+  }, [adminSecret, combinedHeaders, headlessMode, isAdminUser, authHeaders])
 
   const handleIssueKey = useCallback(async () => {
     if (headlessMode) return
@@ -152,7 +155,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
     } finally {
       setIssuing(false)
     }
-  }, [adminSecret, combinedHeaders, headlessMode, label, loadKeys, userId])
+  }, [adminSecret, combinedHeaders, headlessMode, label, loadKeys, userId, authHeaders, isAdminUser])
 
   const confirmRevoke = useCallback(async () => {
     if (!revokeTarget || revokePending) return
@@ -192,15 +195,27 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
     } finally {
       setRevokePending(false)
     }
-  }, [adminSecret, combinedHeaders, loadKeys, revokeReason, revokeTarget])
+  }, [adminSecret, combinedHeaders, loadKeys, revokeReason, revokeTarget, isAdminUser, authHeaders, revokePending])
 
   const handleCopy = useCallback(async (text: string, field: string) => {
     try {
       await navigator.clipboard.writeText(text)
       setCopiedField(field)
-      setTimeout(() => setCopiedField(prev => (prev === field ? null : prev)), 1500)
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current)
+      }
+      copyTimeoutRef.current = setTimeout(() => setCopiedField(prev => (prev === field ? null : prev)), 1500)
     } catch (err) {
       console.error('Clipboard error:', err)
+    }
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current)
+        copyTimeoutRef.current = null
+      }
     }
   }, [])
 

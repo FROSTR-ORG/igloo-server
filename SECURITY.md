@@ -132,6 +132,11 @@ Igloo Server distinguishes between two user types for security:
 - Can save/retrieve encrypted credentials
 - Access to `/api/user/*` endpoints
 - Credentials persist across sessions
+ 
+##### Password Handling Policy
+- Passwords are validated and stored exactly as entered (no trimming). Leading/trailing whitespace counts as part of the password.
+- By default, whitespace characters are not allowed anywhere in passwords (see `VALIDATION.PASSWORD_REGEX` in `src/config/crypto.ts`). You may relax this policy by updating that regex, but ensure validation and storage remain consistent.
+- Rationale: exact matching avoids ambiguity between validation and storage; disallowing whitespace by default reduces accidental copy/paste or invisible characters causing lockouts. If you choose to allow spaces, clearly communicate this to users in your UI.
 
 **Environment Auth Users** (userId: string):
 - Authenticated via Basic Auth or API Key

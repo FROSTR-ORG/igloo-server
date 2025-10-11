@@ -340,12 +340,14 @@ export async function handleUserRoute(
           }
           if (credentials && credentials.group_cred && credentials.share_cred) {
             if (credentialsBeingUpdated) {
-              void sendSelfEcho(credentials.group_cred, credentials.share_cred, {
+              sendSelfEcho(credentials.group_cred, credentials.share_cred, {
                 relays: credentials.relays,
                 relaysEnv: process.env.RELAYS,
                 addServerLog: context.addServerLog,
                 contextLabel: 'db credential update',
                 timeoutMs: 30000
+              }).catch((error) => {
+                try { context.addServerLog('warn', 'Self-echo failed after credential update', error); } catch {}
               });
             }
             // Start the node under the shared lock to avoid races
