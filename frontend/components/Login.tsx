@@ -23,7 +23,8 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState('');
-  const [authMode, setAuthMode] = useState<'basic' | 'api'>('basic');
+  type AuthMode = 'credentials' | 'api';
+  const [authMode, setAuthMode] = useState<AuthMode>('credentials');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
@@ -41,10 +42,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
         setAuthStatus(status);
         setError(''); // Clear any previous error
         // Set default auth mode based on available methods
-        if (status.methods.includes('api-key')) {
+        const supportsCredentials = status.methods.includes('basic-auth') || status.methods.includes('session');
+        if (status.methods.includes('api-key') && !supportsCredentials) {
           setAuthMode('api');
-        } else if (status.methods.includes('basic-auth')) {
-          setAuthMode('basic');
+        } else if (supportsCredentials) {
+          setAuthMode('credentials');
         }
       } else {
         setError('Failed to fetch authentication status. Please try again later.');
@@ -128,16 +130,16 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
           {!statusLoading && authStatus && (
             <div className="flex justify-center">
               <div className="flex bg-gray-800/50 rounded-lg p-1 space-x-1">
-                {authStatus.methods.includes('basic-auth') && (
+                {(authStatus.methods.includes('basic-auth') || authStatus.methods.includes('session')) && (
                   <button
                     type="button"
-                    onClick={() => setAuthMode('basic')}
-                    className={`px-4 py-2 text-sm rounded-md transition-colors ${authMode === 'basic'
+                    onClick={() => setAuthMode('credentials')}
+                    className={`px-4 py-2 text-sm rounded-md transition-colors ${authMode === 'credentials'
                         ? 'bg-blue-600 text-white'
                         : 'text-blue-300 hover:text-blue-200 hover:bg-gray-700/50'
                       }`}
                   >
-                    Username/Password
+                    Username / Password
                   </button>
                 )}
                 {authStatus.methods.includes('api-key') && (
@@ -159,7 +161,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
           {/* Login Form */}
           {!statusLoading && (
           <form onSubmit={handleLogin} className="space-y-4">
-            {authMode === 'basic' ? (
+            {authMode === 'credentials' ? (
               <>
                 <div className="space-y-2">
                   <label htmlFor="username" className="block text-sm font-medium text-blue-200">

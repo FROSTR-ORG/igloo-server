@@ -14,9 +14,17 @@ This directory contains the comprehensive OpenAPI 3.1 specification for the Iglo
 When the server is running, you can access interactive API documentation at:
 
 - **Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs)
+  - Self‑hosted assets for stronger security (no third‑party CDN)
   - Full-featured API explorer with request testing
   - Built-in authentication support
   - Try-it-out functionality for all endpoints
+
+If you see a “Docs assets not found” message, fetch the pinned Swagger UI assets:
+
+```bash
+bun run docs:vendor
+```
+This writes the required files to `static/docs/`.
 
 ### Raw Specification
 
@@ -28,7 +36,7 @@ When the server is running, you can access interactive API documentation at:
 ### Authentication for API Documentation
 
 - **Development**: No authentication required for easy testing
-- **Production**: Authentication required for security
+- **Production**: Authentication required for security (enforced by the server)
 
 To authenticate in Swagger UI:
 1. Use the "Authorize" button in Swagger UI
@@ -53,25 +61,27 @@ The API supports multiple authentication methods:
 
 ## API Coverage
 
-The OpenAPI specification includes:
+The OpenAPI specification includes (major surfaces):
 
 - ✅ All authentication endpoints (`/api/auth/*`)
-- ✅ Environment management (`/api/env`)
+- ✅ Environment management (`/api/env` — available in headless and database deployments)
 - ✅ Server status (`/api/status`)
 - ✅ Peer management (`/api/peers/*`)
 - ✅ Key recovery (`/api/recover/*`)
-- ✅ Share management (`/api/shares`)
-- ✅ Real-time events (`/api/events`)
+- ✅ Share management (`/api/env/shares`)
+- ✅ Real-time events (WebSocket stream at `/api/events`)
 - ✅ Signing and encryption
   - `/api/sign` (threshold Schnorr signing)
   - `/api/nip44/{encrypt|decrypt}` (ECDH + NIP‑44)
   - `/api/nip04/{encrypt|decrypt}` (ECDH + NIP‑04)
 - ✅ NIP‑46 session persistence (`/api/nip46/*`)
-- ✅ Complete request/response schemas
+- ✅ Comprehensive schemas for included endpoints
 - ✅ Authentication security schemes
 - ✅ Rate limiting documentation
 - ✅ Error response formats
 - ✅ Comprehensive examples
+
+> Note: Some supportive endpoints (e.g., onboarding `/api/onboarding/*`, admin `whoami`/`users`, and user storage `/api/user/*`) are available in the server but not yet modeled in the OpenAPI. Use the README “API Reference” and the UI for details. These may be added to the spec in a future update.
 
 ## Validation
 
@@ -115,3 +125,22 @@ The OpenAPI specification follows:
 - **Comprehensive documentation** with descriptions and examples
 - **Security-first** approach with proper authentication documentation
 - **Type safety** with detailed schema definitions 
+
+## WebSocket Authentication & Origins
+
+The real-time event stream at `/api/events` is a WebSocket endpoint.
+
+- In production, set `ALLOWED_ORIGINS` with explicit origins; wildcard `*` is rejected for WS upgrades.
+- Do not send credentials in the URL. Use cookies (browser), headers, or subprotocol hints instead.
+- Supported subprotocol hints (pick one):
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Example client:
+
+```ts
+const proto = ['apikey.' + process.env.MY_API_KEY];
+const ws = new WebSocket('wss://yourdomain.com/api/events', proto);
+ws.onmessage = (e) => console.log('event:', e.data);
+```

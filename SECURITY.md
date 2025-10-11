@@ -18,6 +18,7 @@ Igloo Server supports two operation modes with different security models:
 - **Traditional deployment** for backward compatibility
 - **No database required**
 - **Peer policies**: only explicit blocks are honored via `PEER_POLICIES` or `data/peer-policies.json`
+- **API key**: set via the `API_KEY` environment variable; only one value is supported and rotation requires updating the env var and restarting the server
 
 ### Security Comparison Table
 
@@ -80,11 +81,11 @@ Starting with this version, Igloo Server **automatically generates and persists*
    ```
 
 3. **Important ADMIN_SECRET Guidelines**:
-   - **One-time use**: Only needed for creating the first user
+   - **First‑run requirement**: Needed to create the first admin user when the DB is uninitialized
+   - **Admin API auth**: After onboarding, admin endpoints accept either a valid `ADMIN_SECRET` bearer token or an authenticated admin session
    - **Keep it secret**: Never share or commit to version control
-   - **Rotate after setup**: Change it after initial configuration
-   - **Store securely**: Use a password manager or secure vault
-   - **Container deployments**: Prefer container-native secrets (Docker/Kubernetes secrets) over environment variables
+   - **Rotate when needed**: Change it and restart the server to rotate
+   - **Store securely**: Prefer container‑native secrets (Docker/Kubernetes) or a secrets manager
    - **Process security**: Environment variables can leak via process listings (ps), crash dumps, or metadata endpoints
    - **Log sanitization**: Never log or include `ADMIN_SECRET` in error messages
 
@@ -104,6 +105,24 @@ Starting with this version, Igloo Server **automatically generates and persists*
 3. User logs in with credentials
 4. Credentials stored encrypted with user's password as key
 
+#### API Key Management (Database Mode)
+- **Admin-issued keys**: Create, list, and revoke keys via `/api/admin/api-keys` endpoints.
+  - Authenticate with the `ADMIN_SECRET` bearer token, or
+  - If you are already logged in as a user with role `admin`, your active session is accepted and you do not need to provide `ADMIN_SECRET` again. The initial onboarding user is automatically granted the `admin` role.
+- **One-time disclosure**: The full API key is only returned in the creation response; the server stores a SHA-256 hash plus a 12-character prefix for constant-time comparisons.
+- **Revocation workflow**: `/api/admin/api-keys/revoke` marks keys as revoked with an optional reason and timestamp, preventing further use.
+- **Usage telemetry**: Each key records `last_used_at` and `last_used_ip` to help detect compromise or unexpected automation.
+- **Least privilege**: Issue distinct keys per automation or integration, and revoke unused keys promptly.
+- **Admin secret hygiene**: Treat `ADMIN_SECRET` like root credentials—store it in a secrets manager, avoid hardcoding it in CI/CD, and rotate it after incident response.
+
+> Note on `last_used_ip`: The server derives the remote address from `X-Forwarded-For` when present; behind a proxy/load balancer, ensure it forwards the correct client IP and that you trust and control the proxy hop(s). In direct deployments, the peer TCP address may be used.
+
+Checklist for admins
+- Rotate admin‑issued API keys regularly (e.g., monthly/quarterly) and on any incident.
+- Use one key per integration or script; avoid sharing keys across systems.
+- Monitor `last_used_at` and `last_used_ip` for anomalies; revoke quickly if behavior is unexpected.
+- Keep `ADMIN_SECRET` set in production; never commit it; store in a secrets manager.
+
 #### User Type Separation (Security Design)
 Igloo Server distinguishes between two user types for security:
 
@@ -113,6 +132,11 @@ Igloo Server distinguishes between two user types for security:
 - Can save/retrieve encrypted credentials
 - Access to `/api/user/*` endpoints
 - Credentials persist across sessions
+ 
+##### Password Handling Policy
+- Passwords are validated and stored exactly as entered (no trimming). Leading/trailing whitespace counts as part of the password.
+- By default, whitespace characters are not allowed anywhere in passwords (see `VALIDATION.PASSWORD_REGEX` in `src/config/crypto.ts`). You may relax this policy by updating that regex, but ensure validation and storage remain consistent.
+- Rationale: exact matching avoids ambiguity between validation and storage; disallowing whitespace by default reduces accidental copy/paste or invisible characters causing lockouts. If you choose to allow spaces, clearly communicate this to users in your UI.
 
 **Environment Auth Users** (userId: string):
 - Authenticated via Basic Auth or API Key
@@ -130,11 +154,15 @@ Igloo Server distinguishes between two user types for security:
 
 2. **Choose Authentication Method**:
    
-   **Option A: API Key (Recommended for API access)**
+**Option A: API Key (Recommended for API access)**
    ```bash
    API_KEY=<EXAMPLE_API_KEY>  # Replace with secure random API key
    ```
    Generate a secure key: `openssl rand -hex 32`
+
+   - API key management in headless mode is environment-driven. The HTTP API cannot create or rotate keys in this mode.
+   - `API_KEY` is intentionally omitted from the list of environment variables writable via `/api/env`; attempts to set it at runtime are rejected.
+   - Only a single API key value is supported; rotate by updating the environment and restarting the server.
    
    **Option B: Username/Password (Recommended for web UI)**
    ```bash
@@ -154,6 +182,17 @@ Igloo Server distinguishes between two user types for security:
    SESSION_TIMEOUT=3600  # 1 hour
    ```
    Auto-generation uses cryptographically secure random bytes
+
+#### Session Persistence Model
+- In database mode, sessions are persisted in SQLite with minimal fields: `id`, `user_id`, `ip_address`, `created_at`, `last_access`.
+- Only authorization metadata is stored. Passwords, derived keys, or other secrets are never written to disk.
+- Derived keys used for decrypting user credentials remain in memory-only vaults with TTL and bounded reads; users may need to re-enter password after a server restart to access encrypted data, even though their admin privileges remain active.
+- In headless mode, sessions remain in-memory only.
+
+#### Headless Environment Endpoint Policy
+- All `/api/env*` routes require authentication in headless mode, regardless of `AUTH_ENABLED`.
+- Writes (POST/PUT/DELETE) in headless require an API key or Basic Auth. Session auth alone is not sufficient for env modifications.
+- `/api/env/shares` never returns raw credential values; it only returns presence/metadata.
 
 ### Development vs Production
 
@@ -188,6 +227,26 @@ RATE_LIMIT_MAX=100       # 100 requests per window per IP
 
 ## 🌐 Network Security
 
+### Client IP Attribution and Proxy Trust
+- The server derives a trusted client IP for rate‑limiting and audit logs.
+- When `TRUST_PROXY=true`, the server trusts standard proxy headers (first `X-Forwarded-For`, then `X-Real-IP`, then `CF-Connecting-IP`).
+- When `TRUST_PROXY` is unset/false, the server ignores these headers and uses the direct connection’s IP from the runtime instead.
+- Set `TRUST_PROXY=true` only when running behind a trusted reverse proxy that correctly forwards client IPs.
+
+### WebSocket Authentication & Origins
+
+- In production, set `ALLOWED_ORIGINS` to explicit origins (comma-separated). Wildcard `*` is rejected for WS upgrades.
+- Do not pass credentials in the URL. Use cookies (browser), headers, or subprotocol hints.
+- Supported subprotocol hints (pick one):
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Abuse protection (defaults; tune via env):
+- `WS_MAX_CONNECTIONS_PER_IP` (default 5)
+- `WS_MSG_RATE` (20 messages/sec) and `WS_MSG_BURST` (40)
+- Upgrade attempts via bucket `ws-upgrade` capped by `RATE_LIMIT_WS_UPGRADE_MAX` (default 30 per 15m) and `RATE_LIMIT_WS_UPGRADE_WINDOW`
+
 ## ⏱️ Cryptographic Operation Timeouts
 
 Threshold signing and ECDH may stall due to peer/relay conditions. The server enforces timeouts to protect responsiveness.
@@ -208,7 +267,7 @@ Threshold signing and ECDH may stall due to peer/relay conditions. The server en
 - Keys are available for a short bootstrap window after login, then auto‑deleted.
 - Configuration:
   - `AUTH_DERIVED_KEY_TTL_MS` (default `120000`) – maximum residency time in ms
-  - `AUTH_DERIVED_KEY_MAX_READS` (default `3`) – maximum one-time retrievals per session
+  - `AUTH_DERIVED_KEY_MAX_READS` (default `100`) – maximum one-time retrievals per session
 - Behavior:
   - Each retrieval returns a copy and decrements the read budget; on zero or TTL expiry, the server fills the backing `Uint8Array` with zeros before removal.
   - Logout and session expiry proactively zeroize associated keys, and per-request caches are wiped once responses are sent.
@@ -492,11 +551,9 @@ grep "login" server.log
 ### If Credentials Are Compromised
 
 1. **Immediate Actions**:
-   ```bash
-   # Disable authentication temporarily
-   AUTH_ENABLED=false
-   # Restart server
-   ```
+   - Revoke any affected API keys via `/api/admin/api-keys/revoke` (or rotate `API_KEY` in headless and restart)
+   - Rotate `ADMIN_SECRET` and session secrets as needed
+   - Keep `AUTH_ENABLED=true` to prevent unauthenticated access during incident response
 
 2. **Generate New Credentials**:
    ```bash

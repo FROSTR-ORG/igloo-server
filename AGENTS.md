@@ -1,21 +1,43 @@
 # Repository Guidelines
 
-Use this guide to onboard quickly and keep the codebase consistent across backend, frontend, and deployment workflows.
+This guide keeps backend, frontend, and deployment workflows consistent. These rules apply repository‑wide.
 
 ## Project Structure & Module Organization
-Backend TypeScript lives in `src/`; `src/server.ts` registers routes from `src/routes/`, shared classes sit in `src/class/`, and node helpers live in `src/node/`. Utilities without state belong in `src/util/`, while fixtures and captured payloads stay in `data/`. The React + Tailwind UI resides in `frontend/`; generated assets flow into `static/` and must never be edited by hand. Co-locate tests with their subjects as `feature.test.ts` or `feature.spec.ts`.
+- Backend TypeScript in `src/`; entry `src/server.ts` registers routes from `src/routes/`.
+- Shared classes `src/class/`; Node helpers `src/node/`; pure utilities `src/util/`.
+- Fixtures and captured payloads live in `data/`.
+- React + Tailwind UI in `frontend/`.
+- Generated assets in `static/` — never edit by hand.
+- Co‑locate tests with code as `feature.test.ts` or `feature.spec.ts`.
 
 ## Build, Test, and Development Commands
-Use `bun run dev` for the concurrent backend, React, and Tailwind watch loop. Run `bun run build` for production bundles and `bun run build:dev` when you need readable output to debug. Launch the packaged server with `bun run start` or `HEADLESS=true bun run start` to skip UI assets. Validate the OpenAPI contract via `bun run docs:validate` before shipping API changes.
+- `bun run dev` — concurrent backend, React, and Tailwind watch.
+- `bun run build` — production bundles.
+- `bun run build:dev` — readable bundles for debugging.
+- `bun run start` — start packaged server; `HEADLESS=true bun run start` to skip UI assets.
+- `bun test` — run backend tests.
+- `bun run docs:validate` — validate the OpenAPI contract.
 
 ## Coding Style & Naming Conventions
-TypeScript runs in strict mode—declare explicit types and avoid `any`. Keep utility helpers pure to ease testing. Follow two-space indentation, Unix newlines, camelCase variables, and UPPER_SNAKE_CASE constants. Name backend files in kebab-case (e.g., `src/routes/nip46.ts`) and React components in PascalCase.
+- TypeScript strict mode; declare explicit types; avoid `any`. Keep utilities pure.
+- Two‑space indentation; Unix newlines.
+- `camelCase` variables; `UPPER_SNAKE_CASE` constants.
+- Backend files kebab‑case (e.g., `src/routes/nip46.ts`); React components PascalCase.
 
 ## Testing Guidelines
-Execute backend tests with `bun test`. Mock external calls to `/api/sign`, `/api/nip44/*`, `/api/nip04/*`, and `/api/nip46/*`. Seed complex scenarios from `data/` fixtures rather than live services. Add targeted tests when behavior changes and watch coverage for regressions.
+- Prefer unit tests co‑located with subjects.
+- Mock external calls to `/api/sign`, `/api/nip44/*`, `/api/nip04/*`, and `/api/nip46/*`.
+- Seed complex scenarios from `data/` fixtures instead of live services.
+- Add targeted tests when behavior changes and monitor coverage for regressions.
 
 ## Commit & Pull Request Guidelines
-Use Conventional Commits (e.g., `feat: enforce peer policy store`) on `feature/<slug>` branches. PRs should explain intent, reference tickets, and list manual verification steps such as `bun run build`, `bun test`, and `bun run docs:validate`. Include UI screenshots when frontend code changes and confirm no secrets or generated assets are committed.
+- Use Conventional Commits (e.g., `feat: enforce peer policy store`) on `feature/<slug>` branches.
+- PRs must explain intent, link tickets, and list verification steps: `bun run build`, `bun test`, `bun run docs:validate`.
+- Include UI screenshots when frontend changes.
+- Confirm no secrets or generated assets (e.g., under `static/`) are committed.
 
 ## Security & Configuration Tips
-Load secrets from environment files or `data/` fixtures. Production deployments must set `AUTH_ENABLED=true`, a strong `ADMIN_SECRET`, and run behind TLS on `0.0.0.0`. Tune `FROSTR_SIGN_TIMEOUT`, `SIGN_TIMEOUT_MS`, `AUTH_DERIVED_KEY_TTL_MS`, and `AUTH_DERIVED_KEY_MAX_READS` per environment to balance responsiveness and risk.
+- Load secrets from environment files or `data/` fixtures; never hard‑code.
+- Production: set `AUTH_ENABLED=true`, strong `ADMIN_SECRET`, and run behind TLS on `0.0.0.0`.
+- Tune `FROSTR_SIGN_TIMEOUT`, `SIGN_TIMEOUT_MS`, `AUTH_DERIVED_KEY_TTL_MS`, and `AUTH_DERIVED_KEY_MAX_READS` per environment.
+

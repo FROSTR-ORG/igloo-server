@@ -21,6 +21,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [Docker Deployment](#docker-deployment)
 - [API Reference](#api-reference)
   - [Authentication](#authentication)
+  - [API Keys](#api-keys)
   - [Environment Management](#environment-management)
   - [Server Status](#server-status)
   - [Peer Management](#peer-management)
@@ -46,7 +47,6 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
   - [📋 Quick Security Setup](#-quick-security-setup)
   - [🛡️ Security Features](#️-security-features)
 - [Security Notes](#security-notes)
-- [WebSocket Migration](WEBSOCKET_MIGRATION.md)
 - [License](#license)
 - [Contributing](#contributing)
 
@@ -62,7 +62,7 @@ Built on [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-core) for reli
 - **Multi-Relay Support**: Connects to multiple Nostr relays for redundancy and coordination
 - **Real-time Monitoring**: Live peer status tracking and event logging
 - **Health Monitoring**: Automatic node health checks with activity tracking every 30 seconds
-- **Auto-Restart**: Automatic recovery from silent failures with watchdog timer (5-minute timeout)
+- **Auto-Restart**: Automatic recovery from silent failures after consecutive connectivity failures (checks every 60s; restarts after 3 failures)
 - **Connection Resilience**: Enhanced reconnection logic with exponential backoff and extended timeouts
 
 ### 🌐 **Modern Web Interface** 
@@ -148,6 +148,29 @@ HEADLESS=false  # or omit entirely
 HEADLESS=true
 ```
 
+#### Local Dev (Headless) with API Key
+
+For local headless setups, even if `AUTH_ENABLED=false`, configuration endpoints under `/api/env*` require authentication to avoid exposing secrets. The simplest way is to set an API key and use it in requests:
+
+```bash
+export HEADLESS=true
+export AUTH_ENABLED=false   # local only; /api/env still requires a key
+export API_KEY=dev-local-key
+
+# Start the server
+bun run start
+
+# Read public env vars (headless)
+curl -sS -H "X-API-Key: $API_KEY" http://localhost:8002/api/env | jq .
+
+# Write env vars (headless)
+curl -sS -X POST \
+  -H "X-API-Key: $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -d '{"RATE_LIMIT_MAX":"200"}' \
+  http://localhost:8002/api/env | jq .
+```
+
 ## Architecture
 
 The server provides three integrated services:
@@ -175,10 +198,11 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 
 ### 📊 **Health Metrics**
 - **Last Activity**: Timestamp of most recent node activity
-- **Health Status**: Boolean indicating if node is healthy
-- **Consecutive Failures**: Number of consecutive health check failures
-- **Restart Count**: Total number of automatic restarts
+- **Last Connectivity Check**: Timestamp of the last connectivity probe
+- **Is Connected**: Boolean indicating current connectivity state
+- **Consecutive Failures**: Number of consecutive failed connectivity checks
 - **Time Since Activity**: Milliseconds since last activity
+- **Time Since Connectivity Check**: Milliseconds since last connectivity probe
 
 ### 🛡️ **Connection Resilience**
 - **Connectivity Monitoring**: Checks relay connections every 60 seconds
@@ -188,6 +212,18 @@ Igloo Server includes a comprehensive health monitoring system designed to preve
 - **Clean Logging**: Filters self-pings and reduces log noise for production
 
 This system addresses common issues with long-running deployments where nodes may silently stop responding after extended periods, ensuring your signing node remains operational and responsive.
+
+### 🚨 Error Circuit Breaker
+
+To avoid degraded-long running states from repeated unexpected failures, the server tracks unhandled errors in a sliding window and can exit so a supervisor restarts it.
+
+- Counting window: `ERROR_CIRCUIT_WINDOW_MS` (default 60s)
+- Threshold: `ERROR_CIRCUIT_THRESHOLD` errors within the window (default 10)
+- Exit code: `ERROR_CIRCUIT_EXIT_CODE` (default 1)
+
+Notes
+- Common relay/network rejections are filtered and do not count toward the breaker.
+- When tripped, the process requests a graceful shutdown and exits; use a supervisor (e.g., systemd, Docker, k8s) to restart.
 
 ## Quick Start
 
@@ -252,9 +288,9 @@ This mode provides user management with secure credential storage in a SQLite da
 Important: `ADMIN_SECRET` behavior and operational guidance
 
 - The startup check for `ADMIN_SECRET` is enforced only on first run (when the database is uninitialized).
-- Keep `ADMIN_SECRET` set in production even after initialization. The admin API (`/api/admin/*`) requires a valid `ADMIN_SECRET` on every call; if it is unset, admin endpoints will return 401 and cannot be used.
-- Rotate `ADMIN_SECRET` by changing its value and restarting the server. This changes the credential required for admin API access and does not affect existing users or database contents.
-- Lost `ADMIN_SECRET` but still have server access: set a new `ADMIN_SECRET` in the environment and restart. If you also need to recreate the first admin user, see “Force first-run (reinitialize)” below.
+- Keep `ADMIN_SECRET` set in production even after initialization. Admin endpoints (`/api/admin/*`) accept either a valid `ADMIN_SECRET` bearer token or a logged‑in admin session. If `ADMIN_SECRET` is unset, you can still use admin APIs with an authenticated admin session.
+- Rotate `ADMIN_SECRET` by changing its value and restarting the server. Rotation does not affect existing users or database contents.
+- Lost `ADMIN_SECRET` but still have server access: set a new `ADMIN_SECRET` in the environment and restart. If you also need to recreate the first admin user, see “Force first‑run (reinitialize)” below.
 
 Force first-run (reinitialize)
 
@@ -348,6 +384,39 @@ export PEER_POLICIES='[{"pubkey":"02abcdef...","allowSend":false}]'
 - The React frontend is disabled; manage the server via API.
 - Leave `GROUP_CRED`/`SHARE_CRED` unset to configure credentials later through the API before the node starts.
 - `PEER_POLICIES` only persists entries that set `allowSend:false` or `allowReceive:false`. Saved overrides are mirrored to `data/peer-policies.json` so they survive restarts and are applied for API-key flows.
+- API key auth stays env-managed: set `API_KEY` before launch, and note `/api/env` can't create or rotate it—only that one configured value is accepted today.
+
+## API Keys
+
+Igloo Server supports API keys both in headless and database modes:
+
+- Headless mode: supply a single `API_KEY` via environment; HTTP cannot create/rotate it. Attempting to set `API_KEY` via `/api/env` is rejected by design.
+- Database mode: manage multiple keys via admin endpoints or the UI “API Keys” tab.
+
+Endpoints (database mode):
+
+- `GET /api/admin/api-keys` — list keys
+- `POST /api/admin/api-keys` — create a key `{ label?: string, userId?: number }`
+- `POST /api/admin/api-keys/revoke` — revoke `{ apiKeyId: number, reason?: string }`
+
+Authentication:
+
+- Use `Authorization: Bearer <ADMIN_SECRET>`
+- Or, if you are logged in as a user with role `admin`, your active session is accepted and you do not need to include `ADMIN_SECRET`. The first account created during onboarding is automatically promoted to `admin`.
+
+Usage notes:
+
+- The full key token is shown only once at creation; the server stores a hash and a short prefix.
+- The server records `last_used_at` and `last_used_ip` on successful API‑key auth. For `last_used_ip` behind a proxy, ensure `X‑Forwarded‑For` is forwarded from a trusted hop.
+
+Helper scripts:
+
+- `scripts/api-admin-keys.sh` — list/create/revoke admin keys (requires `jq`)
+- `scripts/api-test.sh` — quick API smoke using an issued key
+
+UI:
+
+- Logged-in admin users will see an “API Keys” tab between “NIP‑46” and “Recover”. When logged in as admin, the tab auto-loads without prompting for `ADMIN_SECRET`.
 
 ### Docker Deployment
 
@@ -386,8 +455,8 @@ docker run -p 8002:8002 \
   -e RATE_LIMIT_ENABLED="true" \
   igloo-server
 
-# Or use Docker Compose
-docker-compose up -d
+# Or use Docker Compose (compose.yml)
+docker compose up -d
 ```
 
 ## API Reference
@@ -396,8 +465,8 @@ The server provides RESTful APIs for programmatic control.
 
 ### 📖 Interactive API Documentation
 
-**Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing
-**OpenAPI Spec**: 
+**Swagger UI**: [http://localhost:8002/api/docs](http://localhost:8002/api/docs) - Interactive API explorer with request testing (self‑hosted assets; run `bun run docs:vendor` if assets are missing)
+**OpenAPI Spec**:
 - JSON: [http://localhost:8002/api/docs/openapi.json](http://localhost:8002/api/docs/openapi.json)
 - YAML: [http://localhost:8002/api/docs/openapi.yaml](http://localhost:8002/api/docs/openapi.yaml)
 
@@ -426,12 +495,46 @@ POST /api/auth/logout
 GET /api/auth/status
 ```
 
+### Admin API (database mode)
+```bash
+# Check admin session (used by UI). Returns 200 when caller is admin.
+GET /api/admin/whoami
+
+# List API keys (requires ADMIN_SECRET or admin session)
+GET /api/admin/api-keys
+
+# Create a new API key (token returned once in response)
+POST /api/admin/api-keys
+# EITHER send ADMIN_SECRET
+#   Authorization: Bearer $ADMIN_SECRET
+# OR rely on an authenticated admin session (UI path)
+Content-Type: application/json
+{
+  "label": "automation bot",
+  "userId": 1
+}
+
+# Revoke an API key by id
+POST /api/admin/api-keys/revoke
+# EITHER Authorization: Bearer $ADMIN_SECRET or admin session
+Content-Type: application/json
+{
+  "apiKeyId": 3,
+  "reason": "rotating credentials"
+}
+```
+> ⚠️ Admin-issued tokens are only shown in the creation response—store them securely.
+
+Admin session behavior
+- In database mode, successful logins create a minimal record in SQLite so sessions survive dev restarts. Only the session id, user id, IP, and timestamps are stored; no passwords or derived keys are persisted.
+- UI uses `GET /api/admin/whoami` to detect admin privileges instead of assuming user id `1`.
+
 ### Environment Management
 ```bash
 # Get current configuration
 GET /api/env
 
-# Update configuration  
+# Update configuration (database mode): requires admin session or ADMIN_SECRET
 POST /api/env
 Content-Type: application/json
 {
@@ -442,11 +545,24 @@ Content-Type: application/json
 # Note: Only FROSTR credentials and relay settings can be updated via API
 # Authentication settings must be configured via environment variables
 
-# Delete configuration keys
+# Delete configuration keys (database mode): requires admin session or ADMIN_SECRET
 POST /api/env/delete
 Content-Type: application/json
 {
   "keys": ["GROUP_CRED", "SHARE_CRED"]
+}
+
+# Headless specifics
+# - All /api/env* routes require authentication in headless
+# - Writes require API key or Basic Auth (sessions alone are not sufficient)
+
+# Example: headless write with API key
+POST /api/env
+X-API-Key: <YOUR_API_KEY>
+Content-Type: application/json
+{
+  "GROUP_CRED": "bfgroup1...",
+  "SHARE_CRED": "bfshare1..."
 }
 ```
 
@@ -516,13 +632,13 @@ Content-Type: application/json
 }
 ```
 
-### Share Management
+### Share Management (Headless mode)
 ```bash
 # Get stored shares
-GET /api/shares
+GET /api/env/shares
 
 # Store new share
-POST /api/shares
+POST /api/env/shares  # Requires API key or Basic Auth in headless
 Content-Type: application/json
 {
   "shareCredential": "bfshare1...",
@@ -530,23 +646,46 @@ Content-Type: application/json
 }
 ```
 
+> ℹ️ `/api/env` is available in both headless and database modes. In headless, all env endpoints require authentication; writes require API key or Basic Auth. `/api/env/shares` is headless‑only and returns metadata by default (no raw credentials). For local/dev debugging only, you may opt‑in to include raw credentials (`shareCredential`, `groupCredential`) by setting `ENV_SHARES_INCLUDE_RAW=true` in a non‑production environment and accessing via an authenticated session (not API key or Basic). This endpoint is not available in database mode.
+
 ### Real-time Events
-```bash
-# Subscribe to live event stream via WebSocket
-WebSocket: ws://localhost:8002/api/events
-# Or secure WebSocket: wss://yourdomain.com/api/events
+Subscribe to live server events via WebSocket:
 
-# Authentication (if enabled) via URL parameters:
-ws://localhost:8002/api/events?apiKey=your-api-key
-ws://localhost:8002/api/events?sessionId=your-session-id
+```
+ws://localhost:8002/api/events
+wss://yourdomain.com/api/events
+```
 
-# Receives JSON events like:
+Authentication and security
+- Browser UI uses the session cookie after login.
+- Programmatic clients can pass credentials via headers or Sec-WebSocket-Protocol hints:
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Legacy compatibility
+- `?apiKey=` and `?sessionId=` query params are still accepted for existing clients. Prefer headers or subprotocol hints for new integrations.
+
+Example (Node/Bun):
+
+```ts
+const proto = ['apikey.' + process.env.MY_API_KEY];
+const ws = new WebSocket('wss://yourdomain.com/api/events', proto);
+ws.onmessage = (ev) => console.log(ev.data);
+```
+
+Origin policy
+- In production, set explicit `ALLOWED_ORIGINS` (comma-separated) and ensure your client Origin matches exactly.
+- Wildcard `*` is rejected for WebSocket upgrades in production.
+
+Event payloads resemble:
+```
 {"type":"sign","message":"Signature request received","timestamp":"12:34:56","id":"abc123"}
 {"type":"bifrost","message":"Peer connected","timestamp":"12:34:57","id":"def456"}
 {"type":"system","message":"Connected to event stream","timestamp":"12:34:58","id":"ghi789"}
 ```
 
-💡 **Note**: Real-time events have been migrated from Server-Sent Events (SSE) to **WebSockets** for better performance and reliability. See [WEBSOCKET_MIGRATION.md](WEBSOCKET_MIGRATION.md) for migration details.
+💡 HTTP fallbacks for `/api/events` are not supported; use WebSockets.
 
 ### Crypto: Sign and Encrypt
 ```bash
@@ -569,8 +708,8 @@ Timeouts: these endpoints honor `FROSTR_SIGN_TIMEOUT` (preferred) or `SIGN_TIMEO
 
 ### NIP‑46 Sessions
 ```bash
-# List sessions (optionally include history summary)
-GET /api/nip46/sessions?history=true
+# List sessions
+GET /api/nip46/sessions
 
 # Create/update a session
 POST /api/nip46/sessions
@@ -587,7 +726,7 @@ PUT /api/nip46/sessions/{pubkey}/status
 # Delete session
 DELETE /api/nip46/sessions/{pubkey}
 
-# Compact history
+# Compact history (recent kinds/methods summary)
 GET /api/nip46/history
 ```
 
@@ -701,14 +840,14 @@ sudo certbot --nginx -d yourdomain.com
 #### 6. Monitor and Maintain
 ```bash
 # Check container status
-docker-compose ps
+docker compose ps
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Update deployment
 git pull
-docker-compose --env-file .env up -d --build
+docker compose --env-file .env up -d --build
 ```
 
 ### Umbrel Deployment
@@ -721,13 +860,15 @@ docker-compose --env-file .env up -d --build
 
 ### Development Mode
 ```bash
-# Start with hot reload
+# Terminal 1: frontend builders in watch mode
 bun run dev
 
-# This runs:
-# - Frontend build with watch mode
-# - Tailwind CSS compilation with watch mode
-# - Server restart on changes (if using nodemon)
+# Terminal 2: start the server
+bun run start
+
+# Notes:
+# - The `dev` script watches frontend JS/CSS only.
+# - Use an external watcher (e.g., nodemon) if you want server auto‑restart.
 ```
 
 ### Development vs Production Caching
@@ -735,14 +876,12 @@ bun run dev
 The server automatically adjusts caching behavior based on the `NODE_ENV` environment variable:
 
 **Development Mode** (`NODE_ENV !== 'production'`):
-- Static files are read fresh from disk on each request
-- No browser caching (`Cache-Control: no-cache`)
-- Perfect for seeing frontend changes immediately after rebuild
+- JS/CSS are served with no‑cache headers to avoid stale assets
+- Assets are read from disk each request
 
 **Production Mode** (`NODE_ENV=production`):
-- Static files are cached in memory for performance
-- Aggressive browser caching (24 hours for JS/CSS)
-- Optimized for production deployment
+- Cache headers are set for assets (JS/CSS: 24h; images: long‑lived)
+- HTML is served with no‑cache to keep the shell fresh
 
 ```bash
 # Force development mode (recommended for local development)
@@ -763,9 +902,21 @@ bun run build:dev      # Unminified for debugging, no server caching
 # Individual builds
 bun run build:js       # Frontend JavaScript only
 bun run build:css     # Tailwind CSS compilation only
+# Vendor Swagger UI assets for API docs (self-hosted)
+bun run docs:vendor
 ```
 
 **💡 Tip**: Use `bun run build:dev` during development to avoid caching issues. The server will automatically detect non-production builds and disable static file caching.
+
+### Tests
+```bash
+# Run all tests
+bun test
+
+# Run only API key/auth tests
+bun test tests/routes/*api-keys*.spec.ts
+```
+Tests are designed to be deterministic and self-contained; they spawn isolated processes with temporary SQLite DBs and clean up automatically.
 
 ### Frontend Structure
 ```
@@ -812,27 +963,31 @@ This server leverages [@frostr/igloo-core](https://github.com/FROSTR-ORG/igloo-c
 | `HOST_PORT` | Server port | `8002` | ❌ |
 | **Security** | | | |
 | `AUTH_ENABLED` | Enable authentication | `true` | ⚠️ |
-| `API_KEY` | API key for programmatic access | - | ❌ |
+| `API_KEY` | Headless-mode API key for programmatic access (database mode uses admin-issued keys) | - | ❌ |
 | `BASIC_AUTH_USER` | Basic auth username | - | ❌ |
 | `BASIC_AUTH_PASS` | Basic auth password | - | ❌ |
-| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` (all origins) | ⚠️ (Production) |
+| `ALLOWED_ORIGINS` | Comma-separated list of allowed CORS origins | `*` in development; unset blocks CORS in production | ⚠️ (Production) |
 | `SESSION_SECRET` | Secret for session cookies (auto-generated if not provided) | Auto-generated | ❌ |
 | `SESSION_TIMEOUT` | Session timeout in seconds | `3600` | ❌ |
-| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy | `false` | ❌ |
+| `TRUST_PROXY` | Trust X-Forwarded-For headers when behind a proxy (used for rate limiting and logs) | `false` | ❌ |
 | **Crypto Timeouts** | | | |
 | `FROSTR_SIGN_TIMEOUT` / `SIGN_TIMEOUT_MS` | Timeout (ms) for signing and ECDH crypto endpoints | `30000` | ❌ |
 | **Ephemeral Derived Keys** | | | |
 | `AUTH_DERIVED_KEY_TTL_MS` | Derived key vault TTL (ms) | `120000` | ❌ |
-| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `3` | ❌ |
+| `AUTH_DERIVED_KEY_MAX_READS` | Max one‑time reads per session | `100` | ❌ |
 | **Rate Limiting** | | | |
 | `RATE_LIMIT_ENABLED` | Enable rate limiting | `true` | ❌ |
 | `RATE_LIMIT_WINDOW` | Rate limit window in seconds | `900` | ❌ |
-| `RATE_LIMIT_MAX` | Max requests per window | `100` | ❌ |
+| `RATE_LIMIT_MAX` | Max requests per window | `300` (headless) / `600` (database) | ❌ |
 | **Node Restart** | | | |
 | `NODE_RESTART_DELAY` | Initial delay before node restart (ms) | `30000` | ❌ |
 | `NODE_MAX_RETRIES` | Maximum number of restart attempts | `5` | ❌ |
 | `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | `1.5` | ❌ |
 | `NODE_MAX_RETRY_DELAY` | Maximum delay between retries (ms) | `300000` | ❌ |
+| **Error Circuit Breaker** | | | |
+| `ERROR_CIRCUIT_WINDOW_MS` | Window length for counting unhandled errors (ms) | `60000` | ❌ |
+| `ERROR_CIRCUIT_THRESHOLD` | Number of unhandled errors in window to trip breaker | `10` | ❌ |
+| `ERROR_CIRCUIT_EXIT_CODE` | Process exit code when breaker trips | `1` | ❌ |
 
 **💡 Network Configuration**: 
 - **Local development**: Use `HOST_NAME=localhost` (default)
@@ -973,6 +1128,14 @@ RATE_LIMIT_ENABLED=true
 ```bash
 AUTH_ENABLED=false  # Only for local development
 # SESSION_SECRET is auto-generated if not set
+```
+
+Note for headless mode: even when `AUTH_ENABLED=false`, all `/api/env*` endpoints still require authentication (API key or Basic) to prevent accidental exposure of configuration. For local testing in headless mode, set an API key:
+
+```bash
+HEADLESS=true
+AUTH_ENABLED=false
+API_KEY=dev-local-key   # use a throwaway value locally
 ```
 
 ### 🛡️ **Security Features**
