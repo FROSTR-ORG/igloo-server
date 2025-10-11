@@ -77,8 +77,8 @@ function getSecurityHeaders(): Record<string, string> {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
-    // Minimal CSP suitable for this app shell; adjust if assets need wider sources
-    'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+    // Minimal CSP suitable for this app shell; allow secure WebSocket connections to this host and default Nostr relays (primal.net, damus.io)
+    'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://relay.primal.net wss://relay.damus.io;"
   };
 }
 

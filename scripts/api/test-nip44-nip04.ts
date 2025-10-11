@@ -43,9 +43,10 @@ async function testNip44() {
   const plaintext = 'hello nip44';
   const enc = await postJSON('/api/nip44/encrypt', { peer_pubkey: PEER, content: plaintext });
   if (enc.status === 503) return console.log('ℹ️  Node unavailable (503). Skipping NIP-44.');
-  if (enc.status === 401) return console.log('❌  Unauthorized (401) on /api/nip44/encrypt');
+  if (enc.status === 401) { console.log('❌  Unauthorized (401) on /api/nip44/encrypt'); process.exitCode = 1; return; }
   if (enc.status !== 200 || typeof (enc.payload as any)?.result !== 'string') {
     console.log('❌  Encrypt failed:', enc.status, enc.payload);
+    process.exitCode = 1;
     return;
   }
   console.log('✅ Encrypt ok');
@@ -64,9 +65,10 @@ async function testNip04() {
   const plaintext = 'hello nip04';
   const enc = await postJSON('/api/nip04/encrypt', { peer_pubkey: PEER, content: plaintext });
   if (enc.status === 503) return console.log('ℹ️  Node unavailable (503). Skipping NIP-04.');
-  if (enc.status === 401) return console.log('❌  Unauthorized (401) on /api/nip04/encrypt');
+  if (enc.status === 401) { console.log('❌  Unauthorized (401) on /api/nip04/encrypt'); process.exitCode = 1; return; }
   if (enc.status !== 200 || typeof (enc.payload as any)?.result !== 'string') {
     console.log('❌  Encrypt failed:', enc.status, enc.payload);
+    process.exitCode = 1;
     return;
   }
   console.log('✅ Encrypt ok');

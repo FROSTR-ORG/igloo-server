@@ -291,6 +291,8 @@ const sessionStore = new Map<string, {
   hasPassword?: boolean;
   salt?: string; // for non-database users only
   rehydrationsUsed: number;
+  lastAccess?: number; // epoch ms for TTL on ephemeral sessions
+  isDbBacked?: boolean; // true when a persisted DB session exists for this id
 }>();
 
 // Cache of session-scoped derived keys to support rehydration after vault expiry
@@ -605,10 +607,14 @@ function authenticateSession(req: Request): AuthResult {
         return { authenticated: false, error: 'Invalid session' };
       }
 
-      // Touch last_access and return user info
+      // Touch last_access in DB and refresh in-memory metadata timestamp
       try { touchSession(sessionId); } catch {}
       const jsonUserId = typeof row.user_id === 'bigint' ? row.user_id.toString() : row.user_id;
       const meta = sessionStore.get(sessionId);
+      if (meta) {
+        meta.lastAccess = Date.now();
+        meta.isDbBacked = true;
+      }
       return { authenticated: true, userId: jsonUserId, sessionId, hasPassword: meta?.hasPassword };
     }
   }
@@ -618,12 +624,19 @@ function authenticateSession(req: Request): AuthResult {
   if (!session) {
     return { authenticated: false, error: 'Invalid session' };
   }
-  // For ephemeral sessions, enforce TTL using a shadow last_access timestamp in vault if desired.
-  // Simpler path: rely on vault existence; but keep conservative timeout behavior.
-  // We do not track lastAccess timestamps for ephemeral sessions anymore; require re-login if vault is gone.
-  const meta = sessionStore.get(sessionId);
-  const userId = typeof meta?.userId === 'bigint' ? meta.userId.toString() : meta?.userId;
-  return { authenticated: true, userId, sessionId, hasPassword: meta?.hasPassword };
+  // Enforce TTL for ephemeral sessions using lastAccess timestamp
+  const now = Date.now();
+  const last = session.lastAccess ?? now;
+  if (now - last > AUTH_CONFIG.SESSION_TIMEOUT) {
+    sessionStore.delete(sessionId);
+    clearCachedDerivedKey(sessionId);
+    zeroizeVaultEntryAndDelete(sessionId);
+    return { authenticated: false, error: 'Session expired' };
+  }
+  // Touch and return
+  session.lastAccess = now;
+  const userId = typeof session.userId === 'bigint' ? session.userId.toString() : session.userId;
+  return { authenticated: true, userId, sessionId, hasPassword: session.hasPassword };
 }
 
 // Extract session ID from cookie header
@@ -691,13 +704,17 @@ export function createSession(
     derivedKey = undefined;
   }
   // Persist DB-backed session when userId is a numeric id and DB mode is active
+  // Note: DB helpers (getUserById, createSessionRecord) are synchronous in this build
+  // (SQLite bindings run in-process), so no await is required here.
+  let isDbBackedSession = false;
   if (!HEADLESS && (typeof userId === 'number' || (typeof userId === 'string' && /^\d+$/.test(userId)))) {
     try {
       const normalized = typeof userId === 'string' ? BigInt(userId) : userId;
       // Only persist when the user exists to avoid FK errors in unit tests
       const exists = getUserById(normalized as any);
       if (exists) {
-        createSessionRecord(sessionId, normalized as any, ipAddress);
+        const ok = createSessionRecord(sessionId, normalized as any, ipAddress);
+        if (ok) isDbBackedSession = true;
       }
     } catch (e) {
       console.error('[auth] Failed to persist session (falling back to ephemeral):', e);
@@ -709,21 +726,23 @@ export function createSession(
     userId,
     salt: sessionSalt,
     hasPassword,
-    rehydrationsUsed: 0
+    rehydrationsUsed: 0,
+    lastAccess: now,
+    isDbBacked: isDbBackedSession
   });
   
-  cleanupExpiredSessions();
+  void cleanupExpiredSessions();
   return sessionId;
 }
 
 // Note: Rate limit cleanup is now handled by the persistent rate limiter in rate-limiter.ts
 
 // Cleanup expired sessions periodically
-function cleanupExpiredSessions(): void {
+async function cleanupExpiredSessions(): Promise<void> {
   // Clean DB-backed sessions
   if (!HEADLESS) {
     try {
-      const removed = cleanupExpiredSessionsDB(AUTH_CONFIG.SESSION_TIMEOUT);
+      const removed = await cleanupExpiredSessionsDB(AUTH_CONFIG.SESSION_TIMEOUT);
       for (const id of removed) {
         // Clear ephemeral metadata and vault for removed sessions
         sessionStore.delete(id);
@@ -734,7 +753,22 @@ function cleanupExpiredSessions(): void {
       console.error('[auth] cleanupExpiredSessions DB failed:', e);
     }
   }
-  // Ephemeral-only sessions have no lastAccess tracking; nothing to do here.
+  // Sweep expired ephemeral sessions by lastAccess
+  try {
+    const now = Date.now();
+    for (const [id, meta] of Array.from(sessionStore.entries())) {
+      // Skip TTL sweep for DB-backed sessions; DB handles expiry via last_access
+      if (meta.isDbBacked) continue;
+      const last = meta.lastAccess ?? now;
+      if (now - last > AUTH_CONFIG.SESSION_TIMEOUT) {
+        sessionStore.delete(id);
+        clearCachedDerivedKey(id);
+        zeroizeVaultEntryAndDelete(id);
+      }
+    }
+  } catch (e) {
+    // Non-fatal; continue
+  }
 }
 
 // Set up periodic cleanup to prevent memory leaks from expired entries
@@ -746,7 +780,7 @@ let vaultCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 // Start session cleanup timer
 sessionCleanupTimer = setInterval(() => {
-  cleanupExpiredSessions();
+  void cleanupExpiredSessions();
 }, CLEANUP_INTERVAL);
 
 // Start vault cleanup timer

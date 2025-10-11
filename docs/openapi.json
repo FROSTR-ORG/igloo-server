@@ -1926,6 +1926,42 @@
           }
         }
       }
+    },
+    "/api/admin/whoami": {
+      "get": {
+        "operationId": "getAdminWhoami",
+        "summary": "Check admin authentication status",
+        "description": "Simple endpoint to verify admin privileges and identify the authenticated admin user (if any). Used by the web UI to determine admin access.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Admin status confirmed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminWhoamiResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2777,6 +2813,27 @@
         "required": [
           "apiKeyId"
         ]
+      },
+      "AdminWhoamiResponse": {
+        "type": "object",
+        "properties": {
+          "admin": {
+            "type": "boolean",
+            "const": true,
+            "description": "Always true for successful admin authentication"
+          },
+          "userId": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Authenticated admin user ID (if using session auth), or null if using ADMIN_SECRET directly"
+          }
+        },
+        "required": [
+          "admin"
+        ],
+        "description": "Response confirming admin access and user context"
       }
     },
     "responses": {
