@@ -24,9 +24,9 @@ FROM oven/bun:latest AS production
 
 WORKDIR /app
 
-# Copy package files (and required scripts)
+# Copy package files (and required postinstall script)
 COPY package.json bun.lock ./
-COPY scripts ./scripts
+COPY scripts/patch-zod-compat.mjs ./scripts/patch-zod-compat.mjs
 
 # Install only production dependencies
 RUN bun install --production --frozen-lockfile

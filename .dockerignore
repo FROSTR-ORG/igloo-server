@@ -1,0 +1,8 @@
+# Shrink Docker build context; safe to exclude these
+.git
+.github
+.DS_Store
+llm/**
+tests/**
+scripts/api/**
+
