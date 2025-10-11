@@ -132,6 +132,11 @@ Igloo Server distinguishes between two user types for security:
 - Can save/retrieve encrypted credentials
 - Access to `/api/user/*` endpoints
 - Credentials persist across sessions
+ 
+##### Password Handling Policy
+- Passwords are validated and stored exactly as entered (no trimming). Leading/trailing whitespace counts as part of the password.
+- By default, whitespace characters are not allowed anywhere in passwords (see `VALIDATION.PASSWORD_REGEX` in `src/config/crypto.ts`). You may relax this policy by updating that regex, but ensure validation and storage remain consistent.
+- Rationale: exact matching avoids ambiguity between validation and storage; disallowing whitespace by default reduces accidental copy/paste or invisible characters causing lockouts. If you choose to allow spaces, clearly communicate this to users in your UI.
 
 **Environment Auth Users** (userId: string):
 - Authenticated via Basic Auth or API Key
@@ -184,6 +189,11 @@ Igloo Server distinguishes between two user types for security:
 - Derived keys used for decrypting user credentials remain in memory-only vaults with TTL and bounded reads; users may need to re-enter password after a server restart to access encrypted data, even though their admin privileges remain active.
 - In headless mode, sessions remain in-memory only.
 
+#### Headless Environment Endpoint Policy
+- All `/api/env*` routes require authentication in headless mode, regardless of `AUTH_ENABLED`.
+- Writes (POST/PUT/DELETE) in headless require an API key or Basic Auth. Session auth alone is not sufficient for env modifications.
+- `/api/env/shares` never returns raw credential values; it only returns presence/metadata.
+
 ### Development vs Production
 
 **Development** (local testing):
@@ -216,6 +226,26 @@ RATE_LIMIT_MAX=100       # 100 requests per window per IP
 - **High traffic**: `RATE_LIMIT_MAX=500`
 
 ## 🌐 Network Security
+
+### Client IP Attribution and Proxy Trust
+- The server derives a trusted client IP for rate‑limiting and audit logs.
+- When `TRUST_PROXY=true`, the server trusts standard proxy headers (first `X-Forwarded-For`, then `X-Real-IP`, then `CF-Connecting-IP`).
+- When `TRUST_PROXY` is unset/false, the server ignores these headers and uses the direct connection’s IP from the runtime instead.
+- Set `TRUST_PROXY=true` only when running behind a trusted reverse proxy that correctly forwards client IPs.
+
+### WebSocket Authentication & Origins
+
+- In production, set `ALLOWED_ORIGINS` to explicit origins (comma-separated). Wildcard `*` is rejected for WS upgrades.
+- Do not pass credentials in the URL. Use cookies (browser), headers, or subprotocol hints.
+- Supported subprotocol hints (pick one):
+  - `apikey.<TOKEN>` or `api-key.<TOKEN>` → `X-API-Key: <TOKEN>`
+  - `bearer.<TOKEN>` → `Authorization: Bearer <TOKEN>`
+  - `session.<ID>` → `X-Session-ID: <ID>`
+
+Abuse protection (defaults; tune via env):
+- `WS_MAX_CONNECTIONS_PER_IP` (default 5)
+- `WS_MSG_RATE` (20 messages/sec) and `WS_MSG_BURST` (40)
+- Upgrade attempts via bucket `ws-upgrade` capped by `RATE_LIMIT_WS_UPGRADE_MAX` (default 30 per 15m) and `RATE_LIMIT_WS_UPGRADE_WINDOW`
 
 ## ⏱️ Cryptographic Operation Timeouts
 

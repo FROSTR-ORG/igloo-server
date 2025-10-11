@@ -8,15 +8,18 @@ import {
   getSecureCorsHeaders,
   mergeVaryHeaders,
   parseJsonRequestBody,
-  getCredentialsSavedAt
+  getCredentialsSavedAt,
+  isContentLengthWithin,
+  DEFAULT_MAX_JSON_BODY
 } from './utils.js';
 import { hasCredentials, HEADLESS } from '../const.js';
 import { createNodeWithCredentials } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { validateShare, validateGroup } from '@frostr/igloo-core';
-import { AUTH_CONFIG } from './auth.js';
+import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
-import { getUserCredentials } from '../db/database.js';
+import { getUserCredentials, getUserById } from '../db/database.js';
+import { timingSafeEqual } from 'crypto';
 
 // Helper function to validate relay URLs
 function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
@@ -116,8 +119,88 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   }
 
   const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
+  // Resolve authenticated DB user id (database mode only)
+  const authenticatedNumericUserId = (!HEADLESS && auth?.authenticated && (
+    typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId))
+  )) ? BigInt(auth!.userId as any) : null;
+  const isFirstUser = authenticatedNumericUserId === 1n;
+  const isRoleAdmin = await (async () => {
+    try {
+      if (authenticatedNumericUserId === null) return false;
+      const u = await getUserById(authenticatedNumericUserId);
+      return !!(u && u.role === 'admin');
+    } catch {
+      return false;
+    }
+  })();
 
-  if ((AUTH_CONFIG.ENABLED || !HEADLESS) && isWrite) {
+  // Headless hardening helpers
+  const extractApiKeyFromHeaders = (r: Request): string | null => {
+    const headerKey = r.headers.get('x-api-key');
+    if (headerKey && headerKey.trim().length > 0) return headerKey.trim();
+    const authz = r.headers.get('authorization');
+    if (authz && authz.startsWith('Bearer ')) {
+      const token = authz.substring(7).trim();
+      if (token.length > 0) return token;
+    }
+    return null;
+  };
+
+  const hasValidHeadlessApiKey = (r: Request): boolean => {
+    if (!AUTH_CONFIG.API_KEY) return false;
+    const provided = extractApiKeyFromHeaders(r);
+    if (!provided) return false;
+    const a = Buffer.from(provided);
+    const b = Buffer.from(AUTH_CONFIG.API_KEY);
+    if (a.length !== b.length) return false;
+    try { return timingSafeEqual(a, b); } catch { return false; }
+  };
+
+  const hasValidHeadlessBasic = (r: Request): boolean => {
+    if (!AUTH_CONFIG.BASIC_AUTH_USER || !AUTH_CONFIG.BASIC_AUTH_PASS) return false;
+    const authz = r.headers.get('authorization');
+    if (!authz || !authz.startsWith('Basic ')) return false;
+    try {
+      const decoded = atob(authz.slice(6));
+      const idx = decoded.indexOf(':');
+      const user = idx >= 0 ? decoded.slice(0, idx) : '';
+      const pass = idx >= 0 ? decoded.slice(idx + 1) : '';
+      const uok = timingSafeEqual(Buffer.from(user), Buffer.from(AUTH_CONFIG.BASIC_AUTH_USER));
+      const pok = timingSafeEqual(Buffer.from(pass), Buffer.from(AUTH_CONFIG.BASIC_AUTH_PASS));
+      return uok && pok;
+    } catch {
+      return false;
+    }
+  };
+
+  const hasHeadlessWriteAuthorization = (r: Request): boolean => (
+    hasValidHeadlessApiKey(r) || hasValidHeadlessBasic(r)
+  );
+
+  const isHeadlessReadAuthorized = (r: Request, a?: RequestAuth | null): boolean => {
+    // If global auth is enabled and a session is present, allow; otherwise require API key or Basic.
+    if (AUTH_CONFIG.ENABLED && a?.authenticated) return true;
+    return hasHeadlessWriteAuthorization(r);
+  };
+
+  // Enforce headless auth requirements up-front
+  if (HEADLESS) {
+    if (isWrite) {
+      if (!hasHeadlessWriteAuthorization(req)) {
+        return Response.json(
+          { error: 'Authentication required' },
+          { status: 401, headers }
+        );
+      }
+    } else {
+      if (!isHeadlessReadAuthorized(req, auth)) {
+        return Response.json(
+          { error: 'Authentication required' },
+          { status: 401, headers }
+        );
+      }
+    }
+  } else if (isWrite) {
     if (!auth || typeof auth !== 'object' || !auth.authenticated) {
       return Response.json(
         { error: 'Authentication required for environment modifications' },
@@ -183,6 +266,21 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         }
         
         if (req.method === 'POST') {
+          // Rate limit env writes (sanitize env to avoid NaN)
+          const winSecondsRaw = process.env.RATE_LIMIT_ENV_WRITE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+          const winSecondsParsed = Number.parseInt(winSecondsRaw, 10);
+          const win = Math.max(1000, (Number.isFinite(winSecondsParsed) ? winSecondsParsed : 900) * 1000);
+          const maxRaw = process.env.RATE_LIMIT_ENV_WRITE_MAX ?? '10';
+          const maxParsed = Number.parseInt(maxRaw, 10);
+          const max = Math.max(1, Number.isFinite(maxParsed) ? maxParsed : 10);
+          const rl = await checkRateLimit(req, 'env-write', { clientIp: context.clientIp, windowMs: win, max });
+          if (!rl.allowed) {
+            return Response.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: { ...headers, 'Retry-After': Math.ceil(win / 1000).toString() } });
+          }
+          // Body size guard
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
           if (!HEADLESS) {
             let body;
             try {
@@ -206,8 +304,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
             const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
             const isAdminSecret = await validateAdminSecret(adminSecret);
-            const firstUser = auth && auth.authenticated && ((typeof auth.userId === 'number' && auth.userId === 1) || (typeof auth.userId === 'string' && auth.userId === '1'));
-            if (!isAdminSecret && !firstUser) {
+            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for environment modifications' },
                 { status: 403, headers }
@@ -240,9 +337,10 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
           }
 
-          if (AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
+          // Headless writes must be authorized by API key or Basic (sessions are not sufficient)
+          if (HEADLESS && !hasHeadlessWriteAuthorization(req)) {
             return Response.json(
-              { error: 'Authentication required for environment modifications' },
+              { error: 'Authentication required' },
               { status: 401, headers }
             );
           }
@@ -320,30 +418,54 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const env = await readEnvFile();
             const hasShareCredential = !!env.SHARE_CRED;
             const hasGroupCredential = !!env.GROUP_CRED;
-            const includeSecrets = AUTH_CONFIG.ENABLED ? !!auth?.authenticated : true;
-
-            const shareCredential = includeSecrets && hasShareCredential ? env.SHARE_CRED! : undefined;
-            const groupCredential = includeSecrets && hasGroupCredential ? env.GROUP_CRED! : undefined;
             const isValid = hasShareCredential && hasGroupCredential;
 
-            shares.push({
+            // Strict, opt-in: include raw only in non-production with explicit flag AND session-based auth
+            const debugFlag = (process.env.ENV_SHARES_INCLUDE_RAW || '').toLowerCase() === 'true';
+            const isProd = process.env.NODE_ENV === 'production';
+            const authz = req.headers.get('authorization') || '';
+            const hasBasicAuth = authz.startsWith('Basic ');
+            const hasApiKeyHeader = !!extractApiKeyFromHeaders(req);
+            const hasSessionToken = !!(req.headers.get('x-session-id') || (req.headers.get('cookie') || '').includes('session='));
+            const isSessionAuth = !!(AUTH_CONFIG.ENABLED && auth?.authenticated && hasSessionToken);
+            const allowRaw = debugFlag && !isProd && isSessionAuth && !hasBasicAuth && !hasApiKeyHeader;
+
+            const entry: Record<string, unknown> = {
               hasShareCredential,
               hasGroupCredential,
-              ...(shareCredential ? { shareCredential } : {}),
-              ...(groupCredential ? { groupCredential } : {}),
               isValid,
               savedAt: savedAt || null,
               id: 'env-stored-share',
-              source: 'environment'
-            });
+              source: 'environment',
+            };
+            if (allowRaw) {
+              entry.shareCredential = env.SHARE_CRED || null;
+              entry.groupCredential = env.GROUP_CRED || null;
+            }
+            shares.push(entry);
           }
           return Response.json(shares, { headers });
         }
 
         if (req.method === 'POST') {
-          if (AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
+          // Rate limit env writes
+          const winSecondsRaw2 = process.env.RATE_LIMIT_ENV_WRITE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+          const winSecondsParsed2 = Number.parseInt(winSecondsRaw2, 10);
+          const win = Math.max(1000, (Number.isFinite(winSecondsParsed2) ? winSecondsParsed2 : 900) * 1000);
+          const maxRaw2 = process.env.RATE_LIMIT_ENV_WRITE_MAX ?? '10';
+          const maxParsed2 = Number.parseInt(maxRaw2, 10);
+          const max = Math.max(1, Number.isFinite(maxParsed2) ? maxParsed2 : 10);
+          const rl = await checkRateLimit(req, 'env-write', { clientIp: context.clientIp, windowMs: win, max });
+          if (!rl.allowed) {
+            return Response.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: { ...headers, 'Retry-After': Math.ceil(win / 1000).toString() } });
+          }
+          // Body size guard
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
+          if (HEADLESS && !hasHeadlessWriteAuthorization(req)) {
             return Response.json(
-              { error: 'Authentication required for environment modifications' },
+              { error: 'Authentication required' },
               { status: 401, headers }
             );
           }
@@ -407,26 +529,36 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
       case '/api/env/delete':
         if (req.method === 'POST') {
-          if (HEADLESS && AUTH_CONFIG.ENABLED && (!auth || !auth.authenticated)) {
+          // Rate limit env deletions (sanitize env to avoid NaN)
+          const winSecondsRaw3 = process.env.RATE_LIMIT_ENV_WRITE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+          const winSecondsParsed3 = Number.parseInt(winSecondsRaw3, 10);
+          const win = Math.max(1000, (Number.isFinite(winSecondsParsed3) ? winSecondsParsed3 : 900) * 1000);
+          const maxRaw3 = process.env.RATE_LIMIT_ENV_WRITE_MAX ?? '10';
+          const maxParsed3 = Number.parseInt(maxRaw3, 10);
+          const max = Math.max(1, Number.isFinite(maxParsed3) ? maxParsed3 : 10);
+          const rl = await checkRateLimit(req, 'env-write', { clientIp: context.clientIp, windowMs: win, max });
+          if (!rl.allowed) {
+            return Response.json({ error: 'Rate limit exceeded. Try again later.' }, { status: 429, headers: { ...headers, 'Retry-After': Math.ceil(win / 1000).toString() } });
+          }
+          // Body size guard
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
+          if (HEADLESS && !hasHeadlessWriteAuthorization(req)) {
             return Response.json(
-              { error: 'Authentication required for environment modifications' },
+              { error: 'Headless mode: API key or Basic auth required for environment modifications' },
               { status: 401, headers }
             );
           }
           if (!HEADLESS) {
             const adminSecret = req.headers.get('X-Admin-Secret') ??
               req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-
-            const isAdmin = await validateAdminSecret(adminSecret);
-            if (!isAdmin) {
-              const validUserId = auth && ((typeof auth.userId === 'number' && auth.userId === 1) ||
-                (typeof auth.userId === 'string' && auth.userId === '1'));
-              if (!validUserId) {
-                return Response.json(
-                  { error: 'Admin privileges required for deleting environment variables' },
-                  { status: 403, headers }
-                );
-              }
+            const isAdminSecret = await validateAdminSecret(adminSecret);
+            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
+              return Response.json(
+                { error: 'Admin privileges required for deleting environment variables' },
+                { status: 403, headers }
+              );
             }
           }
 

@@ -3,7 +3,7 @@ import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, getTrustedClientIp, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { RouteContext } from './types.js';
 import { VALIDATION } from '../config/crypto.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
@@ -57,6 +57,9 @@ async function processOnboardingSecretRequest(
   context: RouteContext,
   mode: 'validate' | 'setup'
 ): Promise<Response> {
+  if (mode === 'setup' && !isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+    return Response.json({ error: 'Request too large' }, { status: 413, headers });
+  }
   const rateLimited = await checkPerIpRateLimit(context, req);
   if (rateLimited) {
     await addUniformDelay();
@@ -112,7 +115,20 @@ async function processOnboardingSecretRequest(
 
   const { username, password } = body;
 
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return Response.json(
+      {
+        error: 'invalid_input',
+        message: 'Username and password must be strings'
+      },
+      { status: 400, headers }
+    );
+  }
+
+  const trimmedUsername = username.trim();
+  const trimmedPassword = password.trim();
+
+  if (!trimmedUsername || !trimmedPassword) {
     return Response.json(
       {
         error: 'validation_error',
@@ -122,7 +138,7 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  if (username.length < 3 || username.length > 50) {
+  if (trimmedUsername.length < 3 || trimmedUsername.length > 50) {
     return Response.json(
       {
         error: 'invalid_username',
@@ -132,7 +148,8 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  const passwordError = validatePasswordStrength(password, username);
+  // Validate the exact password string as typed (no trimming) to keep validation consistent with storage
+  const passwordError = validatePasswordStrength(password, trimmedUsername);
   if (passwordError) {
     return Response.json(
       {
@@ -143,7 +160,8 @@ async function processOnboardingSecretRequest(
     );
   }
 
-  const result = await createUser(username, password, { role: 'admin' });
+  // Preserve exact password (including leading/trailing whitespace) for hashing
+  const result = await createUser(trimmedUsername, password, { role: 'admin' });
 
   if (!result.success) {
     if (result.error === 'Username already exists') {
@@ -177,76 +195,39 @@ async function addUniformDelay(): Promise<void> {
  * TRUST_PROXY=true. Without a trusted proxy, we cannot reliably determine
  * the client IP, so we use a hash of headers for rate limiting consistency.
  */
-function getClientIp(req: Request): string {
-  // Check if we should trust proxy headers
-  const trustProxy = process.env.TRUST_PROXY === 'true';
-
-  if (trustProxy) {
-    // Trust proxy headers when explicitly configured
-    // Priority: X-Forwarded-For (standard), X-Real-IP (nginx), fallback
-    const xForwardedFor = req.headers.get('x-forwarded-for');
-    if (xForwardedFor) {
-      // Take the first IP (original client) from comma-separated list
-      return xForwardedFor.split(',')[0]?.trim() || 'unknown';
-    }
-
-    const xRealIp = req.headers.get('x-real-ip');
-    if (xRealIp) {
-      return xRealIp.trim();
-    }
-
-    const cfConnectingIp = req.headers.get('cf-connecting-ip');
-    if (cfConnectingIp) {
-      return cfConnectingIp.trim();
-    }
-  }
-
-  // Stronger fallback: build canonical fingerprint input from multiple headers
-  // and compute a stable, truncated HMAC-SHA256/SHA-256 identifier.
+function getClientIp(req: Request, fallbackFromServer?: string | null): string {
+  // Use shared helper; preserves TRUST_PROXY semantics and server-provided IP
+  const ip = getTrustedClientIp(req, fallbackFromServer);
+  if (ip !== 'unknown') return ip;
+  // Fallback to stable fingerprinting when no IP is available at all
+  // (reuse existing mechanism and cache to avoid memory growth)
+  // Avoid per-request volatile headers (e.g., 'cf-ray') that would churn identities
   const headerKeys = [
     'user-agent', 'accept-language', 'accept-encoding', 'accept', 'dnt',
     'sec-ch-ua', 'sec-ch-ua-platform', 'sec-ch-ua-mobile', 'sec-ch-ua-arch', 'sec-ch-ua-model',
-    'x-forwarded-proto', 'cf-ipcountry', 'cf-ray', 'x-tls-fingerprint', 'x-ja3', 'ja3'
+    'x-forwarded-proto', 'cf-ipcountry'
   ];
-
   const parts: Array<[string, string]> = [];
   for (const key of headerKeys) {
     const val = req.headers.get(key);
     if (val) parts.push([key, val]);
   }
-
-  if (parts.length === 0) {
-    // Nothing to fingerprint with
-    if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
-      console.warn('[onboarding] Fingerprint fallback has no usable headers. Configure a trusted proxy (set TRUST_PROXY=true) to propagate client IPs.');
-    }
-    return 'unknown';
-  }
-
-  // Canonicalize by sorting keys
+  if (parts.length === 0) return 'unknown';
   parts.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
   const canonical = JSON.stringify(parts);
-
-  // Cache to provide stability across slightly varying requests within TTL
   const now = Date.now();
   const cached = clientIdCache.get(canonical);
   if (cached && cached.expiresAt > now) return cached.id;
-
   const encoder = new TextEncoder();
-  const data = encoder.encode(canonical);
   const digest = FINGERPRINT_SECRET
-    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), data)
-    : sha256(data);
+    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), encoder.encode(canonical))
+    : sha256(encoder.encode(canonical));
   const hex = Buffer.from(digest).toString('hex');
-  // Truncate to 32 hex chars (128-bit) for brevity while maintaining collision resistance
   const id = `fp_${hex.slice(0, 32)}`;
-
   clientIdCache.set(canonical, { id, expiresAt: now + CLIENT_ID_TTL_MS });
-
   if (process.env.NODE_ENV === 'production' && LOG_FINGERPRINT_FALLBACK) {
-    console.warn('[onboarding] Using fingerprint fallback for client identification. For stronger attribution, enable a trusted proxy (TRUST_PROXY=true) and ensure X-Forwarded-For / CF headers are passed.');
+    console.warn('[onboarding] Using fingerprint fallback for client identification. Consider enabling TRUST_PROXY for IP propagation.');
   }
-
   return id;
 }
 
@@ -258,7 +239,7 @@ function getClientIp(req: Request): string {
  * @returns true if the request should be rate limited, false otherwise
  */
 async function checkPerIpRateLimit(_context: RouteContext, req: Request): Promise<boolean> {
-  const clientIp = getClientIp(req);
+  const clientIp = getClientIp(req, _context.clientIp ?? null);
   const rateLimiter = getRateLimiter();
 
   const result = await rateLimiter.checkLimit(clientIp, {

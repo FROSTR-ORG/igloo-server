@@ -4,7 +4,7 @@ import path from 'path';
 import { HEADLESS } from '../const.js';
 import { authenticateUser, isDatabaseInitialized, verifyApiKeyToken, markApiKeyUsed, hasActiveApiKeys, createSessionRecord, getSessionRecord, touchSession, deleteSessionRecord, cleanupExpiredSessionsDB, getUserById } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, getTrustedClientIp, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
 import { zeroizeUint8, zeroizeAndDelete as zeroizeUint8MapEntry } from '../util/zeroize.js';
 
@@ -434,31 +434,22 @@ export interface AuthResult {
 }
 
 // Get client IP address from various headers
-function getClientIP(req: Request): string {
-  const xForwardedFor = req.headers.get('x-forwarded-for');
-  const xRealIP = req.headers.get('x-real-ip');
-  const cfConnectingIP = req.headers.get('cf-connecting-ip');
-  
-  if (xForwardedFor) {
-    return xForwardedFor.split(',')[0].trim();
-  }
-  if (xRealIP) return xRealIP;
-  if (cfConnectingIP) return cfConnectingIP;
-  
-  return 'unknown';
+// Trust proxy headers only when TRUST_PROXY=true; otherwise rely on server-provided IP
+function getClientIP(req: Request, fallbackFromServer?: string): string {
+  return getTrustedClientIp(req, fallbackFromServer);
 }
 
 // Rate limiting implementation using persistent SQLite storage
 export async function checkRateLimit(
   req: Request,
   bucket: string = 'auth',
-  opts?: { windowMs?: number; max?: number }
+  opts?: { windowMs?: number; max?: number; clientIp?: string }
 ): Promise<{ allowed: boolean; remaining: number }> {
   if (!AUTH_CONFIG.RATE_LIMIT_ENABLED) {
     return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX };
   }
 
-  const clientIP = getClientIP(req);
+  const clientIP = getClientIP(req, opts?.clientIp);
   const rateLimiter = getRateLimiter();
 
   const result = await rateLimiter.checkLimit(clientIP, {
@@ -868,6 +859,9 @@ export async function handleLogin(req: Request): Promise<Response> {
   
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405, headers: baseHeaders });
+  }
+  if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+    return Response.json({ error: 'Request too large' }, { status: 413, headers: baseHeaders });
   }
 
   try {

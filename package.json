@@ -14,6 +14,7 @@
     "build:conditional": "[ \"$HEADLESS\" = \"true\" ] && echo 'Headless mode: skipping frontend build' || bun run build",
     "dev": "concurrently \"bun run build:css\" \"bun run build:js -- --watch\"",
     "docs:validate": "bunx redocly lint docs/openapi.yaml",
+    "docs:vendor": "bun scripts/fetch-swagger-ui.mjs",
     "docs:bundle": "bunx redocly bundle docs/openapi.yaml --output docs/openapi.json",
     "release": "./scripts/release.sh",
     "release:patch": "./scripts/release.sh patch",

@@ -1,5 +1,5 @@
 import { ADMIN_SECRET, HEADLESS } from '../const.js';
-import { getSecureCorsHeaders, mergeVaryHeaders } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { RouteContext, RequestAuth } from './types.js';
 import { getAllUsers, deleteUserSafely, isDatabaseInitialized, listApiKeys, createApiKey, revokeApiKey, getUserById } from '../db/database.js';
 import { validateAdminSecret } from './onboarding.js';
@@ -124,7 +124,7 @@ export async function handleAdminRoute(
   }
 
   // Check rate limit before admin authentication to prevent brute force attacks
-  const rate = await checkRateLimit(req);
+  const rate = await checkRateLimit(req, 'auth', { clientIp: _context.clientIp });
   if (!rate.allowed) {
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
@@ -216,6 +216,12 @@ export async function handleAdminRoute(
 
       case '/api/admin/users/delete':
         if (req.method === 'POST') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json(
+              { error: 'Request too large' },
+              { status: 413, headers }
+            );
+          }
           let body: DeleteUserRequest;
           try {
             body = await req.json();
@@ -276,6 +282,12 @@ export async function handleAdminRoute(
         }
 
         if (req.method === 'POST') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json(
+              { error: 'Request too large' },
+              { status: 413, headers }
+            );
+          }
           let body: CreateApiKeyRequest;
           try {
             body = await req.json();
@@ -354,6 +366,12 @@ export async function handleAdminRoute(
 
       case '/api/admin/api-keys/revoke':
         if (req.method === 'POST') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json(
+              { error: 'Request too large' },
+              { status: 413, headers }
+            );
+          }
           let body: RevokeApiKeyRequest;
           try {
             body = await req.json();

@@ -73,7 +73,7 @@ export async function handleRequest(
     // Only rate limit validation and setup endpoints, not the status endpoint
     if (url.pathname === '/api/onboarding/validate-admin' || 
         url.pathname === '/api/onboarding/setup') {
-      const rateLimit = await checkRateLimit(req);
+      const rateLimit = await checkRateLimit(req, 'auth', { clientIp: baseContext.clientIp });
       if (!rateLimit.allowed) {
         return Response.json({ 
           error: 'Rate limit exceeded. Try again later.' 

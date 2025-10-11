@@ -98,33 +98,7 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ServerStatus"
-                },
-                "example": {
-                  "serverRunning": true,
-                  "nodeActive": true,
-                  "hasCredentials": true,
-                  "relayCount": 2,
-                  "relays": [
-                    "wss://relay.primal.net",
-                    "wss://relay.damus.io"
-                  ],
-                  "timestamp": "2025-01-20T12:00:00.000Z",
-                  "health": {
-                    "isHealthy": true,
-                    "lastActivity": "2025-01-20T11:59:30.000Z",
-                    "lastHealthCheck": "2025-01-20T12:00:00.000Z",
-                    "consecutiveFailures": 0,
-                    "restartCount": 0,
-                    "timeSinceLastActivity": 30000
-                  }
-                }
-              }
-            }
+            "$ref": "#/components/responses/BadRequest"
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
@@ -154,25 +128,7 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthStatus"
-                },
-                "example": {
-                  "enabled": true,
-                  "methods": [
-                    "api-key",
-                    "bearer",
-                    "basic-auth",
-                    "session"
-                  ],
-                  "rateLimiting": true,
-                  "sessionTimeout": 3600
-                }
-              }
-            }
+            "$ref": "#/components/responses/BadRequest"
           }
         }
       }

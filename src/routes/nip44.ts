@@ -1,5 +1,5 @@
 import type { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { checkRateLimit } from './auth.js';
 import { xOnly, deriveSharedSecret } from './crypto-utils.js';
 import { nip44 } from 'nostr-tools';
@@ -24,6 +24,9 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers });
   if (req.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
+  if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+    return Response.json({ error: 'Request too large' }, { status: 413, headers });
+  }
 
   const authContext = requestAuth ?? context.auth;
   if (!authContext?.authenticated) {
@@ -33,7 +36,7 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
 
   // Basic rate limit for e2e crypto ops
   // Separate bucket for e2e crypto ops
-  const rate = await checkRateLimit(req, 'crypto');
+  const rate = await checkRateLimit(req, 'crypto', { clientIp: context.clientIp });
   if (!rate.allowed) {
     return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,

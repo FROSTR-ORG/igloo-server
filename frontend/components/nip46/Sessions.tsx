@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { Nip46SessionApi, PermissionPolicy } from './types'
 import { Button } from '../ui/button'
 import { Badge } from '../ui/badge'
@@ -99,17 +99,29 @@ export function Sessions({ sessions, loading = false, onRevoke, onUpdatePolicy }
     }
   }
 
+  const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const handleCopyPubkey = async (value: string) => {
     try {
       await navigator.clipboard.writeText(value)
       setCopiedPubkey(value)
-      setTimeout(() => {
+      if (copyTimeoutRef.current) clearTimeout(copyTimeoutRef.current)
+      copyTimeoutRef.current = setTimeout(() => {
         setCopiedPubkey(prev => (prev === value ? null : prev))
+        copyTimeoutRef.current = null
       }, 1600)
     } catch (error) {
       console.error('Failed to copy session pubkey', error)
     }
   }
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current) {
+        clearTimeout(copyTimeoutRef.current)
+        copyTimeoutRef.current = null
+      }
+    }
+  }, [])
 
   if (loading) {
     return <div className="text-sm text-gray-400">Loading sessions...</div>

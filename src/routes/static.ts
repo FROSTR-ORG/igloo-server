@@ -69,6 +69,19 @@ function getCachingHeaders(filePath: string): Record<string, string> {
   return headers;
 }
 
+function getSecurityHeaders(): Record<string, string> {
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!isProduction) return {};
+  return {
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    // Minimal CSP suitable for this app shell; adjust if assets need wider sources
+    'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'"
+  };
+}
+
 export async function handleStaticRoute(_req: Request, url: URL): Promise<Response | null> {
   // Headless mode guard - frontend is disabled
   if (HEADLESS) {
@@ -132,7 +145,8 @@ export async function handleStaticRoute(_req: Request, url: URL): Promise<Respon
     return new Response(index_page, {
       headers: { 
         'Content-Type': 'text/html',
-        'Cache-Control': 'no-cache' // HTML should not be cached for SPA routing
+        'Cache-Control': 'no-cache', // HTML should not be cached for SPA routing
+        ...getSecurityHeaders()
       }
     });
   }

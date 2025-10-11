@@ -190,14 +190,28 @@ export function NIP46({ authHeaders }: NIP46Props) {
     }
   }, [fetchRequests, fetchSessions])
 
+  const copyTimeoutRef = useRef<{ transport?: ReturnType<typeof setTimeout> | null; user?: ReturnType<typeof setTimeout> | null }>({})
+
   const handleCopy = async (which: 'transport' | 'user', text?: string | null) => {
     if (!text) return
     try {
       await navigator.clipboard.writeText(text)
       setCopied(prev => ({ ...prev, [which]: true }))
-      setTimeout(() => setCopied(prev => ({ ...prev, [which]: false })), 1500)
+      if (copyTimeoutRef.current[which]) clearTimeout(copyTimeoutRef.current[which] as any)
+      copyTimeoutRef.current[which] = setTimeout(() => {
+        setCopied(prev => ({ ...prev, [which]: false }))
+        copyTimeoutRef.current[which] = null
+      }, 1500)
     } catch {}
   }
+
+  useEffect(() => {
+    return () => {
+      if (copyTimeoutRef.current.transport) clearTimeout(copyTimeoutRef.current.transport)
+      if (copyTimeoutRef.current.user) clearTimeout(copyTimeoutRef.current.user)
+      copyTimeoutRef.current = {}
+    }
+  }, [])
 
   const handleApproveRequest = useCallback(async (request: Nip46RequestApi, options?: RequestActionOptions) => {
     await performRequestAction([request], 'approve', options)
