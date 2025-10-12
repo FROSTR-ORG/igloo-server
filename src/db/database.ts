@@ -353,8 +353,23 @@ export function cleanupExpiredSessionsDB(ttlMs: number): string[] {
       .all(cutoff) as { id: string }[];
     if (rows.length === 0) return [];
     const ids = rows.map(r => r.id);
-    const del = db.prepare(`DELETE FROM sessions WHERE id IN (${ids.map(() => '?').join(',')})`);
-    del.run(...ids);
+
+    // SQLite historically enforces a max bind parameter count (often 999).
+    // Delete in safe batches within a single transaction for performance and atomicity.
+    const CHUNK = 900; // stay under 999 to be robust across builds
+    db.exec('BEGIN');
+    try {
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...chunk);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw err;
+    }
+
     return ids;
   } catch (e) {
     console.error('[db] cleanupExpiredSessionsDB failed:', e);
