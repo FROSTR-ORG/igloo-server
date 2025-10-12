@@ -160,9 +160,9 @@ Igloo Server distinguishes between two user types for security:
    ```
    Generate a secure key: `openssl rand -hex 32`
 
-   - API key management in headless mode is environment-driven. The HTTP API cannot create or rotate keys in this mode.
-   - `API_KEY` is intentionally omitted from the list of environment variables writable via `/api/env`; attempts to set it at runtime are rejected.
-   - Only a single API key value is supported; rotate by updating the environment and restarting the server.
+- API key management in headless mode is environment-driven. The HTTP API cannot create or rotate keys in this mode.
+- `API_KEY` is intentionally omitted from the list of environment variables writable via `/api/env`; attempts to set it at runtime are rejected.
+- Only a single API key value is supported; rotate by updating the environment and restarting the server.
    
    **Option B: Username/Password (Recommended for web UI)**
    ```bash

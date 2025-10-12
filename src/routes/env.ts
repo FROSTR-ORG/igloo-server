@@ -78,6 +78,9 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
 
   const peerPoliciesRaw = typeof env.PEER_POLICIES === 'string' ? env.PEER_POLICIES : undefined;
 
+  // Create a new Bifrost node instance using the provided credentials and relay config.
+  // NOTE: Callers of this helper should execute it under executeUnderNodeLock() to
+  // serialize node transitions and avoid races (see usages in this file below).
   const node = await createNodeWithCredentials(
     env.GROUP_CRED,
     env.SHARE_CRED,
@@ -90,6 +93,11 @@ async function createAndConnectServerNode(env: any, context: PrivilegedRouteCont
     throw new Error('Failed to create node with provided credentials');
   }
 
+  // Atomically swap the node reference. updateNode() is responsible for:
+  // - Cleaning up any existing node (closing connections, timers, etc.)
+  // - Resetting health monitoring state
+  // - Wiring event listeners for the new node
+  // This ensures no resource leaks when rotating credentials.
   context.updateNode(node, {
     credentials: {
       group: env.GROUP_CRED,
@@ -118,12 +126,14 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     return new Response(null, { status: 200, headers });
   }
 
+  // Preflight classification: treat mutating verbs as "write". In this API, actual
+  // mutating handlers are implemented as POST endpoints (e.g., /api/env, /api/env/delete),
+  // but we keep the broader classification for clarity.
   const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
   // Resolve authenticated DB user id (database mode only)
   const authenticatedNumericUserId = (!HEADLESS && auth?.authenticated && (
     typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId))
   )) ? BigInt(auth!.userId as any) : null;
-  const isFirstUser = authenticatedNumericUserId === 1n;
   const isRoleAdmin = await (async () => {
     try {
       if (authenticatedNumericUserId === null) return false;
@@ -201,6 +211,9 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
       }
     }
   } else if (isWrite) {
+    // DB mode preflight: require an authenticated session up front. Route branches
+    // (POST bodies) perform the stricter privilege checks (admin-secret OR role-admin)
+    // before any mutation is applied.
     if (!auth || typeof auth !== 'object' || !auth.authenticated) {
       return Response.json(
         { error: 'Authentication required for environment modifications' },
@@ -302,9 +315,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               }
             }
 
+            // DB mode privilege gate for env writes (no legacy fallback):
+            // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
+            // - allow when the authenticated DB user has role=admin.
+            // validateAdminSecret() returns false when the header is missing; there is no bypass.
             const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
             const isAdminSecret = await validateAdminSecret(adminSecret);
-            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
+            if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for environment modifications' },
                 { status: 403, headers }
@@ -365,16 +382,22 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             }
           }
 
-          const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
-          const updatingRelays = validKeys.includes('RELAYS');
-
           for (const key of validKeys) {
             if (body[key] !== undefined) {
               env[key] = body[key];
             }
           }
+          // Detect impactful changes; stamp timestamp when credentials change
+          const updatingCredentials = validKeys.some(key => ['GROUP_CRED', 'SHARE_CRED'].includes(key));
+          const updatingRelays = validKeys.includes('RELAYS');
+          if (updatingCredentials) {
+            // Set the timestamp explicitly here to avoid relying on downstream helpers
+            // for correctness, then perform a single write.
+            (env as any).CREDENTIALS_SAVED_AT = new Date().toISOString();
+          }
+          const writeOk = await writeEnvFile(env);
 
-          if (await writeEnvFile(env)) {
+          if (writeOk) {
             try {
               if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
                 process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
@@ -382,10 +405,26 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
                 process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
               }
+              if (updatingRelays) {
+                const relaysVal = (env as any).RELAYS;
+                if (Array.isArray(relaysVal)) {
+                  process.env.RELAYS = relaysVal.join(',');
+                } else if (typeof relaysVal === 'string') {
+                  process.env.RELAYS = relaysVal;
+                }
+              }
             } catch {}
 
             if (updatingCredentials || updatingRelays) {
               try {
+                // Make restart intent explicit for observability and reviews
+                context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
+                  updatingCredentials,
+                  updatingRelays
+                });
+                // Serialize node restart under the global node lock. createAndConnectServerNode()
+                // calls context.updateNode(newNode), which performs prior-node cleanup and
+                // listener re-wiring atomically to avoid resource leaks or races.
                 await executeUnderNodeLock(async () => {
                   await createAndConnectServerNode(env, context);
                 }, context);
@@ -407,6 +446,11 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         break;
 
       case '/api/env/shares':
+        // Intentionally headless-only: this endpoint reports environment-backed
+        // credentials. In database mode, the UI retrieves per-user credential
+        // presence/metadata via GET /api/env instead. If we ever want to expose
+        // shares metadata in DB mode, guard it behind an explicit feature flag
+        // (e.g., ENV_SHARES_ENABLED=true) rather than removing this 404.
         if (!HEADLESS) {
           return Response.json({ error: 'Not found' }, { status: 404, headers });
         }
@@ -503,6 +547,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
           if (await writeEnvFileWithTimestamp(env)) {
             try {
+              // Serialize node restart under the global node lock; updateNode inside
+              // createAndConnectServerNode() handles teardown of any existing node.
               await executeUnderNodeLock(async () => {
                 await createAndConnectServerNode(env, context);
               }, context);
@@ -554,7 +600,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const adminSecret = req.headers.get('X-Admin-Secret') ??
               req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
             const isAdminSecret = await validateAdminSecret(adminSecret);
-            if (!isAdminSecret && !isFirstUser && !isRoleAdmin) {
+            if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for deleting environment variables' },
                 { status: 403, headers }

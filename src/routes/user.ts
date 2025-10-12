@@ -340,6 +340,14 @@ export async function handleUserRoute(
           }
           if (credentials && credentials.group_cred && credentials.share_cred) {
             if (credentialsBeingUpdated) {
+              // Fire-and-forget self-echo: this is a non-blocking health signal to
+              // quickly surface relay/publish issues in logs without failing the
+              // credential update flow. sendSelfEcho() internally applies a bounded
+              // timeout and returns false on timeouts or benign relay rejections.
+              // We intentionally do not abort node startup on echo failure; the
+              // watchdog/monitoring will handle recovery and connectivity checks.
+              // If a deployment wants to gate on echo success, we could add a feature
+              // flag to await and enforce success here, but the default is resilience.
               sendSelfEcho(credentials.group_cred, credentials.share_cred, {
                 relays: credentials.relays,
                 relaysEnv: process.env.RELAYS,

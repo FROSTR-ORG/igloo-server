@@ -2101,7 +2101,6 @@
               "type": "string",
               "enum": [
                 "api-key",
-                "bearer",
                 "basic-auth",
                 "session"
               ]
@@ -2863,7 +2862,6 @@
               "error": "Authentication required",
               "authMethods": [
                 "api-key",
-                "bearer",
                 "basic-auth",
                 "session"
               ]

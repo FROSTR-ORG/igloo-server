@@ -268,7 +268,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
               className="bg-blue-600 hover:bg-blue-700 text-blue-100"
               disabled={loading}
             >
-              {loading && <Spinner size="sm" />} Fetch Keys
+              {loading && <Spinner size="sm" inline />} Fetch Keys
             </Button>
           </div>
           <p className="text-xs text-gray-400">
@@ -356,7 +356,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
             onClick={handleIssueKey}
             disabled={issuing || (!adminSecret.trim() && !isAdminUser)}
           >
-            {issuing ? <Spinner size="sm" /> : <KeyRound className="h-4 w-4" />} Issue key
+            {issuing ? <Spinner size="sm" inline /> : <KeyRound className="h-4 w-4" />} Issue key
           </Button>
         </div>
       </div>
@@ -495,7 +495,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
             </div>
             {revokePending && (
               <div className="flex items-center gap-2 text-xs text-blue-300">
-                <Spinner size="sm" /> Revoking…
+                <Spinner size="sm" inline /> Revoking…
               </div>
             )}
           </div>

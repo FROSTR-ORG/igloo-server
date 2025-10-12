@@ -20,6 +20,12 @@ export function xOnly(pubkey: string): string | null {
   return null;
 }
 
+interface EcdhResult {
+  ok: boolean;
+  data?: string | Buffer | Uint8Array;
+  error?: string;
+}
+
 /**
  * Derives a shared secret using ECDH with the Bifrost node.
  * Used for NIP-04 and NIP-44 encryption/decryption operations.
@@ -48,24 +54,35 @@ export async function deriveSharedSecret(
     throw new Error('Invalid timeout: expected positive integer milliseconds');
   }
 
-  const result: any = await withTimeout(node.req.ecdh(normalizedPeer), timeoutMs, 'ECDH_TIMEOUT');
+  const result: EcdhResult = await withTimeout(node.req.ecdh(normalizedPeer), timeoutMs, 'ECDH_TIMEOUT');
   if (!result || result.ok !== true) {
     throw new Error(result?.error || 'ecdh failed');
   }
 
   // Normalize ECDH result to 32-byte lowercase hex (minimal, robust)
   let secretHex: string | null = null;
-  const data: any = result.data;
+  const data: EcdhResult['data'] = result.data;
 
   // 1) Strings: allow 64-hex, compressed 66-hex (02/03+X), uncompressed 130-hex (04+X+Y), or base64/url encoding of 32 bytes
   if (typeof data === 'string') {
     const s0 = data.replace(/\s+/g, '').trim();
     const s = s0.startsWith('0x') ? s0.slice(2) : s0;
     const hex = s.toLowerCase();
-    if (/^[0-9a-f]{64}$/.test(hex)) secretHex = hex;
-    else if (/^[0-9a-f]{66}$/.test(hex) && (hex.startsWith('02') || hex.startsWith('03'))) secretHex = hex.slice(2);
-    else if (/^[0-9a-f]{130}$/.test(hex) && hex.startsWith('04')) secretHex = hex.slice(2, 66);
-    else {
+    if (/^[0-9a-f]{64}$/.test(hex)) {
+      secretHex = hex;
+    } else if (/^[0-9a-f]{66}$/.test(hex) && (hex.startsWith('02') || hex.startsWith('03'))) {
+      const sliced = hex.slice(2);
+      if (!/^[0-9a-f]{64}$/.test(sliced)) {
+        throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+      }
+      secretHex = sliced;
+    } else if (/^[0-9a-f]{130}$/.test(hex) && hex.startsWith('04')) {
+      const sliced = hex.slice(2, 66);
+      if (!/^[0-9a-f]{64}$/.test(sliced)) {
+        throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+      }
+      secretHex = sliced;
+    } else {
       const tryDecode = (input: string): string | null => {
         try {
           const buf = Buffer.from(input, 'base64');
@@ -87,13 +104,31 @@ export async function deriveSharedSecret(
   if (!secretHex && (data instanceof Uint8Array || (typeof Buffer !== 'undefined' && Buffer.isBuffer?.(data)))) {
     const hex = binaryToHex(data as Uint8Array | Buffer);
     if (hex) {
-      if (hex.length === 64) secretHex = hex;
-      else if (hex.length === 66 && (hex.startsWith('02') || hex.startsWith('03'))) secretHex = hex.slice(2);
-      else if (hex.length === 130 && hex.startsWith('04')) secretHex = hex.slice(2, 66);
+      if (hex.length === 64) {
+        if (!/^[0-9a-f]{64}$/.test(hex)) {
+          throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+        }
+        secretHex = hex;
+      } else if (hex.length === 66 && (hex.startsWith('02') || hex.startsWith('03'))) {
+        const sliced = hex.slice(2);
+        if (!/^[0-9a-f]{64}$/.test(sliced)) {
+          throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+        }
+        secretHex = sliced;
+      } else if (hex.length === 130 && hex.startsWith('04')) {
+        const sliced = hex.slice(2, 66);
+        if (!/^[0-9a-f]{64}$/.test(sliced)) {
+          throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+        }
+        secretHex = sliced;
+      }
     }
   }
 
   if (!secretHex) {
+    throw new Error('Invalid ECDH secret: expected 32-byte hex string');
+  }
+  if (!/^[0-9a-f]{64}$/.test(secretHex)) {
     throw new Error('Invalid ECDH secret: expected 32-byte hex string');
   }
 

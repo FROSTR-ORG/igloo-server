@@ -391,8 +391,18 @@ const App: React.FC = () => {
   const checkAdmin = async (headers?: Record<string, string>) => {
     try {
       const res = await fetch('/api/admin/whoami', { headers: headers || getAuthHeaders() });
-      const ok = res.ok;
-      setAuthState(prev => ({ ...prev, isAdmin: ok }));
+      if (!res.ok) {
+        setAuthState(prev => ({ ...prev, isAdmin: false }));
+        return;
+      }
+      let admin = false;
+      try {
+        const data = await res.json();
+        admin = data?.admin === true;
+      } catch {
+        admin = false;
+      }
+      setAuthState(prev => ({ ...prev, isAdmin: admin }));
     } catch {
       setAuthState(prev => ({ ...prev, isAdmin: false }));
     }

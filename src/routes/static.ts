@@ -1,4 +1,4 @@
-import { getContentType } from './utils.js';
+import { getContentType, getValidRelays } from './utils.js';
 import { resolve, relative } from 'path';
 import { HEADLESS } from '../const.js';
 
@@ -72,13 +72,36 @@ function getCachingHeaders(filePath: string): Record<string, string> {
 function getSecurityHeaders(): Record<string, string> {
   const isProduction = process.env.NODE_ENV === 'production';
   if (!isProduction) return {};
+
+  const relays = getValidRelays(process.env.RELAYS || '');
+
+  // Normalize, deduplicate, and filter to only wss:// schemes
+  const seen = new Set<string>();
+  const wssUrls: string[] = [];
+  for (const relay of relays) {
+    try {
+      const url = new URL(relay);
+      if (url.protocol === 'wss:') {
+        const href = url.href;
+        if (!seen.has(href)) {
+          seen.add(href);
+          wssUrls.push(href);
+        }
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  const connectSrc = ["'self'", ...wssUrls].join(' ');
+  const csp = `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${connectSrc};`;
+
   return {
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'no-referrer',
-    // Minimal CSP suitable for this app shell; allow secure WebSocket connections to this host and default Nostr relays (primal.net, damus.io)
-    'Content-Security-Policy': "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' wss://relay.primal.net wss://relay.damus.io;"
+    'Content-Security-Policy': csp
   };
 }
 

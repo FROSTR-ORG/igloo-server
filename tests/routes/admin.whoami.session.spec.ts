@@ -23,7 +23,7 @@ describe('admin whoami with DB-backed session', () => {
     if (!database.isDatabaseInitialized()) {
       database.default.exec("INSERT INTO users (username, password_hash, salt) VALUES ('admin','x','ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff')")
       try { database.default.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('admin','user'))") } catch {}
-      try { database.default.exec("UPDATE users SET role='admin' WHERE username='admin' OR id=1") } catch {}
+      try { database.default.exec("UPDATE users SET role='admin' WHERE username='admin'") } catch {}
     }
 
     const sessionId = auth.createSession(1, '203.0.113.7')

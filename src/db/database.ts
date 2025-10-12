@@ -77,6 +77,33 @@ const createUserTable = () => {
 // Initialize database tables
 createUserTable();
 
+// Ensure role column exists for installs that predate the migration
+const ensureRoleColumn = () => {
+  try {
+    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
+    const hasRole = columns.some(c => c.name === 'role');
+    if (!hasRole) {
+      db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('admin','user'))");
+    }
+
+    // Backfill: preserve admin access on legacy databases
+    // 1) If id=1 has missing/invalid role, promote to admin
+    db.exec(
+      "UPDATE users SET role='admin' " +
+      "WHERE id=1 AND (role IS NULL OR role='' OR role NOT IN ('admin','user'))"
+    );
+    // 2) If there is exactly one user and it's currently 'user', promote to admin
+    db.exec(
+      "UPDATE users SET role='admin' " +
+      "WHERE id=1 AND role='user' AND (SELECT COUNT(*) FROM users)=1"
+    );
+  } catch (error) {
+    console.error('[db] Failed to ensure role column exists:', error);
+  }
+};
+
+ensureRoleColumn();
+
 // Ensure legacy databases add the peer_policies column without requiring manual migration
 const ensurePeerPoliciesColumn = () => {
   try {
@@ -92,27 +119,7 @@ const ensurePeerPoliciesColumn = () => {
 
 ensurePeerPoliciesColumn();
 
-function userHasRoleColumn(): boolean {
-  try {
-    db.prepare('SELECT role FROM users LIMIT 1').get();
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function ensureFirstUserIsAdmin(): void {
-  if (!userHasRoleColumn()) return;
-  try {
-    db.exec(`UPDATE users SET role = 'admin' WHERE id = 1 AND (role IS NULL OR role = '' OR role NOT IN ('admin','user'))`);
-    // Also handle legacy databases where the column defaulted to 'user'
-    db.exec(`UPDATE users SET role = 'admin' WHERE id = 1 AND role = 'user' AND (SELECT COUNT(*) FROM users) = 1`);
-  } catch (error) {
-    console.error('[db] Failed to ensure first user is admin:', error);
-  }
-}
-
-ensureFirstUserIsAdmin();
+// Legacy bootstrap helpers removed: role column is required going forward
 
 // Ensure sessions table exists via migrations (preferred), but also provide
 // defensive creation here for older installs that haven't run migrations yet.
@@ -394,22 +401,14 @@ export const createUser = async (
     // Hash password using Bun's built-in password API with configured Argon2id parameters
     const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
     const isFirstUser = !isDatabaseInitialized();
-    const hasRoleColumn = userHasRoleColumn();
-    const desiredRole: 'admin' | 'user' = hasRoleColumn
-      ? (options?.role ?? (isFirstUser ? 'admin' : 'user'))
-      : 'user';
+    const desiredRole: 'admin' | 'user' = options?.role ?? (isFirstUser ? 'admin' : 'user');
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication
     // - salt: Separate salt for PBKDF2 encryption key derivation (stored plaintext by design)
-    const stmt = hasRoleColumn
-      ? db.query(`
+    const stmt = db.query(`
         INSERT INTO users (username, password_hash, salt, role)
         VALUES (?, ?, ?, ?)
-      `)
-      : db.query(`
-        INSERT INTO users (username, password_hash, salt)
-        VALUES (?, ?, ?)
       `);
     
     // Generate encryption salt for PBKDF2 key derivation
@@ -417,11 +416,7 @@ export const createUser = async (
     // Using different salts for authentication vs encryption is a security best practice.
     // This salt must be stored in plaintext to enable credential decryption.
     const salt = randomBytes(SALT_CONFIG.LENGTH).toString('hex');
-    if (hasRoleColumn) {
-      stmt.run(username, passwordHash, salt, desiredRole);
-    } else {
-      stmt.run(username, passwordHash, salt);
-    }
+    stmt.run(username, passwordHash, salt, desiredRole);
     
     // Get the last inserted ID (returns number or bigint based on size)
     const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
@@ -430,7 +425,7 @@ export const createUser = async (
       console.warn(`[db] Warning: New user ID ${lastId.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
     }
 
-    if (hasRoleColumn && desiredRole === 'admin') {
+    if (desiredRole === 'admin') {
       try {
         db.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', lastId.id);
       } catch (error) {
