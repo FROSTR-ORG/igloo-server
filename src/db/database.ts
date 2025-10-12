@@ -404,13 +404,7 @@ export const createUser = async (
       console.warn(`[db] Warning: New user ID ${lastId.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
     }
 
-    if (desiredRole === 'admin') {
-      try {
-        db.prepare('UPDATE users SET role = ? WHERE id = ?').run('admin', lastId.id);
-      } catch (error) {
-        console.error('[db] Failed to enforce admin role for new user:', error);
-      }
-    }
+    // Role is already set via the INSERT above; no redundant UPDATE needed
 
     return {
       success: true,
@@ -962,24 +956,18 @@ export const verifyApiKeyToken = (token: string | null | undefined): ApiKeyVerif
 
   const EXPECTED_LENGTH = 32;
 
-  const normalizedStoredHash = Buffer.alloc(EXPECTED_LENGTH);
-
-  storedHash.copy(normalizedStoredHash, 0, 0, Math.min(storedHash.length, EXPECTED_LENGTH));
+  // Fail fast on malformed/corrupted stored hash
+  if (storedHash.length !== EXPECTED_LENGTH) {
+    return { success: false, reason: 'mismatch' };
+  }
 
   try {
-
-    if (!timingSafeEqual(normalizedStoredHash, providedHash)) {
-
+    if (!timingSafeEqual(storedHash, providedHash)) {
       return { success: false, reason: 'mismatch' };
-
     }
-
   } catch (error) {
-
     console.error('Error performing timing-safe comparison for API key:', error);
-
     return { success: false, reason: 'mismatch' };
-
   }
 
   if (!isSafeId(row.id)) {
