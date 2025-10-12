@@ -65,44 +65,23 @@ const createUserTable = () => {
       relays TEXT,
       peer_policies TEXT,
       group_name TEXT,
+      -- Role-based access control built into the initial schema to avoid migration conflicts
+      role TEXT DEFAULT 'user' CHECK (role IN ('admin','user')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
-  // Create index on username for faster lookups
+  // Indexes for faster lookups
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
 };
 
 // Initialize database tables
 createUserTable();
 
-// Ensure role column exists for installs that predate the migration
-const ensureRoleColumn = () => {
-  try {
-    const columns = db.prepare('PRAGMA table_info(users)').all() as { name: string }[];
-    const hasRole = columns.some(c => c.name === 'role');
-    if (!hasRole) {
-      db.exec("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user' CHECK (role IN ('admin','user'))");
-    }
-
-    // Backfill: preserve admin access on legacy databases
-    // 1) If id=1 has missing/invalid role, promote to admin
-    db.exec(
-      "UPDATE users SET role='admin' " +
-      "WHERE id=1 AND (role IS NULL OR role='' OR role NOT IN ('admin','user'))"
-    );
-    // 2) If there is exactly one user and it's currently 'user', promote to admin
-    db.exec(
-      "UPDATE users SET role='admin' " +
-      "WHERE id=1 AND role='user' AND (SELECT COUNT(*) FROM users)=1"
-    );
-  } catch (error) {
-    console.error('[db] Failed to ensure role column exists:', error);
-  }
-};
-
-ensureRoleColumn();
+// Role column now exists in the base schema (fresh installs).
+// Legacy databases will be handled by dedicated migrations; no runtime ALTERs here.
 
 // Ensure legacy databases add the peer_policies column without requiring manual migration
 const ensurePeerPoliciesColumn = () => {

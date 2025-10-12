@@ -459,6 +459,15 @@ docker run -p 8002:8002 \
 docker compose up -d
 ```
 
+> Tip: Persist the database with a volume in Docker Compose
+>
+> ```yaml
+> services:
+>   igloo-server:
+>     volumes:
+>       - ./data:/app/data:rw
+> ```
+
 ## API Reference
 
 The server provides RESTful APIs for programmatic control.
@@ -809,21 +818,50 @@ sudo nano /etc/nginx/sites-available/igloo-server
 ```
 
 ```nginx
+# Put this map in http { } context (e.g., /etc/nginx/nginx.conf)
+map $http_upgrade $connection_upgrade {
+  default upgrade;
+  ''      close;
+}
+
 server {
-    listen 80;
-    server_name yourdomain.com;
-    
-    location / {
-        proxy_pass http://localhost:8002;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_cache_bypass $http_upgrade;
-    }
+  listen 443 ssl;  # add http2 if desired: "ssl http2"
+  server_name yourdomain.com www.yourdomain.com;
+
+  ssl_certificate /etc/letsencrypt/live/yourdomain.com/fullchain.pem;
+  ssl_certificate_key /etc/letsencrypt/live/yourdomain.com/privkey.pem;
+  include /etc/letsencrypt/options-ssl-nginx.conf;
+  ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+  location / {
+    proxy_pass http://127.0.0.1:8002;
+    proxy_http_version 1.1;
+
+    # WebSocket upgrade for /api/events and relay
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection $connection_upgrade;
+
+    # Preserve host and client info
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    proxy_set_header X-Forwarded-Port $server_port;
+
+    # Long-lived WS connections
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_buffering off;
+
+    proxy_cache_bypass $http_upgrade;
+  }
+}
+
+server {
+  listen 80;
+  server_name yourdomain.com www.yourdomain.com;
+  return 301 https://$host$request_uri;
 }
 ```
 
@@ -834,8 +872,18 @@ sudo systemctl restart nginx
 
 # Add SSL with Let's Encrypt (optional)
 sudo apt install certbot python3-certbot-nginx
-sudo certbot --nginx -d yourdomain.com
+sudo certbot --nginx -d yourdomain.com -d www.yourdomain.com
 ```
+
+#### Production Environment Checklist
+
+- `NODE_ENV=production`
+- `ADMIN_SECRET` is a strong random value (required on first run)
+- `ALLOWED_ORIGINS` lists your exact UI origins (e.g., `https://yourdomain.com,https://www.yourdomain.com`)
+- `TRUST_PROXY=true` when running behind nginx or another reverse proxy
+- WebSocket upgrade headers are forwarded (see nginx config above)
+- Database is persisted (Docker volume or host path mounted to `/app/data`)
+- Only expose ports 80/443 publicly; keep 8002 internal when using a proxy
 
 #### 6. Monitor and Maintain
 ```bash
@@ -1092,6 +1140,30 @@ If you need to switch back to headless mode:
   - Production mode: Files cached in memory and browser for performance
 - **Clear browser cache only if running in production mode** (Ctrl+F5 / Cmd+Shift+R)
 - Restart the server after rebuilding if running in production mode
+
+**SQLiteError: duplicate column name: role (fresh install)**:
+- You are likely running a pre-October 2025 image where a migration attempted to add `users.role` that startup code already created, aborting later migrations.
+- Fix: update to the latest build (role is now part of the base schema; the conflicting migration was removed). Rebuild your image and restart.
+- If you still see the error, ensure no stale container/image is used. As a last resort, mark the migration as applied and restart:
+  ```bash
+  docker exec -it igloo-server sh -lc 'cat >/app/fix-migrations.js <<"JS"
+  import { Database } from "bun:sqlite";
+  const db = new Database("/app/data/igloo.db");
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    INSERT OR IGNORE INTO schema_migrations (name)
+      VALUES ("20250916_0002_add_user_role_system.sql");
+  `);
+  console.log("ok");
+  JS
+  bun /app/fix-migrations.js'
+  docker restart igloo-server
+  ```
 
 ### Getting Help
 
