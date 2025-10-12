@@ -1220,6 +1220,27 @@ API_KEY=dev-local-key   # use a throwaway value locally
 
 See [SECURITY.md](SECURITY.md) for complete security configuration guide.
 
+### CSP and External Assets
+
+The production UI sets a strict Content Security Policy (CSP) in the server (see `src/routes/static.ts`). Defaults are designed to allow only what the app needs by default and block everything else.
+
+- Effective policy (production):
+  - `default-src 'self'`
+  - `script-src 'self'`  – blocks third‑party and inline scripts (browser extensions may still log warnings for their own injections)
+  - `style-src 'self' 'unsafe-inline' https://fonts.googleapis.com`  – allow Google Fonts CSS
+  - `font-src 'self' https://fonts.gstatic.com data:`  – allow Google Fonts font files and data URIs
+  - `img-src 'self' data: https:`  – allow HTTPS images so NIP‑46 profile icons and Gravatar fallbacks can render
+  - `connect-src 'self' wss://…`  – your WSS relays are appended based on `RELAYS`
+
+- Why allow these:
+  - Google Fonts: the UI imports the Share Tech Mono font.
+  - HTTPS images: apps often provide remote icons/avatars; restricting to `https:` avoids mixed‑content HTTP and keeps S3/CDNs working.
+
+- Hardening/alternatives:
+  - Self‑host fonts: vendor the font files under `static/`, update CSS to load locally, then remove `https://fonts.googleapis.com` and `https://fonts.gstatic.com` from CSP.
+  - Restrict image sources: replace `img-src 'self' data: https:` with an explicit allow‑list (e.g., `img-src 'self' data: https://www.gravatar.com https://app.example.com`), or proxy icons via your server so you can keep `img-src 'self' data:`.
+  - Inline scripts: we keep `script-src 'self'`. Extension console warnings are benign; the app itself does not rely on inline scripts.
+
 ## Security Notes
 
 ### Secret Management Best Practices

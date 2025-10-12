@@ -94,7 +94,18 @@ function getSecurityHeaders(): Record<string, string> {
   }
 
   const connectSrc = ["'self'", ...wssUrls].join(' ');
-  const csp = `default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src ${connectSrc};`;
+  // Allow safe external assets required by the UI:
+  // - Google Fonts CSS + font files
+  // - Remote icons/avatars (HTTPS) for NIP-46 connections and gravatar fallback
+  // Keep scripts locked to self only.
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: https:",
+    `connect-src ${connectSrc}`
+  ].join('; ') + ';';
 
   return {
     'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
