@@ -14,6 +14,7 @@ RUN bun install --frozen-lockfile
 COPY src ./src
 COPY frontend ./frontend
 COPY static ./static
+COPY docs ./docs
 COPY tsconfig.json ./
 
 # Build the frontend
@@ -34,6 +35,7 @@ RUN bun install --production --frozen-lockfile
 # Copy built application from build stage
 COPY --from=build /app/src ./src
 COPY --from=build /app/static ./static
+COPY --from=build /app/docs ./docs
 COPY --from=build /app/tsconfig.json ./
 
 EXPOSE 8002
