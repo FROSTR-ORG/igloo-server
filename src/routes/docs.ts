@@ -177,7 +177,8 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
     case '/api/docs':
     case '/api/docs/': {
       // Swagger UI interface
-      const specUrl = `${url.origin}/api/docs/openapi.json`;
+      // Use a relative URL to avoid mixed-content issues behind TLS-terminating proxies
+      const specUrl = `/api/docs/openapi.json`;
       const secHeaders: Record<string, string> = {};
       if (process.env.NODE_ENV === 'production') {
         Object.assign(secHeaders, {
