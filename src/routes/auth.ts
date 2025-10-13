@@ -2,9 +2,9 @@ import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
-import { authenticateUser, isDatabaseInitialized } from '../db/database.js';
+import { authenticateUser, isDatabaseInitialized, verifyApiKeyToken, markApiKeyUsed, hasActiveApiKeys, createSessionRecord, getSessionRecord, touchSession, deleteSessionRecord, cleanupExpiredSessionsDB, getUserById } from '../db/database.js';
 import { PBKDF2_CONFIG } from '../config/crypto.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, getTrustedClientIp, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { getRateLimiter } from '../utils/rate-limiter.js';
 import { zeroizeUint8, zeroizeAndDelete as zeroizeUint8MapEntry } from '../util/zeroize.js';
 
@@ -230,7 +230,7 @@ export const AUTH_CONFIG = {
   ENABLED: process.env.AUTH_ENABLED !== 'false',
   
   // Authentication methods
-  API_KEY: process.env.API_KEY,
+  API_KEY: HEADLESS ? process.env.API_KEY : undefined,
   BASIC_AUTH_USER: process.env.BASIC_AUTH_USER,
   BASIC_AUTH_PASS: process.env.BASIC_AUTH_PASS,
   
@@ -282,17 +282,17 @@ function deriveKeyFromPassword(password: string, salt: Uint8Array | string): Uin
   return new Uint8Array(key);
 }
 
-// In-memory session store (consider Redis for production clustering)
-// Note: Rate limiting now uses persistent SQLite storage via rate-limiter.ts
+// Ephemeral session metadata store for non-DB sessions and derived-key features.
+// DB-backed sessions persist minimal fields in SQLite; this map only tracks
+// per-process extras (e.g., rehydration counters, hasPassword flag) and
+// supports headless/API-key/basic-auth sessions.
 const sessionStore = new Map<string, {
-  userId: string | number | bigint; // Support string (env auth), number, and bigint (database user id)
-  createdAt: number;
-  lastAccess: number;
-  ipAddress: string;
-  salt?: string; // Store salt as hex string for non-database users (env auth)
-  hasPassword?: boolean; // Flag indicating if password-based derived key is available in vault
-  rehydrationsUsed: number; // Count of cache-driven rehydrations performed for this session
-  // Note: for database users, salt comes from the database
+  userId?: string | number | bigint;
+  hasPassword?: boolean;
+  salt?: string; // for non-database users only
+  rehydrationsUsed: number;
+  lastAccess?: number; // epoch ms for TTL on ephemeral sessions
+  isDbBacked?: boolean; // true when a persisted DB session exists for this id
 }>();
 
 // Cache of session-scoped derived keys to support rehydration after vault expiry
@@ -302,7 +302,14 @@ const sessionDerivedKeyCache = new Map<string, Uint8Array>();
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
 const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
 const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
-const AUTH_DERIVED_KEY_MAX_REHYDRATIONS = Math.max(0, Math.min(100, parseInt(process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS || '3')));
+
+function getAuthDerivedKeyMaxRehydrations(): number {
+  const fallback = 3;
+  const raw = process.env.AUTH_DERIVED_KEY_MAX_REHYDRATIONS;
+  const parsed = raw ? Number.parseInt(raw, 10) : fallback;
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(0, Math.min(100, parsed));
+}
 
 // Configurable cleanup interval for vault entries (default 2 minutes)
 const VAULT_CLEANUP_INTERVAL_MS = Math.max(
@@ -340,7 +347,9 @@ export function refreshSessionDerivedKey(sessionId: string, key: Uint8Array): vo
 }
 
 export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | undefined {
-  if (AUTH_DERIVED_KEY_MAX_REHYDRATIONS === 0) {
+  const maxRehydrations = getAuthDerivedKeyMaxRehydrations();
+
+  if (maxRehydrations === 0) {
     const cachedDisabled = sessionDerivedKeyCache.get(sessionId);
     if (cachedDisabled) {
       zeroizeUint8(cachedDisabled);
@@ -365,7 +374,7 @@ export function rehydrateSessionDerivedKey(sessionId: string): Uint8Array | unde
   if (!cached) return undefined;
 
   const used = session.rehydrationsUsed ?? 0;
-  if (used >= AUTH_DERIVED_KEY_MAX_REHYDRATIONS) {
+  if (used >= maxRehydrations) {
     console.warn('[auth] Session rehydration quota exceeded; denying rehydrate request.');
     zeroizeUint8(cached);
     sessionDerivedKeyCache.delete(sessionId);
@@ -427,31 +436,22 @@ export interface AuthResult {
 }
 
 // Get client IP address from various headers
-function getClientIP(req: Request): string {
-  const xForwardedFor = req.headers.get('x-forwarded-for');
-  const xRealIP = req.headers.get('x-real-ip');
-  const cfConnectingIP = req.headers.get('cf-connecting-ip');
-  
-  if (xForwardedFor) {
-    return xForwardedFor.split(',')[0].trim();
-  }
-  if (xRealIP) return xRealIP;
-  if (cfConnectingIP) return cfConnectingIP;
-  
-  return 'unknown';
+// Trust proxy headers only when TRUST_PROXY=true; otherwise rely on server-provided IP
+function getClientIP(req: Request, fallbackFromServer?: string): string {
+  return getTrustedClientIp(req, fallbackFromServer);
 }
 
 // Rate limiting implementation using persistent SQLite storage
 export async function checkRateLimit(
   req: Request,
   bucket: string = 'auth',
-  opts?: { windowMs?: number; max?: number }
+  opts?: { windowMs?: number; max?: number; clientIp?: string }
 ): Promise<{ allowed: boolean; remaining: number }> {
   if (!AUTH_CONFIG.RATE_LIMIT_ENABLED) {
     return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX };
   }
 
-  const clientIP = getClientIP(req);
+  const clientIP = getClientIP(req, opts?.clientIp);
   const rateLimiter = getRateLimiter();
 
   const result = await rateLimiter.checkLimit(clientIP, {
@@ -466,27 +466,71 @@ export async function checkRateLimit(
   };
 }
 
-// API Key authentication
-function authenticateAPIKey(req: Request): AuthResult {
+function extractApiKey(req: Request): string | null {
+  const headerKey = req.headers.get('x-api-key');
+  if (headerKey && headerKey.trim().length > 0) {
+    return headerKey.trim();
+  }
+
+  const authHeader = req.headers.get('authorization');
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7).trim();
+    if (token.length > 0) {
+      return token;
+    }
+  }
+
+  return null;
+}
+
+// API Key authentication (headless mode via environment variable)
+function authenticateHeadlessApiKey(req: Request): AuthResult {
   if (!AUTH_CONFIG.API_KEY) {
     return { authenticated: false, error: 'API key authentication not configured' };
   }
 
-  const apiKey = req.headers.get('x-api-key') || req.headers.get('authorization')?.replace('Bearer ', '');
-  
+  const apiKey = extractApiKey(req);
   if (!apiKey) {
     return { authenticated: false, error: 'API key required' };
   }
 
-  // Timing-safe comparison to prevent timing attacks
   const providedKey = Buffer.from(apiKey);
   const expectedKey = Buffer.from(AUTH_CONFIG.API_KEY);
-  
-  if (providedKey.length !== expectedKey.length || !timingSafeEqual(providedKey, expectedKey)) {
+
+  if (providedKey.length !== expectedKey.length) {
     return { authenticated: false, error: 'Invalid API key' };
   }
 
-  return { authenticated: true, userId: 'api-user' };
+  if (timingSafeEqual(providedKey, expectedKey)) {
+    return { authenticated: true, userId: 'api-user' };
+  }
+
+  return { authenticated: false, error: 'Invalid API key' };
+}
+
+// API Key authentication (database-backed multi-key support)
+function authenticateDatabaseApiKey(req: Request): AuthResult {
+  if (!hasActiveApiKeys()) {
+    return { authenticated: false, error: 'API key authentication not configured' };
+  }
+
+  const apiKey = extractApiKey(req);
+  if (!apiKey) {
+    return { authenticated: false, error: 'API key required' };
+  }
+
+  const verification = verifyApiKeyToken(apiKey);
+  if (!verification.success) {
+    const errorMessage = verification.reason === 'revoked'
+      ? 'API key revoked'
+      : 'Invalid API key';
+    return { authenticated: false, error: errorMessage };
+  }
+
+  const clientIp = getClientIP(req);
+  markApiKeyUsed(verification.apiKeyId, clientIp === 'unknown' ? null : clientIp);
+
+  return { authenticated: true, userId: `api-key:${verification.prefix}` };
 }
 
 // Basic Auth authentication
@@ -536,25 +580,62 @@ function authenticateSession(req: Request): AuthResult {
     return { authenticated: false, error: 'No session provided' };
   }
 
+  // Prefer DB-backed session when available and in DB mode
+  if (!HEADLESS) {
+    const row = getSessionRecord(sessionId);
+    if (!row) {
+      // Fallback to in-memory (e.g., API-key/basic sessions)
+    } else {
+      // TTL check using DB timestamps
+      // last_access is updated at each successful auth
+      // We compare epoch seconds for robustness
+      try {
+        const lastAccessSec = Math.floor(Date.parse(row.last_access) / 1000);
+        const nowSec = Math.floor(Date.now() / 1000);
+        const ttlSec = Math.floor(AUTH_CONFIG.SESSION_TIMEOUT / 1000);
+        if (Number.isFinite(lastAccessSec) && nowSec - lastAccessSec > ttlSec) {
+          deleteSessionRecord(sessionId);
+          clearCachedDerivedKey(sessionId);
+          zeroizeVaultEntryAndDelete(sessionId);
+          return { authenticated: false, error: 'Session expired' };
+        }
+      } catch {
+        // If parsing fails, consider session invalid
+        deleteSessionRecord(sessionId);
+        clearCachedDerivedKey(sessionId);
+        zeroizeVaultEntryAndDelete(sessionId);
+        return { authenticated: false, error: 'Invalid session' };
+      }
+
+      // Touch last_access in DB and refresh in-memory metadata timestamp
+      try { touchSession(sessionId); } catch {}
+      const jsonUserId = typeof row.user_id === 'bigint' ? row.user_id.toString() : row.user_id;
+      const meta = sessionStore.get(sessionId);
+      if (meta) {
+        meta.lastAccess = Date.now();
+        meta.isDbBacked = true;
+      }
+      return { authenticated: true, userId: jsonUserId, sessionId, hasPassword: meta?.hasPassword };
+    }
+  }
+
+  // In headless mode or for non-DB sessions, use ephemeral store
   const session = sessionStore.get(sessionId);
   if (!session) {
     return { authenticated: false, error: 'Invalid session' };
   }
-
+  // Enforce TTL for ephemeral sessions using lastAccess timestamp
   const now = Date.now();
-  const lastActivity = session.lastAccess ?? session.createdAt;
-  if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
+  const last = session.lastAccess ?? now;
+  if (now - last > AUTH_CONFIG.SESSION_TIMEOUT) {
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
     zeroizeVaultEntryAndDelete(sessionId);
     return { authenticated: false, error: 'Session expired' };
   }
-
+  // Touch and return
   session.lastAccess = now;
-  // Don't consume vault reads during authentication - pass sessionId for lazy retrieval
-  // Convert bigint to string for JSON safety (handles legacy sessions)
   const userId = typeof session.userId === 'bigint' ? session.userId.toString() : session.userId;
-  // Include hasPassword flag to indicate if password-based derived key is available
   return { authenticated: true, userId, sessionId, hasPassword: session.hasPassword };
 }
 
@@ -622,33 +703,71 @@ export function createSession(
     zeroizeUint8(derivedKey);
     derivedKey = undefined;
   }
+  // Persist DB-backed session when userId is a numeric id and DB mode is active
+  // Note: DB helpers (getUserById, createSessionRecord) are synchronous in this build
+  // (SQLite bindings run in-process), so no await is required here.
+  let isDbBackedSession = false;
+  if (!HEADLESS && (typeof userId === 'number' || (typeof userId === 'string' && /^\d+$/.test(userId)))) {
+    try {
+      const normalized = typeof userId === 'string' ? BigInt(userId) : userId;
+      // Only persist when the user exists to avoid FK errors in unit tests
+      const exists = getUserById(normalized as any);
+      if (exists) {
+        const ok = createSessionRecord(sessionId, normalized as any, ipAddress);
+        if (ok) isDbBackedSession = true;
+      }
+    } catch (e) {
+      console.error('[auth] Failed to persist session (falling back to ephemeral):', e);
+    }
+  }
+
+  // Always keep ephemeral metadata for derived-key features and API-key/basic sessions
   sessionStore.set(sessionId, {
     userId,
-    createdAt: now,
+    salt: sessionSalt,
+    hasPassword,
+    rehydrationsUsed: 0,
     lastAccess: now,
-    ipAddress,
-    salt: sessionSalt, // Store salt for non-database users
-    hasPassword, // Flag to indicate password-based auth
-    rehydrationsUsed: 0
+    isDbBacked: isDbBackedSession
   });
   
-  cleanupExpiredSessions();
+  void cleanupExpiredSessions();
   return sessionId;
 }
 
 // Note: Rate limit cleanup is now handled by the persistent rate limiter in rate-limiter.ts
 
 // Cleanup expired sessions periodically
-function cleanupExpiredSessions(): void {
-  const now = Date.now();
-  for (const [sessionId, session] of Array.from(sessionStore.entries())) {
-    const lastActivity = session.lastAccess ?? session.createdAt;
-    if (now - lastActivity > AUTH_CONFIG.SESSION_TIMEOUT) {
-      sessionStore.delete(sessionId);
-      clearCachedDerivedKey(sessionId);
-      // Ensure any lingering derived key is destroyed
-      zeroizeVaultEntryAndDelete(sessionId);
+async function cleanupExpiredSessions(): Promise<void> {
+  // Clean DB-backed sessions
+  if (!HEADLESS) {
+    try {
+      const removed = await cleanupExpiredSessionsDB(AUTH_CONFIG.SESSION_TIMEOUT);
+      for (const id of removed) {
+        // Clear ephemeral metadata and vault for removed sessions
+        sessionStore.delete(id);
+        clearCachedDerivedKey(id);
+        zeroizeVaultEntryAndDelete(id);
+      }
+    } catch (e) {
+      console.error('[auth] cleanupExpiredSessions DB failed:', e);
     }
+  }
+  // Sweep expired ephemeral sessions by lastAccess
+  try {
+    const now = Date.now();
+    for (const [id, meta] of Array.from(sessionStore.entries())) {
+      // Skip TTL sweep for DB-backed sessions; DB handles expiry via last_access
+      if (meta.isDbBacked) continue;
+      const last = meta.lastAccess ?? now;
+      if (now - last > AUTH_CONFIG.SESSION_TIMEOUT) {
+        sessionStore.delete(id);
+        clearCachedDerivedKey(id);
+        zeroizeVaultEntryAndDelete(id);
+      }
+    }
+  } catch (e) {
+    // Non-fatal; continue
   }
 }
 
@@ -661,7 +780,7 @@ let vaultCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 // Start session cleanup timer
 sessionCleanupTimer = setInterval(() => {
-  cleanupExpiredSessions();
+  void cleanupExpiredSessions();
 }, CLEANUP_INTERVAL);
 
 // Start vault cleanup timer
@@ -723,8 +842,15 @@ export async function authenticate(req: Request): Promise<AuthResult> {
   }
 
   // Try API Key first
-  if (AUTH_CONFIG.API_KEY) {
-    const apiResult = authenticateAPIKey(req);
+  if (HEADLESS) {
+    if (AUTH_CONFIG.API_KEY) {
+      const apiResult = authenticateHeadlessApiKey(req);
+      if (apiResult.authenticated) {
+        return apiResult;
+      }
+    }
+  } else {
+    const apiResult = authenticateDatabaseApiKey(req);
     if (apiResult.authenticated) {
       return apiResult;
     }
@@ -768,6 +894,9 @@ export async function handleLogin(req: Request): Promise<Response> {
   if (req.method !== 'POST') {
     return new Response('Method not allowed', { status: 405, headers: baseHeaders });
   }
+  if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+    return Response.json({ error: 'Request too large' }, { status: 413, headers: baseHeaders });
+  }
 
   try {
     let body;
@@ -789,10 +918,25 @@ export async function handleLogin(req: Request): Promise<Response> {
     let userId: string | number | bigint = '';
     let userPassword: string | undefined; // Store for database users
 
-    if (apiKey && AUTH_CONFIG.API_KEY) {
-      if (timingSafeEqual(Buffer.from(apiKey), Buffer.from(AUTH_CONFIG.API_KEY))) {
-        authenticated = true;
-        userId = 'api-user';
+    if (typeof apiKey === 'string' && apiKey.trim().length > 0) {
+      if (HEADLESS && AUTH_CONFIG.API_KEY) {
+        const providedKey = Buffer.from(apiKey);
+        const expectedKey = Buffer.from(AUTH_CONFIG.API_KEY);
+
+        if (providedKey.length !== expectedKey.length) {
+          // Invalid API key, continue to next auth method
+        } else if (timingSafeEqual(providedKey, expectedKey)) {
+          authenticated = true;
+          userId = 'api-user';
+        }
+      } else if (!HEADLESS) {
+        const verification = verifyApiKeyToken(apiKey);
+        if (verification.success) {
+          authenticated = true;
+          userId = `api-key:${verification.prefix}`;
+          const clientIp = getClientIP(req);
+          markApiKeyUsed(verification.apiKeyId, clientIp === 'unknown' ? null : clientIp);
+        }
       }
     }
     
@@ -949,6 +1093,10 @@ export function handleLogout(req: Request): Response {
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
   
   if (sessionId) {
+    // Remove DB record if present
+    if (!HEADLESS) {
+      try { deleteSessionRecord(sessionId); } catch {}
+    }
     sessionStore.delete(sessionId);
     clearCachedDerivedKey(sessionId);
     // Wipe any ephemeral derived key bound to this session
@@ -1017,7 +1165,8 @@ export function requireAuth(handler: Function) {
 function getAvailableAuthMethods(): string[] {
   const methods: string[] = [];
   
-  if (AUTH_CONFIG.API_KEY) methods.push('api-key');
+  const apiKeyEnabled = HEADLESS ? !!AUTH_CONFIG.API_KEY : hasActiveApiKeys();
+  if (apiKeyEnabled) methods.push('api-key');
   if (AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) methods.push('basic-auth');
   if (AUTH_CONFIG.SESSION_SECRET) methods.push('session');
   

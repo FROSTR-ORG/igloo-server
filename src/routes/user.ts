@@ -7,9 +7,9 @@ import {
   getUserPeerPolicies,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
-import { createNodeWithCredentials } from '../node/manager.js';
+import { createNodeWithCredentials, sendSelfEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { getNip46Service } from '../nip46/index.js';
 
@@ -233,6 +233,9 @@ export async function handleUserRoute(
         }
 
         if (req.method === 'POST' || req.method === 'PUT') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
           const authSecret = getAuthSecret(auth);
           if (!authSecret) {
             return Response.json(
@@ -304,6 +307,8 @@ export async function handleUserRoute(
             }
           }
 
+          const credentialsBeingUpdated = 'group_cred' in body || 'share_cred' in body;
+          
           const success = updateUserCredentials(
             userId,
             updates,
@@ -334,6 +339,25 @@ export async function handleUserRoute(
             credentials = null;
           }
           if (credentials && credentials.group_cred && credentials.share_cred) {
+            if (credentialsBeingUpdated) {
+              // Fire-and-forget self-echo: this is a non-blocking health signal to
+              // quickly surface relay/publish issues in logs without failing the
+              // credential update flow. sendSelfEcho() internally applies a bounded
+              // timeout and returns false on timeouts or benign relay rejections.
+              // We intentionally do not abort node startup on echo failure; the
+              // watchdog/monitoring will handle recovery and connectivity checks.
+              // If a deployment wants to gate on echo success, we could add a feature
+              // flag to await and enforce success here, but the default is resilience.
+              sendSelfEcho(credentials.group_cred, credentials.share_cred, {
+                relays: credentials.relays,
+                relaysEnv: process.env.RELAYS,
+                addServerLog: context.addServerLog,
+                contextLabel: 'db credential update',
+                timeoutMs: 30000
+              }).catch((error) => {
+                try { context.addServerLog('warn', 'Self-echo failed after credential update', error); } catch {}
+              });
+            }
             // Start the node under the shared lock to avoid races
             try {
               await executeUnderNodeLock(async () => {
@@ -431,6 +455,9 @@ export async function handleUserRoute(
         }
 
         if (req.method === 'POST' || req.method === 'PUT') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
           let body: any;
           try {
             body = await parseJsonRequestBody(req);

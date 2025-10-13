@@ -8,6 +8,8 @@ services:
       - HOST_NAME=0.0.0.0
       - HOST_PORT=8002
       - NODE_ENV=production
+      # Explicit DB path inside the container; lives under /app/data
+      - DB_PATH=/app/data/igloo.db
     container_name : igloo-server
     platform       : linux/x86_64
     hostname       : igloo-server
@@ -26,6 +28,8 @@ services:
       - "8002:8002"
     volumes:
       - ./src:/app/src:rw
+      # Persist database and session secrets between container recreations
+      - ./data:/app/data:rw
 
 networks:
   infranet:

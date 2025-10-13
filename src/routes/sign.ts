@@ -125,7 +125,7 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
 
   // Basic rate limit to protect signing endpoint
   // Use a separate bucket so signing traffic doesn't compete with auth/login
-  const rate = await checkRateLimit(req, 'sign');
+  const rate = await checkRateLimit(req, 'sign', { clientIp: context.clientIp });
   if (!rate.allowed) {
     return Response.json({ code: 'RATE_LIMITED', error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,

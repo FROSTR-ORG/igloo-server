@@ -4,7 +4,7 @@ FROM oven/bun:latest AS build
 WORKDIR /app
 
 # Copy package files (plus scripts needed during install) first for better caching
-COPY package.json bun.lockb ./
+COPY package.json bun.lock ./
 COPY scripts ./scripts
 
 # Install all dependencies (including dev dependencies for building)
@@ -14,6 +14,7 @@ RUN bun install --frozen-lockfile
 COPY src ./src
 COPY frontend ./frontend
 COPY static ./static
+COPY docs ./docs
 COPY tsconfig.json ./
 
 # Build the frontend
@@ -24,9 +25,9 @@ FROM oven/bun:latest AS production
 
 WORKDIR /app
 
-# Copy package files (and required scripts)
-COPY package.json bun.lockb ./
-COPY scripts ./scripts
+# Copy package files (and required postinstall script)
+COPY package.json bun.lock ./
+COPY scripts/patch-zod-compat.mjs ./scripts/patch-zod-compat.mjs
 
 # Install only production dependencies
 RUN bun install --production --frozen-lockfile
@@ -34,6 +35,7 @@ RUN bun install --production --frozen-lockfile
 # Copy built application from build stage
 COPY --from=build /app/src ./src
 COPY --from=build /app/static ./static
+COPY --from=build /app/docs ./docs
 COPY --from=build /app/tsconfig.json ./
 
 EXPOSE 8002

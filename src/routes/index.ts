@@ -1,9 +1,7 @@
 // Export all route handlers
 export { handleStatusRoute } from './status.js';
-export { handleEventsRoute } from './events.js';
 export { handlePeersRoute } from './peers.js';
 export { handleRecoveryRoute } from './recovery.js';
-export { handleSharesRoute } from './shares.js';
 export { handleEnvRoute } from './env.js';
 export { handleStaticRoute } from './static.js';
 export { handleSignRoute } from './sign.js';
@@ -18,10 +16,8 @@ export * from './utils.js';
 import { RouteContext, PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createRequestAuth } from './auth-factory.js';
 import { handleStatusRoute } from './status.js';
-import { handleEventsRoute } from './events.js';
 import { handlePeersRoute } from './peers.js';
 import { handleRecoveryRoute } from './recovery.js';
-import { handleSharesRoute } from './shares.js';
 import { handleEnvRoute } from './env.js';
 import { handleStaticRoute } from './static.js';
 import { handleSignRoute } from './sign.js';
@@ -77,7 +73,7 @@ export async function handleRequest(
     // Only rate limit validation and setup endpoints, not the status endpoint
     if (url.pathname === '/api/onboarding/validate-admin' || 
         url.pathname === '/api/onboarding/setup') {
-      const rateLimit = await checkRateLimit(req);
+      const rateLimit = await checkRateLimit(req, 'auth', { clientIp: baseContext.clientIp });
       if (!rateLimit.allowed) {
         return Response.json({ 
           error: 'Rate limit exceeded. Try again later.' 
@@ -263,9 +259,27 @@ export async function handleRequest(
     }
   }
 
-  // Handle admin routes (database mode only, requires ADMIN_SECRET)
+  // Handle admin routes (database mode only). Admin routes primarily use ADMIN_SECRET,
+  // but when a valid session exists for an admin user we allow that too.
   if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
-    const adminResult = await handleAdminRoute(req, url, baseContext);
+    // Attempt optional authentication for admin endpoints to support session-admin access.
+    // Do not enforce auth result here; handleAdminRoute will decide based on ADMIN_SECRET or session.
+    if (AUTH_CONFIG.ENABLED && !authInfo) {
+      try {
+        const adminAuth = await authenticate(req);
+        if (adminAuth.authenticated && !adminAuth.rateLimited) {
+          authInfo = createRequestAuth({
+            userId: adminAuth.userId,
+            authenticated: true,
+            derivedKey: adminAuth.derivedKey ? adminAuth.derivedKey : undefined,
+            sessionId: adminAuth.sessionId,
+            hasPassword: adminAuth.hasPassword
+          });
+        }
+      } catch {}
+    }
+
+    const adminResult = await handleAdminRoute(req, url, baseContext, authInfo);
     if (adminResult) {
       finalizeAuth();
       return adminResult;
@@ -293,13 +307,11 @@ export async function handleRequest(
   // Note: These handlers now accept auth as an optional parameter
   const routeHandlers = [
     handleStatusRoute,    // Allow unauthenticated for health checks
-    handleEventsRoute,
     handlePeersRoute,
     handleSignRoute,
     handleNip44Route,
     handleNip04Route,
     handleRecoveryRoute,
-    handleSharesRoute,
   ];
 
   for (const handler of routeHandlers) {

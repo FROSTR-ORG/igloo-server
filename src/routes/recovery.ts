@@ -6,7 +6,7 @@ import {
   validateShare
 } from '@frostr/igloo-core';
 import { RouteContext, RequestAuth } from './types.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { authenticate, AUTH_CONFIG, checkRateLimit } from './auth.js';
 
 export async function handleRecoveryRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null): Promise<Response | null> {
@@ -47,7 +47,13 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
   }
 
   // Check rate limit for recovery operations
-  const rate = await checkRateLimit(req);
+  const recWindowSecondsRaw = process.env.RATE_LIMIT_RECOVERY_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+  const recWindowSeconds = Number.parseInt(recWindowSecondsRaw, 10);
+  const recWindow = Math.max(1000, (Number.isFinite(recWindowSeconds) ? recWindowSeconds : 900) * 1000);
+  const recMaxRaw = process.env.RATE_LIMIT_RECOVERY_MAX ?? '3';
+  const recMaxParsed = Number.parseInt(recMaxRaw, 10);
+  const recMax = Math.max(1, Number.isFinite(recMaxParsed) ? recMaxParsed : 3);
+  const rate = await checkRateLimit(req, 'recovery', { clientIp: context.clientIp, windowMs: recWindow, max: recMax });
   if (!rate.allowed) {
     context.addServerLog('warn', `Rate limit exceeded for key recovery from ${req.headers.get('x-forwarded-for') || 'unknown'}`);
     return Response.json(
@@ -56,7 +62,7 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
         status: 429,
         headers: {
           ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+          'Retry-After': Math.ceil(recWindow / 1000).toString()
         }
       }
     );
@@ -66,6 +72,9 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
     switch (url.pathname) {
       case '/api/recover':
         if (req.method === 'POST') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
           let body;
           try {
             body = await parseJsonRequestBody(req);
@@ -163,6 +172,9 @@ export async function handleRecoveryRoute(req: Request, url: URL, context: Route
 
       case '/api/recover/validate':
         if (req.method === 'POST') {
+          if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+            return Response.json({ error: 'Request too large' }, { status: 413, headers });
+          }
           let body;
           try {
             body = await parseJsonRequestBody(req);

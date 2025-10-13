@@ -3,9 +3,12 @@ import {
   createConnectedNode,
   normalizePubkey,
   extractSelfPubkeyFromCredentials,
-  normalizeNodePolicies
+  normalizeNodePolicies,
+  sendEcho,
+  EchoError
 } from '@frostr/igloo-core';
-import type { NodePolicyInput } from '@frostr/igloo-core';
+import type { NodePolicyInput, NodeEventConfig } from '@frostr/igloo-core';
+import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
 import { loadFallbackPeerPolicies } from './peer-policy-store.js';
@@ -60,6 +63,15 @@ const ENABLE_PUBLISH_METRICS = (() => {
   return !HEADLESS_MODE;
 })();
 
+const SELF_ECHO_TIMEOUT_MS = (() => {
+  const raw = process.env.SELF_ECHO_TIMEOUT_MS ?? process.env.ECHO_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed) && parsed > 0) {
+    return Math.max(1000, Math.min(parsed, 60000));
+  }
+  return 10000;
+})();
+
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
 
@@ -85,7 +97,15 @@ const EVENT_MAPPINGS = {
 // Simplified monitoring constants
 const CONNECTIVITY_CHECK_INTERVAL = 60000; // Check connectivity every minute
 const IDLE_THRESHOLD = 45000; // Consider idle after 45 seconds
-const CONNECTIVITY_PING_TIMEOUT = 10000; // 10 second timeout for connectivity pings
+// Make ping timeout configurable via env, bounded for safety
+const CONNECTIVITY_PING_TIMEOUT = (() => {
+  const raw = process.env.CONNECTIVITY_PING_TIMEOUT_MS ?? process.env.PING_TIMEOUT_MS;
+  const parsed = raw ? Number.parseInt(raw, 10) : NaN;
+  if (Number.isFinite(parsed)) {
+    return Math.min(Math.max(parsed, 1000), 120000);
+  }
+  return 10000; // default 10s
+})();
 
 // Publish failure metrics tracking
 interface PublishMetrics {
@@ -753,8 +773,9 @@ async function performKeepAlivePing(
     const peers = node._peers || node.peers || [];
 
     if (peers.length === 0) {
+      // Treat absence of peers similar to lacking ping capability to avoid false negatives
       addServerLog('debug', 'No peers available for keepalive ping, relying on relay connections');
-      return { success: false, hadPingCapability: true };
+      return { success: false, hadPingCapability: false };
     }
 
     // Send a ping to the first available peer
@@ -1551,6 +1572,104 @@ function parseEnvPeerPolicies(
   }
 }
 
+export async function sendSelfEcho(
+  groupCred: string,
+  shareCred: string,
+  options?: {
+    relays?: string[] | null;
+    relaysEnv?: string;
+    timeoutMs?: number;
+    addServerLog?: ReturnType<typeof createAddServerLog>;
+    contextLabel?: string;
+    eventConfig?: NodeEventConfig;
+  }
+): Promise<boolean> {
+  if (!groupCred || !shareCred) {
+    return false;
+  }
+
+  const {
+    relays,
+    relaysEnv,
+    timeoutMs,
+    addServerLog,
+    contextLabel,
+    eventConfig
+  } = options ?? {};
+
+  let resolvedRelays: string[] = [];
+  if (Array.isArray(relays)) {
+    resolvedRelays = relays
+      .filter((relay): relay is string => typeof relay === 'string' && relay.trim().length > 0)
+      .map(relay => relay.trim());
+  }
+
+  if (resolvedRelays.length === 0) {
+    resolvedRelays = getValidRelays(relaysEnv);
+  }
+
+  const uniqueRelays = Array.from(new Set(resolvedRelays));
+  const timeout = (() => {
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      return Math.max(1000, Math.min(timeoutMs, 60000));
+    }
+    return SELF_ECHO_TIMEOUT_MS;
+  })();
+
+  const echoOptions: { relays?: string[]; timeout?: number; eventConfig?: NodeEventConfig } = {};
+  if (uniqueRelays.length > 0) {
+    echoOptions.relays = uniqueRelays;
+  }
+  echoOptions.timeout = timeout;
+
+  // Default to suppressing igloo-core console logging unless explicitly enabled by caller
+  const effectiveEventConfig: NodeEventConfig = {
+    enableLogging: false,
+    ...(eventConfig ?? {})
+  };
+  echoOptions.eventConfig = effectiveEventConfig;
+
+  const challenge = randomBytes(32).toString('hex');
+  const logSuffix = contextLabel ? ` (${contextLabel})` : '';
+
+  try {
+    const sent = await sendEcho(groupCred, shareCred, challenge, echoOptions);
+    if (addServerLog) {
+      addServerLog('info', `Broadcasted self echo${logSuffix}`, {
+        relays: uniqueRelays,
+        timeout,
+        sent
+      });
+    }
+    return sent;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    const isTimeoutError = error instanceof EchoError && /timeout/i.test(errorMessage);
+
+    if (addServerLog) {
+      if (isTimeoutError) {
+        addServerLog('info', `Self echo not acknowledged before timeout${logSuffix}`, {
+          relays: uniqueRelays,
+          timeout,
+          softTimeout: true,
+          error: errorMessage
+        });
+      } else {
+        addServerLog('warn', `Failed to broadcast self echo${logSuffix}`, {
+          error: errorMessage,
+          relays: uniqueRelays,
+          timeout
+        });
+      }
+    } else if (isTimeoutError) {
+      console.info('[node] Self echo not acknowledged before timeout', errorMessage);
+    } else {
+      console.warn('[node] Failed to broadcast self echo', error);
+    }
+    return false;
+  }
+}
+
 // Enhanced node creation with better error handling and retry logic
 export async function createNodeWithCredentials(
   groupCred: string,
@@ -1739,6 +1858,12 @@ export async function createNodeWithCredentials(
           
           // Create instrumented proxy and use it for subsequent operations
           const wrappedNode = createInstrumentedNode(node, addServerLog);
+
+          // Seed activity immediately upon successful connection to avoid
+          // the first connectivity check being treated as idle.
+          if (addServerLog) {
+            updateNodeActivity(addServerLog, true);
+          }
 
           // Perform initial connectivity check and await completion to avoid startup races
           if (addServerLog) {

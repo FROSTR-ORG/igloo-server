@@ -3,6 +3,7 @@ import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
 import { NIP46 } from "./components/NIP46"
+import ApiKeys from "./components/ApiKeys"
 import Login from "./components/Login"
 import Onboarding from "./components/Onboarding"
 import type { SignerHandle } from "./types"
@@ -31,6 +32,7 @@ interface AuthState {
   basicAuth?: { username: string; password: string };
   needsOnboarding?: boolean;
   headlessMode?: boolean;
+  isAdmin?: boolean;
 }
 
 const App: React.FC = () => {
@@ -357,6 +359,7 @@ const App: React.FC = () => {
     // Now load the app data with the correct headers
     try {
       await loadAppData(authHeaders);
+      await checkAdmin(authHeaders);
     } finally {
       setLoadingAppData(false);
     }
@@ -378,11 +381,39 @@ const App: React.FC = () => {
       // Reset state
       setAuthState({
         isAuthenticated: false,
-        authEnabled: true
+        authEnabled: true,
+        isAdmin: false
       });
       setSignerData(null);
     }
   };
+
+  const checkAdmin = async (headers?: Record<string, string>) => {
+    try {
+      const res = await fetch('/api/admin/whoami', { headers: headers || getAuthHeaders() });
+      if (!res.ok) {
+        setAuthState(prev => ({ ...prev, isAdmin: false }));
+        return;
+      }
+      let admin = false;
+      try {
+        const data = await res.json();
+        admin = data?.admin === true;
+      } catch {
+        admin = false;
+      }
+      setAuthState(prev => ({ ...prev, isAdmin: admin }));
+    } catch {
+      setAuthState(prev => ({ ...prev, isAdmin: false }));
+    }
+  };
+
+  // Re-check admin whenever auth state changes or on initial auth
+  useEffect(() => {
+    if (authState.authEnabled && authState.isAuthenticated && !authState.headlessMode) {
+      checkAdmin();
+    }
+  }, [authState.isAuthenticated, authState.sessionId, authState.userId, authState.authEnabled, authState.headlessMode]);
 
   const handleKeysetCreated = (data: { groupCredential: string; shareCredentials: string[]; name: string }) => {
     // When configuration is complete, go directly to Signer
@@ -413,6 +444,10 @@ const App: React.FC = () => {
       await signerRef.current?.stopSigner().catch(console.error);
     }
     setActiveTab(value);
+    if (value === 'apiKeys' && authState.authEnabled && authState.isAuthenticated && !authState.headlessMode) {
+      // Ensure admin status is fresh when entering API Keys tab
+      checkAdmin();
+    }
   };
 
   // Show loading state while initializing
@@ -482,12 +517,15 @@ const App: React.FC = () => {
             value={activeTab}
             onValueChange={handleTabChange}
           >
-            <TabsList className="grid grid-cols-3 mb-4 bg-gray-800/50 w-full">
+            <TabsList className="grid grid-cols-4 mb-4 bg-gray-800/50 w-full">
               <TabsTrigger value="signer" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Signer
               </TabsTrigger>
               <TabsTrigger value="nip46" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 NIP-46
+              </TabsTrigger>
+              <TabsTrigger value="apiKeys" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
+                API Keys
               </TabsTrigger>
               <TabsTrigger value="recover" className="text-sm py-2 text-blue-400 data-[state=active]:bg-blue-900/60 data-[state=active]:text-blue-200">
                 Recover
@@ -507,7 +545,15 @@ const App: React.FC = () => {
             <TabsContent value="nip46" forceMount className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
               <NIP46 authHeaders={memoizedAuthHeaders} />
             </TabsContent>
-            
+
+            <TabsContent value="apiKeys" className="border border-blue-900/30 rounded-lg p-2 sm:p-4">
+              <ApiKeys
+                authHeaders={memoizedAuthHeaders}
+                headlessMode={authState.headlessMode ?? false}
+                isAdminUser={!authState.headlessMode && Boolean(authState.isAdmin)}
+              />
+            </TabsContent>
+
             <TabsContent value="recover" className="border border-purple-900/30 rounded-lg p-2 sm:p-4">
               <Recover 
                 initialShare={signerData?.share} 

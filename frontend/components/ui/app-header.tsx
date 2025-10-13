@@ -1,6 +1,6 @@
 import React from 'react';
 import { Button } from './button';
-import { LogOut, User } from 'lucide-react';
+import { LogOut, User, BookOpen } from 'lucide-react';
 
 interface AppHeaderProps {
   subtitle?: React.ReactNode;
@@ -22,25 +22,40 @@ export function AppHeader({ subtitle, authEnabled, userId, onLogout }: AppHeader
         <div className="absolute left-1/2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ transform: 'translateX(calc(-50% - 160px)) translateY(-50%)' }}>
           <img src="/assets/frostr-logo-transparent.png" alt="Frostr Logo" className="w-12 h-12" />
         </div>
+        {/* Left: API Docs */}
+        <div className="absolute left-0 top-1/2 -translate-y-1/2">
+          <a
+            href="/api/docs"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 text-blue-400 hover:text-blue-300"
+          >
+            <BookOpen size={18} />
+            <span className="text-sm">API Docs</span>
+          </a>
+        </div>
+
         {/* Right: User/Logout */}
         <div className="absolute right-0 top-1/2 -translate-y-1/2">
-          {authEnabled && userId !== null && userId !== undefined && onLogout && (
-            <div className="flex items-center gap-2">
-              <div className="flex items-center gap-2 text-blue-300 text-sm">
-                <User size={16} />
-                <span>{String(userId)}</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={onLogout}
-                className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30"
-              >
-                <LogOut size={16} className="mr-1" />
-                Logout
-              </Button>
-            </div>
-          )}
+          <div className="flex items-center gap-4">
+            {authEnabled && userId !== null && userId !== undefined && onLogout && (
+              <>
+                <div className="flex items-center gap-2 text-blue-300 text-sm">
+                  <User size={16} />
+                  <span>{String(userId)}</span>
+                </div>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onLogout}
+                  className="text-blue-400 hover:text-blue-300 hover:bg-blue-900/30"
+                >
+                  <LogOut size={16} className="mr-1" />
+                  Logout
+                </Button>
+              </>
+            )}
+          </div>
         </div>
       </div>
 

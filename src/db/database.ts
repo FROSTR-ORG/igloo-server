@@ -1,6 +1,6 @@
 import { Database } from 'bun:sqlite';
 import { password as BunPassword } from 'bun';
-import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync } from 'node:crypto';
+import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, createHash, timingSafeEqual } from 'node:crypto';
 import path from 'path';
 import { existsSync, mkdirSync, chmodSync } from 'fs';
 import { sanitizePeerPolicyEntries, type PeerPolicyRecord } from '../util/peer-policy.js';
@@ -65,17 +65,23 @@ const createUserTable = () => {
       relays TEXT,
       peer_policies TEXT,
       group_name TEXT,
+      -- Role-based access control built into the initial schema to avoid migration conflicts
+      role TEXT DEFAULT 'user' CHECK (role IN ('admin','user')),
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
   
-  // Create index on username for faster lookups
+  // Indexes for faster lookups
   db.exec('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_users_role ON users(role)');
 };
 
 // Initialize database tables
 createUserTable();
+
+// Role column now exists in the base schema (fresh installs).
+// Legacy databases will be handled by dedicated migrations; no runtime ALTERs here.
 
 // Ensure legacy databases add the peer_policies column without requiring manual migration
 const ensurePeerPoliciesColumn = () => {
@@ -91,6 +97,27 @@ const ensurePeerPoliciesColumn = () => {
 };
 
 ensurePeerPoliciesColumn();
+
+// Legacy bootstrap helpers removed: role column is required going forward
+
+// Ensure sessions table exists via migrations (preferred), but also provide
+// defensive creation here for older installs that haven't run migrations yet.
+// This mirrors the minimal persisted state we need for authorization.
+try {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id TEXT PRIMARY KEY,
+      user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      ip_address TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      last_access DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_last_access ON sessions(last_access)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_sessions_user_id ON sessions(user_id)');
+} catch (e) {
+  console.error('[db] Warning: failed to ensure sessions table exists (will rely on migrations):', e);
+}
 
 // Dummy hash for timing attack mitigation (Argon2id hash of 'dummy')
 // This is used to perform a constant-time verification when user is not found
@@ -224,6 +251,7 @@ export interface User {
   group_name: string | null;
   created_at: string;
   updated_at: string;
+  role?: string | null;
 }
 
 export interface UserCredentials {
@@ -242,6 +270,113 @@ export interface AdminUserListItem {
   hasCredentials: boolean;
 }
 
+// ------------------------------
+// Session persistence (minimal)
+// ------------------------------
+
+export interface PersistedSessionRow {
+  id: string;
+  user_id: number | bigint;
+  ip_address: string | null;
+  created_at: string;
+  last_access: string;
+}
+
+export function createSessionRecord(
+  sessionId: string,
+  userId: number | bigint,
+  ipAddress?: string | null
+): boolean {
+  checkShutdown();
+  try {
+    const stmt = db.prepare(
+      `INSERT INTO sessions (id, user_id, ip_address) VALUES (?, ?, ?)`
+    );
+    stmt.run(sessionId, userId, ipAddress ?? null);
+    return true;
+  } catch (e) {
+    console.error('[db] createSessionRecord failed:', e);
+    return false;
+  }
+}
+
+export function getSessionRecord(sessionId: string): PersistedSessionRow | null {
+  checkShutdown();
+  try {
+    const row = db
+      .prepare(
+        `SELECT id, user_id, ip_address, created_at, last_access FROM sessions WHERE id = ?`
+      )
+      .get(sessionId) as PersistedSessionRow | undefined;
+    return row ?? null;
+  } catch (e) {
+    console.error('[db] getSessionRecord failed:', e);
+    return null;
+  }
+}
+
+export function touchSession(sessionId: string): boolean {
+  checkShutdown();
+  try {
+    db.prepare(
+      `UPDATE sessions SET last_access = CURRENT_TIMESTAMP WHERE id = ?`
+    ).run(sessionId);
+    return true;
+  } catch (e) {
+    console.error('[db] touchSession failed:', e);
+    return false;
+  }
+}
+
+export function deleteSessionRecord(sessionId: string): boolean {
+  checkShutdown();
+  try {
+    db.prepare(`DELETE FROM sessions WHERE id = ?`).run(sessionId);
+    return true;
+  } catch (e) {
+    console.error('[db] deleteSessionRecord failed:', e);
+    return false;
+  }
+}
+
+// Remove sessions that have been inactive longer than ttlMs; returns removed ids
+export function cleanupExpiredSessionsDB(ttlMs: number): string[] {
+  checkShutdown();
+  try {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
+    const cutoff = nowSeconds - ttlSeconds;
+    const rows = db
+      .prepare(
+        `SELECT id FROM sessions WHERE CAST(strftime('%s', last_access) AS INTEGER) <= ?`
+      )
+      .all(cutoff) as { id: string }[];
+    if (rows.length === 0) return [];
+    const ids = rows.map(r => r.id);
+
+    // SQLite historically enforces a max bind parameter count (often 999).
+    // Delete in safe batches within a single transaction for performance and atomicity.
+    const CHUNK = 900; // stay under 999 to be robust across builds
+    db.exec('BEGIN');
+    try {
+      for (let i = 0; i < ids.length; i += CHUNK) {
+        const chunk = ids.slice(i, i + CHUNK);
+        const placeholders = chunk.map(() => '?').join(',');
+        db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...chunk);
+      }
+      db.exec('COMMIT');
+    } catch (err) {
+      try { db.exec('ROLLBACK'); } catch {}
+      throw err;
+    }
+
+    return ids;
+  } catch (e) {
+    console.error('[db] cleanupExpiredSessionsDB failed:', e);
+    return [];
+  }
+}
+
 // Check if database is initialized (has at least one user)
 export const isDatabaseInitialized = (): boolean => {
   checkShutdown();
@@ -252,27 +387,30 @@ export const isDatabaseInitialized = (): boolean => {
 // Create a new user
 export const createUser = async (
   username: string,
-  password: string
+  password: string,
+  options?: { role?: 'admin' | 'user' }
 ): Promise<{ success: boolean; error?: string; userId?: number | bigint }> => {
   checkShutdown();
   try {
     // Hash password using Bun's built-in password API with configured Argon2id parameters
     const passwordHash = await BunPassword.hash(password, PASSWORD_HASH_CONFIG);
+    const isFirstUser = !isDatabaseInitialized();
+    const desiredRole: 'admin' | 'user' = options?.role ?? (isFirstUser ? 'admin' : 'user');
     
     // Insert user with dual-salt design:
     // - password_hash: Contains Argon2id hash with embedded salt for authentication
     // - salt: Separate salt for PBKDF2 encryption key derivation (stored plaintext by design)
     const stmt = db.query(`
-      INSERT INTO users (username, password_hash, salt)
-      VALUES (?, ?, ?)
-    `);
+        INSERT INTO users (username, password_hash, salt, role)
+        VALUES (?, ?, ?, ?)
+      `);
     
     // Generate encryption salt for PBKDF2 key derivation
     // SECURITY NOTE: This salt is intentionally separate from Argon2id's embedded salt.
     // Using different salts for authentication vs encryption is a security best practice.
     // This salt must be stored in plaintext to enable credential decryption.
     const salt = randomBytes(SALT_CONFIG.LENGTH).toString('hex');
-    stmt.run(username, passwordHash, salt);
+    stmt.run(username, passwordHash, salt, desiredRole);
     
     // Get the last inserted ID (returns number or bigint based on size)
     const lastId = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
@@ -280,6 +418,8 @@ export const createUser = async (
     if (!isSafeId(lastId.id)) {
       console.warn(`[db] Warning: New user ID ${lastId.id} exceeds Number.MAX_SAFE_INTEGER. Precision may be lost if not handled as BigInt.`);
     }
+
+    // Role is already set via the INSERT above; no redundant UPDATE needed
 
     return {
       success: true,
@@ -619,6 +759,301 @@ export const deleteUserCredentials = (userId: number | bigint): boolean => {
   }
 };
 
+// API key constants
+const API_KEY_PREFIX_LENGTH = 12;
+const API_KEY_TOKEN_BYTES = 32;
+
+const hashApiKey = (token: string): Buffer => {
+  return createHash('sha256').update(token, 'utf8').digest();
+};
+
+const toSerializableId = (id: number | bigint): number | string => (
+  typeof id === 'bigint' ? id.toString() : id
+);
+
+const normalizeOptionalId = (id: number | bigint | null): number | string | null => {
+  if (id === null || id === undefined) return null;
+  return typeof id === 'bigint' ? id.toString() : id;
+};
+
+type ApiKeyRow = {
+  id: number | bigint;
+  prefix: string;
+  key_hash: string;
+  label: string | null;
+  created_by_user_id: number | bigint | null;
+  created_by_admin: number;
+  created_at: string;
+  updated_at: string;
+  last_used_at: string | null;
+  last_used_ip: string | null;
+  revoked_at: string | null;
+  revoked_reason: string | null;
+};
+
+export type ApiKeySummary = {
+  id: number | string;
+  prefix: string;
+  label: string | null;
+  createdAt: string;
+  updatedAt: string;
+  lastUsedAt: string | null;
+  lastUsedIp: string | null;
+  revokedAt: string | null;
+  revokedReason: string | null;
+  createdByUserId: number | string | null;
+  createdByAdmin: boolean;
+};
+
+export type ApiKeyCreationResult = {
+  id: number | string;
+  token: string;
+  prefix: string;
+};
+
+type ApiKeyVerificationFailure = 'not_found' | 'revoked' | 'mismatch';
+
+export type ApiKeyVerificationResult =
+  | { success: true; apiKeyId: number | string; prefix: string }
+  | { success: false; reason: ApiKeyVerificationFailure };
+
+const generateApiKeyToken = (): { token: string; prefix: string } => {
+  const token = randomBytes(API_KEY_TOKEN_BYTES).toString('hex');
+  const prefix = token.slice(0, API_KEY_PREFIX_LENGTH);
+  return { token, prefix };
+};
+
+export const createApiKey = (options?: {
+  label?: string;
+  createdByUserId?: number | bigint | null;
+  createdByAdmin?: boolean;
+}): ApiKeyCreationResult => {
+  checkShutdown();
+  const label = options?.label?.trim() || null;
+  const createdByUserId = options?.createdByUserId ?? null;
+  const createdByAdmin = options?.createdByAdmin === false ? 0 : 1;
+
+  const insertStmt = db.prepare(
+    `INSERT INTO api_keys (prefix, key_hash, label, created_by_user_id, created_by_admin)
+     VALUES (?, ?, ?, ?, ?)`
+  );
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    const { token, prefix } = generateApiKeyToken();
+    const hashBuffer = hashApiKey(token);
+
+    try {
+      insertStmt.run(prefix, hashBuffer.toString('hex'), label, createdByUserId, createdByAdmin);
+      const idRow = db.query('SELECT last_insert_rowid() as id').get() as { id: number | bigint };
+      if (idRow && !isSafeId(idRow.id)) {
+        console.warn(`[db] Warning: API key ID ${idRow.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+      }
+      return {
+        id: toSerializableId(idRow.id),
+        token,
+        prefix,
+      };
+    } catch (error: any) {
+      const message = error?.message || '';
+      if (message.includes('UNIQUE') && attempt < 4) {
+        continue;
+      }
+      console.error('Error creating API key:', error);
+      throw error;
+    }
+  }
+
+  throw new Error('Failed to generate unique API key prefix');
+};
+
+export const listApiKeys = (): ApiKeySummary[] => {
+  checkShutdown();
+  try {
+    const rows = db
+      .prepare(`
+        SELECT 
+          id,
+          prefix,
+          label,
+          created_by_user_id,
+          created_by_admin,
+          created_at,
+          updated_at,
+          last_used_at,
+          last_used_ip,
+          revoked_at,
+          revoked_reason
+        FROM api_keys
+        ORDER BY revoked_at IS NULL DESC, created_at DESC, id DESC
+      `)
+      .all() as ApiKeyRow[];
+
+    return rows.map(row => {
+      if (!isSafeId(row.id)) {
+        console.warn(`[db] Warning: API key ID ${row.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+      }
+      const createdByUserId = row.created_by_user_id;
+      if (createdByUserId !== null && !isSafeId(createdByUserId)) {
+        console.warn(`[db] Warning: API key created_by_user_id ${createdByUserId} exceeds Number.MAX_SAFE_INTEGER.`);
+      }
+      return {
+        id: toSerializableId(row.id),
+        prefix: row.prefix,
+        label: row.label,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        lastUsedAt: row.last_used_at,
+        lastUsedIp: row.last_used_ip,
+        revokedAt: row.revoked_at,
+        revokedReason: row.revoked_reason,
+        createdByUserId: normalizeOptionalId(createdByUserId),
+        createdByAdmin: row.created_by_admin === 1,
+      };
+    });
+  } catch (error) {
+    console.error('Error listing API keys:', error);
+    return [];
+  }
+};
+
+export const hasActiveApiKeys = (): boolean => {
+  checkShutdown();
+  try {
+    const row = db
+      .prepare('SELECT EXISTS(SELECT 1 FROM api_keys WHERE revoked_at IS NULL LIMIT 1) AS present')
+      .get() as { present: number } | undefined;
+    return !!row && row.present === 1;
+  } catch (error) {
+    console.error('Error checking active API keys:', error);
+    return false;
+  }
+};
+
+export const verifyApiKeyToken = (token: string | null | undefined): ApiKeyVerificationResult => {
+  checkShutdown();
+  if (!token || typeof token !== 'string') {
+    return { success: false, reason: 'not_found' };
+  }
+
+  const candidate = token.trim();
+  if (candidate.length === 0) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  const prefix = candidate.slice(0, API_KEY_PREFIX_LENGTH);
+  if (prefix.length < API_KEY_PREFIX_LENGTH) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  let row: ApiKeyRow | undefined;
+  try {
+    row = db
+      .prepare('SELECT * FROM api_keys WHERE prefix = ? LIMIT 1')
+      .get(prefix) as ApiKeyRow | undefined;
+  } catch (error) {
+    console.error('Error retrieving API key for verification:', error);
+    return { success: false, reason: 'not_found' };
+  }
+
+  if (!row) {
+    return { success: false, reason: 'not_found' };
+  }
+
+  if (row.revoked_at) {
+
+    return { success: false, reason: 'revoked' };
+
+  }
+
+  const providedHash = hashApiKey(candidate);
+
+  const storedHash = Buffer.from(row.key_hash, 'hex');
+
+  const EXPECTED_LENGTH = 32;
+
+  // Fail fast on malformed/corrupted stored hash
+  if (storedHash.length !== EXPECTED_LENGTH) {
+    return { success: false, reason: 'mismatch' };
+  }
+
+  try {
+    if (!timingSafeEqual(storedHash, providedHash)) {
+      return { success: false, reason: 'mismatch' };
+    }
+  } catch (error) {
+    console.error('Error performing timing-safe comparison for API key:', error);
+    return { success: false, reason: 'mismatch' };
+  }
+
+  if (!isSafeId(row.id)) {
+    console.warn(`[db] Warning: API key ID ${row.id} exceeds Number.MAX_SAFE_INTEGER. Returning as string.`);
+  }
+
+  return {
+    success: true,
+    apiKeyId: toSerializableId(row.id),
+    prefix: row.prefix,
+  };
+};
+
+export const markApiKeyUsed = (apiKeyId: number | string, ip?: string | null): void => {
+  checkShutdown();
+  try {
+    if (ip && ip.trim().length > 0) {
+      db.prepare(
+        `UPDATE api_keys
+         SET last_used_at = CURRENT_TIMESTAMP,
+             last_used_ip = ?
+         WHERE id = ?`
+      ).run(ip, apiKeyId);
+    } else {
+      db.prepare(
+        `UPDATE api_keys
+         SET last_used_at = CURRENT_TIMESTAMP
+         WHERE id = ?`
+      ).run(apiKeyId);
+    }
+  } catch (error) {
+    console.error('Error updating API key usage metadata:', error);
+  }
+};
+
+export const revokeApiKey = (
+  apiKeyId: number | bigint,
+  reason?: string
+): { success: boolean; error?: 'not_found' | 'already_revoked' | 'failed' } => {
+  checkShutdown();
+  try {
+    const stmt = db.prepare(
+      `UPDATE api_keys
+       SET revoked_at = CURRENT_TIMESTAMP,
+           revoked_reason = COALESCE(?, revoked_reason)
+       WHERE id = ? AND revoked_at IS NULL`
+    );
+
+    stmt.run(reason && reason.trim().length > 0 ? reason.trim() : null, apiKeyId);
+    const result = db.query('SELECT changes() AS changes').get() as { changes: number } | null;
+    if (result && result.changes > 0) {
+      return { success: true };
+    }
+
+    const existing = db
+      .prepare('SELECT revoked_at FROM api_keys WHERE id = ? LIMIT 1')
+      .get(apiKeyId) as { revoked_at: string | null } | undefined;
+
+    if (!existing) {
+      return { success: false, error: 'not_found' };
+    }
+    if (existing.revoked_at) {
+      return { success: false, error: 'already_revoked' };
+    }
+    return { success: false, error: 'failed' };
+  } catch (error) {
+    console.error('Error revoking API key:', error);
+    return { success: false, error: 'failed' };
+  }
+};
+
 /**
  * Get all users from the database for admin listing
  * @returns Array of users with basic info and credential status
@@ -651,24 +1086,6 @@ export const getAllUsers = (): AdminUserListItem[] => {
     console.error('Error fetching all users:', error);
     return [];
   }
-};
-
-export type DeleteUserResult = { success: true } | { success: false; error: string };
-
-/**
- * Delete a user from the database using the guarded transactional path.
- * @param userId - The ID of the user to delete (supports both number and bigint)
- * @returns Detailed result including failure reasons when deletion is blocked
- */
-export const deleteUser = (userId: number | bigint): DeleteUserResult => {
-  const { success, error } = deleteUserSafely(userId);
-  if (success) {
-    return { success: true };
-  }
-
-  const message = error ?? 'Deletion failed';
-  console.warn(`[db] deleteUser reported: ${message}`);
-  return { success: false, error: message };
 };
 
 /**

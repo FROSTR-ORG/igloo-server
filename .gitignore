@@ -64,3 +64,4 @@ data/.session-secret
 test-*.sh
 debug-*.js
 verify-*.md
+.DS_Store

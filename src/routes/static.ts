@@ -1,4 +1,4 @@
-import { getContentType } from './utils.js';
+import { getContentType, getValidRelays } from './utils.js';
 import { resolve, relative } from 'path';
 import { HEADLESS } from '../const.js';
 
@@ -69,6 +69,53 @@ function getCachingHeaders(filePath: string): Record<string, string> {
   return headers;
 }
 
+function getSecurityHeaders(): Record<string, string> {
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!isProduction) return {};
+
+  const relays = getValidRelays(process.env.RELAYS || '');
+
+  // Normalize, deduplicate, and filter to only wss:// schemes
+  const seen = new Set<string>();
+  const wssUrls: string[] = [];
+  for (const relay of relays) {
+    try {
+      const url = new URL(relay);
+      if (url.protocol === 'wss:') {
+        const href = url.href;
+        if (!seen.has(href)) {
+          seen.add(href);
+          wssUrls.push(href);
+        }
+      }
+    } catch {
+      // Invalid URL, skip
+    }
+  }
+
+  const connectSrc = ["'self'", ...wssUrls].join(' ');
+  // Allow safe external assets required by the UI:
+  // - Google Fonts CSS + font files
+  // - Remote icons/avatars (HTTPS) for NIP-46 connections and gravatar fallback
+  // Keep scripts locked to self only.
+  const csp = [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "img-src 'self' data: https:",
+    `connect-src ${connectSrc}`
+  ].join('; ') + ';';
+
+  return {
+    'Strict-Transport-Security': 'max-age=31536000; includeSubDomains; preload',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': csp
+  };
+}
+
 export async function handleStaticRoute(_req: Request, url: URL): Promise<Response | null> {
   // Headless mode guard - frontend is disabled
   if (HEADLESS) {
@@ -132,7 +179,8 @@ export async function handleStaticRoute(_req: Request, url: URL): Promise<Respon
     return new Response(index_page, {
       headers: { 
         'Content-Type': 'text/html',
-        'Cache-Control': 'no-cache' // HTML should not be cached for SPA routing
+        'Cache-Control': 'no-cache', // HTML should not be cached for SPA routing
+        ...getSecurityHeaders()
       }
     });
   }
