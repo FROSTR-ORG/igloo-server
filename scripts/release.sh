@@ -106,7 +106,7 @@ git checkout -b "$RELEASE_BRANCH"
 echo "📦 Committing version bump..."
 git add package.json
 # Also stage lockfiles if they were updated
-git add bun.lockb package-lock.json yarn.lock 2>/dev/null || true
+git add bun.lock package-lock.json yarn.lock 2>/dev/null || true
 
 git commit -m "chore(release): bump version to v$NEW_VERSION"
 
