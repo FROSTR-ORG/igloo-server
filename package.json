@@ -23,7 +23,7 @@
     "release:patch": "./scripts/release.sh patch",
     "release:minor": "./scripts/release.sh minor",
     "release:major": "./scripts/release.sh major",
-    "postinstall": "node scripts/patch-zod-compat.mjs",
+    "postinstall": "bun scripts/patch-zod-compat.mjs",
     "api:test:get": "bun scripts/api/test-get-endpoints.ts",
     "api:test:get:blocked": "bun scripts/api/test-get-permissions.ts",
     "api:test:get:list": "bun scripts/api/list-get-endpoints-from-openapi.ts",
