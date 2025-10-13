@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [1.0.0] - 2025-10-13
+### Changes since v0.1.9:
+- security-hardened API & WebSocket stack: echo subprotocol, per‑IP caps with reservation/rollback, token‑bucket limits; CSP allows `wss:`; headless `/api/env*` now requires auth.
+- admin API keys (DB mode): issuance and management; session/auth fixes with real TTL handling.
+- consolidate API routes; clearer env/onboarding/auth errors; OpenAPI updated.
+- `/api/env` now returns `RELAYS` as an array; DB/headless env handling avoids credential leakage.
+- WS reliability: echo subprotocol, NaN‑safe env parsing, copy‑timeout cleanup; UI `useCallback` deps fixed.
+- slimmer Docker image; add `.dockerignore` and targeted copy in Dockerfile.
+- add API test scripts under `scripts/api/*` (CORS preflight, GET sweeps, permissions, NIP‑44/04 crypto, WS events, `/sign`).
+- frontend: “API Docs” link and docs improvements.
+- fix: NIP‑46 agent restarts when socket closes; keep‑alive refactor.
+- fix: auth/session storage with real TTL in DB+memory; refresh `lastAccess`; async cleanup.
+- tests added for origin checks, body limits, rate buckets, and 401s.
+- BREAKING: headless `/api/env*` endpoints are auth‑gated; update unauthenticated tooling to include auth.
+- migration: apply `20251008_0009_create_api_keys.sql` and `20251009_0005_add_sessions_table.sql`.
+- note: rebuild Docker image to pick up slimmer layout and `.dockerignore`.
+
 ## [0.1.9] - 2025-09-26
 ### Changes since v0.1.8:
 - Merge pull request #18 from FROSTR-ORG/dev
