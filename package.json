@@ -1,6 +1,6 @@
 {
   "name": "igloo-server",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "scripts": {
     "start": "bun run src/server.ts",
     "start:headless": "if [ \"$HEADLESS\" = \"true\" ]; then echo 'Headless mode: skipping frontend build'; else bun run build; fi && bun run start",
