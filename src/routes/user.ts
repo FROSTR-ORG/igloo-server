@@ -193,7 +193,7 @@ export async function handleUserRoute(
               if (!context.node) {
                 context.addServerLog('info', 'Auto-starting Bifrost node for logged-in user...');
                 try {
-                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPolicies = getUserPeerPolicies(userId!);
                   const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
                   const node = await createNodeWithCredentials(
                     groupCred,
@@ -363,7 +363,7 @@ export async function handleUserRoute(
               await executeUnderNodeLock(async () => {
                 if (!context.node && credentials) {
                   context.addServerLog('info', 'Starting Bifrost node with saved credentials...');
-                  const peerPolicies = getUserPeerPolicies(userId);
+                  const peerPolicies = getUserPeerPolicies(userId!);
                   const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
                   const groupCred = credentials.group_cred!;
                   const shareCred = credentials.share_cred!;
