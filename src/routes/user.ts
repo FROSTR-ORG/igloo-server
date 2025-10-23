@@ -9,7 +9,7 @@ import {
 } from '../db/database.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
-import { createNodeWithCredentials, sendSelfEcho } from '../node/manager.js';
+import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { getNip46Service } from '../nip46/index.js';
 
@@ -348,14 +348,18 @@ export async function handleUserRoute(
               // watchdog/monitoring will handle recovery and connectivity checks.
               // If a deployment wants to gate on echo success, we could add a feature
               // flag to await and enforce success here, but the default is resilience.
-              sendSelfEcho(credentials.group_cred, credentials.share_cred, {
+              const echoOptions = {
                 relays: credentials.relays,
                 relaysEnv: process.env.RELAYS,
                 addServerLog: context.addServerLog,
                 contextLabel: 'db credential update',
                 timeoutMs: 30000
-              }).catch((error) => {
+              } as const;
+              sendSelfEcho(credentials.group_cred, credentials.share_cred, echoOptions).catch((error) => {
                 try { context.addServerLog('warn', 'Self-echo failed after credential update', error); } catch {}
+              });
+              broadcastShareEcho(credentials.group_cred, credentials.share_cred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Credential echo broadcast failed after credential update', error); } catch {}
               });
             }
             // Start the node under the shared lock to avoid races

@@ -20,7 +20,8 @@ import {
   createNodeWithCredentials,
   cleanupMonitoring,
   resetHealthMonitoring,
-  sendSelfEcho
+  sendSelfEcho,
+  broadcastShareEcho
 } from './node/manager.js';
 import { initNip46Service, getNip46Service } from './nip46/index.js'
 import { clearCleanupTimers } from './routes/node-manager.js';
@@ -523,12 +524,16 @@ if (CONST.hasCredentials()) {
       }, activeCredentials?.group, activeCredentials?.share);
 
       if (CONST.HEADLESS) {
-        sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, {
+        const echoOptions = {
           relaysEnv: process.env.RELAYS,
           addServerLog,
           contextLabel: 'headless startup'
-        }).catch((error) => {
+        } as const;
+        sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, echoOptions).catch((error) => {
           try { addServerLog('warn', 'Self-echo failed at headless startup', error); } catch {}
+        });
+        broadcastShareEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, echoOptions).catch((error) => {
+          try { addServerLog('warn', 'Credential echo broadcast failed at headless startup', error); } catch {}
         });
       }
     }

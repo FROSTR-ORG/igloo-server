@@ -33,12 +33,16 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
 }
 
 // Helper function to get valid relay URLs
-export function getValidRelays(envRelays?: string): string[] {
+export function getValidRelays(
+  envRelays?: string,
+  options?: { fallbackToDefault?: boolean }
+): string[] {
   // Use single default relay as requested
   const defaultRelays = ['wss://relay.primal.net'];
+  const fallbackToDefault = options?.fallbackToDefault ?? true;
   
   if (!envRelays) {
-    return defaultRelays;
+    return fallbackToDefault ? defaultRelays : [];
   }
   
   try {
@@ -72,15 +76,22 @@ export function getValidRelays(envRelays?: string): string[] {
     
     // If no valid relays, use default
     if (validRelays.length === 0) {
-      console.warn('No valid relays found, using default relay');
-      return defaultRelays;
+      if (fallbackToDefault) {
+        console.warn('No valid relays found, using default relay');
+        return defaultRelays;
+      }
+      return [];
     }
     
     // Respect user's relay configuration exactly as they set it
     return validRelays;
   } catch (error) {
-    console.warn('Error parsing relay URLs, using default:', error);
-    return defaultRelays;
+    if (fallbackToDefault) {
+      console.warn('Error parsing relay URLs, using default:', error);
+      return defaultRelays;
+    }
+    console.warn('Error parsing relay URLs:', error);
+    return [];
   }
 }
 

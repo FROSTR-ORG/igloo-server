@@ -5,8 +5,12 @@ import {
   extractSelfPubkeyFromCredentials,
   normalizeNodePolicies,
   sendEcho,
-  EchoError
+  EchoError,
+  cleanupBifrostNode,
+  DEFAULT_ECHO_RELAYS,
+  decodeGroup
 } from '@frostr/igloo-core';
+import { finalize_message } from '@cmdcode/nostr-p2p/lib';
 import type { NodePolicyInput, NodeEventConfig } from '@frostr/igloo-core';
 import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
@@ -106,6 +110,34 @@ const CONNECTIVITY_PING_TIMEOUT = (() => {
   }
   return 10000; // default 10s
 })();
+
+async function respondToEchoRequest(node: ServerBifrostNode, msg: any): Promise<boolean> {
+  const requesterPubkey = msg?.env?.pubkey;
+  const echoId = msg?.id;
+  if (typeof requesterPubkey !== 'string' || requesterPubkey.trim().length === 0) {
+    throw new Error('Echo request missing requester pubkey');
+  }
+
+  const peers: any[] | undefined = (node as any).peers;
+  const peerData = Array.isArray(peers)
+    ? peers.find((entry) => entry?.pubkey === requesterPubkey)
+    : undefined;
+
+  const policyPayload = peerData?.policy ?? { send: true, recv: true };
+  const envelope = finalize_message({
+    data: JSON.stringify(policyPayload),
+    id: echoId,
+    tag: '/echo/res'
+  });
+
+  const publishResult = await (node as any).client.publish(envelope, requesterPubkey);
+  if (!publishResult?.ok) {
+    const reason = publishResult?.reason ?? publishResult?.error ?? 'failed to publish echo response';
+    throw new Error(typeof reason === 'string' ? reason : JSON.stringify(reason));
+  }
+
+  return true;
+}
 
 // Publish failure metrics tracking
 interface PublishMetrics {
@@ -1392,6 +1424,23 @@ export function setupNodeEventListeners(
             }
           }
 
+          if (tag === '/echo/req') {
+            const echoMessage = msg as any;
+            const requesterPubkey = echoMessage?.env?.pubkey;
+            void respondToEchoRequest(node, echoMessage).then(() => {
+              addServerLog('bifrost', 'Echo response published', {
+                requesterPubkey,
+                echoId: echoMessage?.id
+              });
+            }).catch((error) => {
+              addServerLog('warn', 'Failed to handle echo request', {
+                error: error instanceof Error ? error.message : String(error),
+                requesterPubkey,
+                echoId: echoMessage?.id
+              });
+            });
+          }
+
           const eventInfo = EVENT_MAPPINGS[tag as keyof typeof EVENT_MAPPINGS];
           if (eventInfo) {
             addServerLog(eventInfo.type, eventInfo.message, msg);
@@ -1597,18 +1646,26 @@ export async function sendSelfEcho(
     eventConfig
   } = options ?? {};
 
-  let resolvedRelays: string[] = [];
-  if (Array.isArray(relays)) {
-    resolvedRelays = relays
+  let resolvedRelays: string[] | null = null;
+  if (Array.isArray(relays) && relays.length > 0) {
+    const normalized = relays
       .filter((relay): relay is string => typeof relay === 'string' && relay.trim().length > 0)
       .map(relay => relay.trim());
+    if (normalized.length > 0) {
+      resolvedRelays = normalized;
+    }
   }
 
-  if (resolvedRelays.length === 0) {
-    resolvedRelays = getValidRelays(relaysEnv);
+  if (!resolvedRelays && typeof relaysEnv === 'string' && relaysEnv.trim().length > 0) {
+    const parsedEnvRelays = getValidRelays(relaysEnv, { fallbackToDefault: false });
+    if (parsedEnvRelays.length > 0) {
+      resolvedRelays = parsedEnvRelays;
+    }
   }
 
-  const uniqueRelays = Array.from(new Set(resolvedRelays));
+  const uniqueRelays = resolvedRelays && resolvedRelays.length > 0
+    ? Array.from(new Set(resolvedRelays))
+    : null;
   const timeout = (() => {
     if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
       return Math.max(1000, Math.min(timeoutMs, 60000));
@@ -1617,7 +1674,7 @@ export async function sendSelfEcho(
   })();
 
   const echoOptions: { relays?: string[]; timeout?: number; eventConfig?: NodeEventConfig } = {};
-  if (uniqueRelays.length > 0) {
+  if (uniqueRelays && uniqueRelays.length > 0) {
     echoOptions.relays = uniqueRelays;
   }
   echoOptions.timeout = timeout;
@@ -1631,12 +1688,14 @@ export async function sendSelfEcho(
 
   const challenge = randomBytes(32).toString('hex');
   const logSuffix = contextLabel ? ` (${contextLabel})` : '';
+  const relaysSource = uniqueRelays && uniqueRelays.length > 0 ? 'explicit' : 'auto';
 
   try {
     const sent = await sendEcho(groupCred, shareCred, challenge, echoOptions);
     if (addServerLog) {
       addServerLog('info', `Broadcasted self echo${logSuffix}`, {
         relays: uniqueRelays,
+        relaysSource,
         timeout,
         sent
       });
@@ -1650,6 +1709,7 @@ export async function sendSelfEcho(
       if (isTimeoutError) {
         addServerLog('info', `Self echo not acknowledged before timeout${logSuffix}`, {
           relays: uniqueRelays,
+          relaysSource,
           timeout,
           softTimeout: true,
           error: errorMessage
@@ -1658,6 +1718,7 @@ export async function sendSelfEcho(
         addServerLog('warn', `Failed to broadcast self echo${logSuffix}`, {
           error: errorMessage,
           relays: uniqueRelays,
+          relaysSource,
           timeout
         });
       }
@@ -1667,6 +1728,184 @@ export async function sendSelfEcho(
       console.warn('[node] Failed to broadcast self echo', error);
     }
     return false;
+  }
+}
+
+const filterValidRelays = (relays: string[] | null | undefined): string[] => {
+  if (!Array.isArray(relays)) return [];
+  const valid: string[] = [];
+  for (const relay of relays) {
+    if (typeof relay !== 'string') continue;
+    const trimmed = relay.trim();
+    if (!trimmed) continue;
+    try {
+      const url = new URL(trimmed);
+      if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+        valid.push(url.toString());
+      }
+    } catch {
+      continue;
+    }
+  }
+  return valid;
+};
+
+function resolveRelaysForBroadcast(
+  groupCred: string,
+  explicitRelays?: string[] | null,
+  relaysEnv?: string
+): string[] {
+  const relaySet = new Set<string>();
+
+  const normalizedExplicit = filterValidRelays(explicitRelays);
+  for (const relay of normalizedExplicit) relaySet.add(relay);
+
+  if (typeof relaysEnv === 'string' && relaysEnv.trim().length > 0) {
+    const envRelays = getValidRelays(relaysEnv, { fallbackToDefault: false });
+    for (const relay of envRelays) relaySet.add(relay);
+  }
+
+  try {
+    const decoded = decodeGroup(groupCred) as unknown;
+    if (decoded && typeof decoded === 'object') {
+      const groupRelaysCandidate =
+        (decoded as any)?.relays ??
+        (decoded as any)?.relayUrls ??
+        (decoded as any)?.relay_urls;
+      const groupRelays = filterValidRelays(groupRelaysCandidate);
+      for (const relay of groupRelays) relaySet.add(relay);
+    }
+  } catch {
+    // Ignore decode errors; we'll fall back to defaults below.
+  }
+
+  // Ensure defaults are always included as a safety net.
+  for (const relay of DEFAULT_ECHO_RELAYS) {
+    try {
+      const url = new URL(relay);
+      if (url.protocol === 'ws:' || url.protocol === 'wss:') {
+        relaySet.add(url.toString());
+      }
+    } catch {
+      // Ignore invalid default relay entries (should not happen).
+    }
+  }
+
+  return Array.from(relaySet);
+}
+
+export async function broadcastShareEcho(
+  groupCred: string,
+  shareCred: string,
+  options?: {
+    relays?: string[] | null;
+    relaysEnv?: string;
+    timeoutMs?: number;
+    addServerLog?: ReturnType<typeof createAddServerLog>;
+    contextLabel?: string;
+  }
+): Promise<boolean> {
+  if (!groupCred || !shareCred) {
+    return false;
+  }
+
+  const {
+    relays,
+    relaysEnv,
+    timeoutMs,
+    addServerLog,
+    contextLabel
+  } = options ?? {};
+
+  const resolvedRelays = resolveRelaysForBroadcast(groupCred, relays, relaysEnv);
+  if (resolvedRelays.length === 0) {
+    if (addServerLog) {
+      addServerLog('warn', `Skipping echo broadcast${contextLabel ? ` (${contextLabel})` : ''} - no valid relays resolved`);
+    }
+    return false;
+  }
+
+  const connectionTimeout = (() => {
+    if (typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+      return Math.max(3000, Math.min(timeoutMs, 60000));
+    }
+    return 10000;
+  })();
+
+  const broadcastLabel = contextLabel ? ` (${contextLabel})` : '';
+  let node: ServerBifrostNode | null = null;
+
+  try {
+    const result = await createConnectedNode(
+      {
+        group: groupCred,
+        share: shareCred,
+        relays: resolvedRelays,
+        connectionTimeout,
+        autoReconnect: false
+      },
+      {
+        enableLogging: false
+      }
+    );
+
+    node = result.node as ServerBifrostNode;
+    const client: any = node?.client;
+    const targetPubkey = typeof (node as any)?.pubkey === 'string' ? (node as any).pubkey : undefined;
+
+    if (!client || typeof client.publish !== 'function' || !targetPubkey) {
+      throw new Error('Echo broadcaster missing publish capability or target pubkey');
+    }
+
+    const envelope = finalize_message({
+      data: 'echo',
+      id: randomBytes(16).toString('hex'),
+      tag: '/echo/req'
+    });
+
+    const publishResult = await client.publish(envelope, targetPubkey);
+    const ok = !!publishResult?.ok;
+
+    if (addServerLog) {
+      if (ok) {
+        addServerLog('info', `Broadcasted credential echo${broadcastLabel}`, {
+          relays: resolvedRelays,
+          acks: publishResult.acks ?? [],
+          fails: publishResult.fails ?? []
+        });
+      } else {
+        addServerLog('warn', `Credential echo broadcast failed${broadcastLabel}`, {
+          relays: resolvedRelays,
+          acks: publishResult?.acks ?? [],
+          fails: publishResult?.fails ?? [],
+          reason: publishResult?.reason ?? publishResult?.error ?? 'unknown'
+        });
+      }
+    }
+
+    return ok;
+  } catch (error) {
+    if (addServerLog) {
+      addServerLog('warn', `Credential echo broadcast error${broadcastLabel}`, {
+        error: error instanceof Error ? error.message : String(error),
+        relays: resolvedRelays
+      });
+    } else {
+      console.warn('[node] Credential echo broadcast error', error);
+    }
+    return false;
+  } finally {
+    if (node) {
+      try {
+        cleanupBifrostNode(node);
+      } catch (cleanupError) {
+        if (addServerLog) {
+          addServerLog('warn', 'Failed to cleanup temporary echo node', {
+            error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          });
+        }
+      }
+    }
   }
 }
 
