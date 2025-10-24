@@ -11,7 +11,7 @@ import {
   decodeGroup
 } from '@frostr/igloo-core';
 import { finalize_message } from '@cmdcode/nostr-p2p/lib';
-import type { NodePolicyInput, NodeEventConfig } from '@frostr/igloo-core';
+import type { NodePolicyInput, NodeEventConfig, EnhancedNodeConfig } from '@frostr/igloo-core';
 import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
@@ -20,7 +20,7 @@ import { mergePolicyInputs } from '../util/peer-policy.js';
 import type { ServerWebSocket } from 'bun';
 import { SimplePool, finalizeEvent, generateSecretKey } from 'nostr-tools';
 
-type ConnectedNodeConfig = Parameters<typeof createConnectedNode>[0];
+type ConnectedNodeConfig = EnhancedNodeConfig;
 type BasicNodeConfig = Parameters<typeof createAndConnectNode>[0];
 
 // Control whether we swallow "benign" relay publish errors (policy rejections, WOT blocks, etc.).
@@ -1859,20 +1859,20 @@ export async function broadcastShareEcho(
   let node: ServerBifrostNode | null = null;
 
   try {
-    const result = await createConnectedNode(
-      {
-        group: groupCred,
-        share: shareCred,
-        relays: resolvedRelays,
-        connectionTimeout,
-        autoReconnect: false
-      },
-      {
-        enableLogging: false
-      }
-    );
+    const connectedConfig = {
+      group: groupCred,
+      share: shareCred,
+      relays: resolvedRelays,
+      connectionTimeout,
+      autoReconnect: false
+    } as ConnectedNodeConfig;
+
+    const result = await createConnectedNode(connectedConfig, {
+      enableLogging: false
+    });
 
     node = result.node as ServerBifrostNode;
+
     const client: any = node?.client;
     const targetPubkey = typeof (node as any)?.pubkey === 'string' ? (node as any).pubkey : undefined;
 
