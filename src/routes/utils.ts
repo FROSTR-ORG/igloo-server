@@ -33,12 +33,16 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
 }
 
 // Helper function to get valid relay URLs
-export function getValidRelays(envRelays?: string): string[] {
+export function getValidRelays(
+  envRelays?: string,
+  options?: { fallbackToDefault?: boolean }
+): string[] {
   // Use single default relay as requested
   const defaultRelays = ['wss://relay.primal.net'];
+  const fallbackToDefault = options?.fallbackToDefault ?? true;
   
   if (!envRelays) {
-    return defaultRelays;
+    return fallbackToDefault ? defaultRelays : [];
   }
   
   try {
@@ -72,15 +76,22 @@ export function getValidRelays(envRelays?: string): string[] {
     
     // If no valid relays, use default
     if (validRelays.length === 0) {
-      console.warn('No valid relays found, using default relay');
-      return defaultRelays;
+      if (fallbackToDefault) {
+        console.warn('No valid relays found, using default relay');
+        return defaultRelays;
+      }
+      return [];
     }
     
     // Respect user's relay configuration exactly as they set it
     return validRelays;
   } catch (error) {
-    console.warn('Error parsing relay URLs, using default:', error);
-    return defaultRelays;
+    if (fallbackToDefault) {
+      console.warn('Error parsing relay URLs, using default:', error);
+      return defaultRelays;
+    }
+    console.warn('Error parsing relay URLs:', error);
+    return [];
   }
 }
 
@@ -713,4 +724,63 @@ export async function withTimeout<T>(
       clearTimeout(timer);
     }
   }
+}
+
+// Helper function to validate relay URLs
+export function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
+  if (!relays) {
+    return { valid: true, urls: undefined };
+  }
+
+  // Parse relays if they're a string
+  let parsedRelays: string[];
+  if (typeof relays === 'string') {
+    try {
+      parsedRelays = JSON.parse(relays);
+    } catch {
+      // If not valid JSON, try splitting by comma
+      parsedRelays = relays.split(',').map((r: string) => r.trim());
+    }
+  } else if (Array.isArray(relays)) {
+    parsedRelays = relays;
+  } else {
+    return { valid: false, error: 'Relays must be a string or array' };
+  }
+
+  // Validate each relay URL
+  for (const relay of parsedRelays) {
+    if (typeof relay !== 'string') {
+      return { valid: false, error: 'Each relay must be a string' };
+    }
+    
+    try {
+      const url = new URL(relay);
+      // Relays should be WebSocket URLs
+      if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
+        return { valid: false, error: `Invalid relay protocol: ${url.protocol}. Must be ws:// or wss://` };
+      }
+    } catch {
+      return { valid: false, error: `Invalid relay URL: ${relay}` };
+    }
+  }
+
+  return { valid: true, urls: parsedRelays };
+}
+
+export function normalizeRelayListForEcho(relays: any): string[] | undefined {
+  const validation = validateRelayUrls(relays);
+  if (!validation.valid || !validation.urls || validation.urls.length === 0) return undefined;
+  const filtered = validation.urls
+    .map((r) => r.trim())
+    .filter((r) => r.length > 0)
+    .filter((r) => {
+      try {
+        const u = new URL(r);
+        return (u.protocol === 'ws:' || u.protocol === 'wss:') &&
+               u.hostname !== 'localhost' && u.hostname !== '127.0.0.1' && u.hostname !== '::1';
+      } catch {
+        return false;
+      }
+    });
+  return filtered.length ? Array.from(new Set(filtered)) : undefined;
 }

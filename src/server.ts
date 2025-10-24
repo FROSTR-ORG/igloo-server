@@ -1,4 +1,4 @@
-import { serve, type ServerWebSocket } from 'bun';
+import { serve, type ServerWebSocket, type WebSocketHandler } from 'bun';
 import { randomUUID } from 'crypto';
 import { cleanupBifrostNode } from '@frostr/igloo-core';
 import { NostrRelay } from './class/relay.js';
@@ -20,7 +20,8 @@ import {
   createNodeWithCredentials,
   cleanupMonitoring,
   resetHealthMonitoring,
-  sendSelfEcho
+  sendSelfEcho,
+  broadcastShareEcho
 } from './node/manager.js';
 import { initNip46Service, getNip46Service } from './nip46/index.js'
 import { clearCleanupTimers } from './routes/node-manager.js';
@@ -145,6 +146,11 @@ let dbModule: DatabaseModule | null = null;
 
 // WebSocket data type for event streams
 type EventStreamData = { isEventStream: true };
+type AppWebSocketData = {
+  isEventStream: boolean;
+  clientIp?: string;
+  counted?: boolean;
+};
 
 // Event streaming for frontend - WebSocket connections
 const eventStreams = new Set<ServerWebSocket<EventStreamData>>();
@@ -523,12 +529,16 @@ if (CONST.hasCredentials()) {
       }, activeCredentials?.group, activeCredentials?.share);
 
       if (CONST.HEADLESS) {
-        sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, {
+        const echoOptions = {
           relaysEnv: process.env.RELAYS,
           addServerLog,
           contextLabel: 'headless startup'
-        }).catch((error) => {
+        } as const;
+        sendSelfEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, echoOptions).catch((error) => {
           try { addServerLog('warn', 'Self-echo failed at headless startup', error); } catch {}
+        });
+        broadcastShareEcho(CONST.GROUP_CRED!, CONST.SHARE_CRED!, echoOptions).catch((error) => {
+          try { addServerLog('warn', 'Credential echo broadcast failed at headless startup', error); } catch {}
         });
       }
     }
@@ -591,10 +601,10 @@ const WS_MSG_BURST = Number.isFinite(parsedMsgBurst) && parsedMsgBurst > 0
 const WS_POLICY_CLOSE = 1008; // Policy violation
 
 const wsConnectionsPerIp = new Map<string, number>();
-const wsRateState = new WeakMap<ServerWebSocket<any>, { tokens: number; lastRefill: number }>();
-const wsMeta = new WeakMap<ServerWebSocket<any>, { ip: string; counted: boolean }>();
+const wsRateState = new WeakMap<ServerWebSocket<AppWebSocketData>, { tokens: number; lastRefill: number }>();
+const wsMeta = new WeakMap<ServerWebSocket<AppWebSocketData>, { ip: string; counted: boolean }>();
 
-function tryConsumeWsToken(ws: ServerWebSocket<any>): boolean {
+function tryConsumeWsToken(ws: ServerWebSocket<AppWebSocketData>): boolean {
   let state = wsRateState.get(ws);
   const now = Date.now();
   if (!state) {
@@ -625,8 +635,8 @@ function decIp(ip: string | undefined) {
 }
 
 // WebSocket handler for event streaming and Nostr relay
-const websocketHandler = {
-  message(ws: ServerWebSocket<any>, message: string | Buffer) {
+const websocketHandler: WebSocketHandler<AppWebSocketData> = {
+  message(ws: ServerWebSocket<AppWebSocketData>, message: string | Buffer<ArrayBuffer>) {
     // Check if this is an event stream WebSocket or relay WebSocket
     if (ws.data?.isEventStream) {
       // Event stream is one-way; close on abuse
@@ -639,11 +649,11 @@ const websocketHandler = {
         try { ws.close(WS_POLICY_CLOSE, 'Rate limit exceeded'); } catch {}
         return;
       }
-      // Delegate to NostrRelay handler
-      return relay.handler().message?.(ws, message);
+      // Delegate to NostrRelay handler with type cast
+      return relay.handler().message?.(ws as any, message);
     }
   },
-  open(ws: ServerWebSocket<any>) {
+  open(ws: ServerWebSocket<AppWebSocketData>) {
     const ipFromData = (ws as any).data?.clientIp || 'unknown';
     wsMeta.set(ws, { ip: ipFromData, counted: true });
     if (ws.data?.isEventStream) {
@@ -662,11 +672,11 @@ const websocketHandler = {
         console.error('Error sending initial event:', error);
       }
     } else {
-      // Delegate to NostrRelay handler
-      return relay.handler().open?.(ws);
+      // Delegate to NostrRelay handler with type cast
+      return relay.handler().open?.(ws as any);
     }
   },
-  close(ws: ServerWebSocket<any>, code: number, reason: string) {
+  close(ws: ServerWebSocket<AppWebSocketData>, code: number, reason: string) {
     if (ws.data?.isEventStream) {
       eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
     }
@@ -680,23 +690,8 @@ const websocketHandler = {
       decIp((ws as any).data?.clientIp);
     }
     if (!ws.data?.isEventStream) {
-      return relay.handler().close?.(ws, code, reason);
-    }
-  },
-  error(ws: ServerWebSocket<any>, error: Error) {
-    // Check if this is an event stream WebSocket
-    if (ws.data?.isEventStream) {
-      console.error('Event stream WebSocket error:', error);
-      // Remove from event streams to prevent further errors (with type assertion)
-      eventStreams.delete(ws as ServerWebSocket<EventStreamData>);
-    } else {
-      // Delegate to NostrRelay handler if it has an error method
-      const relayHandler = relay.handler();
-      if ('error' in relayHandler && typeof relayHandler.error === 'function') {
-        return relayHandler.error(ws, error);
-      } else {
-        console.error('Relay WebSocket error:', error);
-      }
+      // Delegate to NostrRelay handler with type cast, omitting reason as it's not supported
+      return relay.handler().close?.(ws as any, code, reason);
     }
   }
 };
@@ -719,7 +714,7 @@ function buildJsonError(body: any, status = 500, requestId?: string): Response {
   });
 }
 
-const server = serve({
+const server = serve<AppWebSocketData>({
   port: CONST.HOST_PORT,
   hostname: CONST.HOST_NAME,
   websocket: websocketHandler,

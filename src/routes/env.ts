@@ -10,57 +10,18 @@ import {
   parseJsonRequestBody,
   getCredentialsSavedAt,
   isContentLengthWithin,
-  DEFAULT_MAX_JSON_BODY
+  DEFAULT_MAX_JSON_BODY,
+  validateRelayUrls,
+  normalizeRelayListForEcho
 } from './utils.js';
 import { hasCredentials, HEADLESS } from '../const.js';
-import { createNodeWithCredentials } from '../node/manager.js';
+import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
 import { getUserCredentials, getUserById } from '../db/database.js';
 import { timingSafeEqual } from 'crypto';
-
-// Helper function to validate relay URLs
-function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
-  if (!relays) {
-    return { valid: true, urls: undefined };
-  }
-
-  // Parse relays if they're a string
-  let parsedRelays: string[];
-  if (typeof relays === 'string') {
-    try {
-      parsedRelays = JSON.parse(relays);
-    } catch {
-      // If not valid JSON, try splitting by comma
-      parsedRelays = relays.split(',').map((r: string) => r.trim());
-    }
-  } else if (Array.isArray(relays)) {
-    parsedRelays = relays;
-  } else {
-    return { valid: false, error: 'Relays must be a string or array' };
-  }
-
-  // Validate each relay URL
-  for (const relay of parsedRelays) {
-    if (typeof relay !== 'string') {
-      return { valid: false, error: 'Each relay must be a string' };
-    }
-    
-    try {
-      const url = new URL(relay);
-      // Relays should be WebSocket URLs
-      if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
-        return { valid: false, error: `Invalid relay protocol: ${url.protocol}. Must be ws:// or wss://` };
-      }
-    } catch {
-      return { valid: false, error: `Invalid relay URL: ${relay}` };
-    }
-  }
-
-  return { valid: true, urls: parsedRelays };
-}
 
 // Wrapper function to use shared node creation with env variables
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
@@ -422,12 +383,49 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                   updatingCredentials,
                   updatingRelays
                 });
+
+                const echoPayload = (() => {
+                  if (!updatingCredentials) return null;
+                  const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
+                  const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
+                  if (!groupCred || !shareCred) return null;
+                  const relaysArray = normalizeRelayListForEcho(env.RELAYS);
+                  const relaysEnvValue = Array.isArray(env.RELAYS)
+                    ? env.RELAYS.join(',')
+                    : typeof env.RELAYS === 'string'
+                      ? env.RELAYS
+                      : undefined;
+                  return {
+                    groupCred,
+                    shareCred,
+                    relaysArray,
+                    relaysEnvValue,
+                    contextLabel: HEADLESS ? 'headless env credential update' : 'env credential update'
+                  };
+                })();
+
                 // Serialize node restart under the global node lock. createAndConnectServerNode()
                 // calls context.updateNode(newNode), which performs prior-node cleanup and
                 // listener re-wiring atomically to avoid resource leaks or races.
                 await executeUnderNodeLock(async () => {
                   await createAndConnectServerNode(env, context);
                 }, context);
+
+                if (echoPayload) {
+                  const echoOptions = {
+                    relays: echoPayload.relaysArray,
+                    relaysEnv: echoPayload.relaysEnvValue,
+                    addServerLog: context.addServerLog,
+                    contextLabel: echoPayload.contextLabel,
+                    timeoutMs: 30000
+                  } as const;
+                  sendSelfEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                    try { context.addServerLog('warn', 'Self-echo failed after env credential update', error); } catch {}
+                  });
+                  broadcastShareEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                    try { context.addServerLog('warn', 'Credential echo broadcast failed after env credential update', error); } catch {}
+                  });
+                }
               } catch (error) {
                 context.addServerLog('error', 'Error recreating Bifrost node', error);
                 throw (error instanceof Error) ? error : new Error(String(error));
@@ -558,6 +556,33 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
                 { success: false, error: 'Failed to apply credentials to node' },
                 { status: 500, headers }
               );
+            }
+
+            const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
+            const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
+            if (groupCred && shareCred) {
+              const relaysArray = normalizeRelayListForEcho(env.RELAYS);
+              const relaysEnvValue = Array.isArray(env.RELAYS)
+                ? env.RELAYS.join(',')
+                : typeof env.RELAYS === 'string'
+                  ? env.RELAYS
+                  : undefined;
+
+              const echoOptions = {
+                relays: relaysArray,
+                relaysEnv: relaysEnvValue,
+                addServerLog: context.addServerLog,
+                contextLabel: 'headless env share upload',
+                timeoutMs: 30000
+              } as const;
+
+              sendSelfEcho(groupCred, shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Self-echo failed after env share upload', error); } catch {}
+              });
+
+              broadcastShareEcho(groupCred, shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Credential echo broadcast failed after env share upload', error); } catch {}
+              });
             }
 
             return Response.json(
