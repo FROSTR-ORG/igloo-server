@@ -1,5 +1,29 @@
 # CHANGELOG
 
+## [1.0.1] — 2025-10-24
+
+### Highlights
+
+* **Echo enhancements**: devices now **respond to incoming echo requests** and can **broadcast echoes** to peers; echo is triggered on **credential/relay updates** and during **headless startup**. ([GitHub][1])
+
+### Added
+
+* Respond-to-echo flow + broadcast via a temporary node (create → publish `/echo/req` → cleanup). ([GitHub][1])
+
+### Changed
+
+* Relay handling: validation/normalization, localhost filtering, sensible fallbacks, and improved resolution for echo flows. ([GitHub][1])
+* Dependency updates including `@frostr/igloo-core`, `@frostr/bifrost`, `nostr-tools`, `yaml`, Tailwind, types, and tooling. ([GitHub][1])
+
+### Fixed
+
+* Broadcast echo events fire reliably on **credential updates**. ([GitHub][2])
+* Type regressions in broadcast-echo and WS handler; test fixes and small edge-case cleanups. ([GitHub][2])
+
+### Notes
+
+* Version bump commit: **1.0.1**. ([GitHub][2])
+
 ## [1.0.0] - 2025-10-13
 ### Changes since v0.1.9:
 - security-hardened API & WebSocket stack: echo subprotocol, per‑IP caps with reservation/rollback, token‑bucket limits; CSP allows `wss:`; headless `/api/env*` now requires auth.
@@ -91,3 +115,6 @@
 - feat: merge CI/CD workflows and release automation
 - feat: add comprehensive CI/CD workflows and release automation
 - Merge pull request #4 from FROSTR-ORG/feature/static-igloo-frontend
+
+[1]: https://github.com/FROSTR-ORG/igloo-server/pull/29
+[2]: https://github.com/FROSTR-ORG/igloo-server/commits/master
