@@ -1,5 +1,5 @@
 /*
- Sweep all GET paths declared in docs/openapi.yaml with API key.
+ Sweep all GET paths declared in docs/openapi/openapi.yaml with API key.
  - Useful to see which endpoints are accessible vs. blocked with API key auth
  - Summary by status code at the end (does not fail the process)
  */
@@ -14,7 +14,7 @@ function u(p: string) { return p.startsWith('http') ? p : `${BASE_URL}${p}`; }
 function auth(): HeadersInit { return API_KEY ? { 'X-API-Key': API_KEY, Accept: 'application/json' } : { Accept: 'application/json' }; }
 
 async function loadGetPaths(): Promise<string[]> {
-  const raw = await readFile('docs/openapi.yaml', 'utf8').catch(() => null);
+  const raw = await readFile('docs/openapi/openapi.yaml', 'utf8').catch(() => null);
   if (!raw) return [];
   const doc = YAML.parse(raw);
   const paths = doc?.paths || {};
@@ -36,7 +36,7 @@ async function main() {
   if (!API_KEY) console.log('Warning: API_KEY not set; probing without key');
   const paths = await loadGetPaths();
   if (paths.length === 0) {
-    console.log('No GET endpoints found in docs/openapi.yaml');
+    console.log('No GET endpoints found in docs/openapi/openapi.yaml');
     return;
   }
   const results = await Promise.all(paths.map(probe));
@@ -54,4 +54,3 @@ async function main() {
 }
 
 main();
-

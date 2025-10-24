@@ -4,7 +4,8 @@ This directory contains the comprehensive OpenAPI 3.1 specification for the Iglo
 
 ## Files
 
-- **`openapi.yaml`** - Complete OpenAPI 3.1 specification in YAML format
+- **`openapi/openapi.yaml`** - Complete OpenAPI 3.1 specification in YAML format
+- **`openapi/openapi.json`** - Bundled JSON representation generated from the YAML spec
 - **`README.md`** - This documentation file
 
 ## Accessing the Documentation
@@ -97,7 +98,7 @@ This ensures the YAML syntax is correct and the specification is well-formed.
 
 When adding or modifying API endpoints:
 
-1. Update the corresponding section in `openapi.yaml`
+1. Update the corresponding section in `openapi/openapi.yaml`
 2. Add/update request and response schemas
 3. Include relevant examples
 4. Validate the specification: `bun run docs:validate`

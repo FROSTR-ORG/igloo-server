@@ -1,0 +1,42 @@
+version: "3.8"
+
+services:
+  igloo:
+    image: ghcr.io/frostr-org/igloo-server:umbrel-${IGLOO_VERSION:-dev}
+    build:
+      context: ../..
+      dockerfile: packages/umbrel/igloo/Dockerfile
+    restart: unless-stopped
+    environment:
+      ADMIN_SECRET: ${APP_PASSWORD:?set by Umbrel}
+      AUTH_ENABLED: "true"
+      RATE_LIMIT_ENABLED: "true"
+      NODE_ENV: production
+      HEADLESS: "false"
+      DB_PATH: /app/data/igloo.db
+      TRUST_PROXY: "true"
+      HOST_NAME: 0.0.0.0
+      HOST_PORT: "8002"
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://umbrel.local}
+    volumes:
+      - app-data:/app/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8002/api/status || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+  app_proxy:
+    image: ${APP_PROXY_IMAGE:-ghcr.io/getumbrel/umbrel-app-proxy:latest}
+    restart: unless-stopped
+    environment:
+      APP_HOST: igloo
+      APP_PORT: "8002"
+      PROXY_AUTH_WHITELIST: /api/*,/api/docs/*,/api/events/*
+    depends_on:
+      - igloo
+
+volumes:
+  app-data:
+    driver: local
