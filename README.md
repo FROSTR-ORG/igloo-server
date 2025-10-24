@@ -2,7 +2,7 @@
 
 Server‑based signing device and personal ephemeral relay for the FROSTR protocol. Igloo provides an always‑on signing node with an optional web UI for configuration and monitoring. Built on @frostr/igloo-core.
 
-## What It Is (1‑minute)
+## What It Is
 - Threshold Schnorr signing for Nostr using your FROSTR shares (k‑of‑n). The full private key is never reconstructed.
 - Two modes: Database (multi‑user, encrypted creds, web UI) or Headless (env‑only, API‑first, no UI).
 - Includes an in‑memory relay for dev/tests; use production relays in real deployments.
