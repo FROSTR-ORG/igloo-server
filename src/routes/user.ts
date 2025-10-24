@@ -7,7 +7,7 @@ import {
   getUserPeerPolicies,
   type UserCredentials
 } from '../db/database.js';
-import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
+import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY, normalizeRelayListForEcho } from './utils.js';
 import { PrivilegedRouteContext, RequestAuth } from './types.js';
 import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
@@ -349,7 +349,7 @@ export async function handleUserRoute(
               // If a deployment wants to gate on echo success, we could add a feature
               // flag to await and enforce success here, but the default is resilience.
               const echoOptions = {
-                relays: credentials.relays,
+                relays: normalizeRelayListForEcho(credentials.relays),
                 relaysEnv: process.env.RELAYS,
                 addServerLog: context.addServerLog,
                 contextLabel: 'db credential update',

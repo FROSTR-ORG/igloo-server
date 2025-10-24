@@ -113,15 +113,32 @@ const CONNECTIVITY_PING_TIMEOUT = (() => {
 
 async function respondToEchoRequest(node: ServerBifrostNode, msg: any): Promise<boolean> {
   const requesterPubkey = msg?.env?.pubkey;
-  const echoId = msg?.id;
   if (typeof requesterPubkey !== 'string' || requesterPubkey.trim().length === 0) {
     throw new Error('Echo request missing requester pubkey');
   }
+  const trimmedPubkey = requesterPubkey.trim();
 
-  const peers: any[] | undefined = (node as any).peers;
-  const peerData = Array.isArray(peers)
-    ? peers.find((entry) => entry?.pubkey === requesterPubkey)
-    : undefined;
+  const peerCollections = [
+    (node as any)?._peers,
+    (node as any)?.peers
+  ];
+
+  let peerData: any | undefined;
+  for (const collection of peerCollections) {
+    if (!Array.isArray(collection)) continue;
+    const matched = collection.find((entry: any) => entry?.pubkey === trimmedPubkey);
+    if (matched) {
+      peerData = matched;
+      break;
+    }
+  }
+
+  if (!peerData) {
+    return false;
+  }
+
+  const echoIdSource = typeof msg?.id === 'string' ? msg.id.trim() : '';
+  const echoId = echoIdSource.length > 0 ? echoIdSource : randomBytes(16).toString('hex');
 
   const policyPayload = peerData?.policy ?? { send: true, recv: true };
   const envelope = finalize_message({
@@ -130,7 +147,7 @@ async function respondToEchoRequest(node: ServerBifrostNode, msg: any): Promise<
     tag: '/echo/res'
   });
 
-  const publishResult = await (node as any).client.publish(envelope, requesterPubkey);
+  const publishResult = await (node as any).client.publish(envelope, trimmedPubkey);
   if (!publishResult?.ok) {
     const reason = publishResult?.reason ?? publishResult?.error ?? 'failed to publish echo response';
     throw new Error(typeof reason === 'string' ? reason : JSON.stringify(reason));
@@ -1427,11 +1444,17 @@ export function setupNodeEventListeners(
           if (tag === '/echo/req') {
             const echoMessage = msg as any;
             const requesterPubkey = echoMessage?.env?.pubkey;
-            void respondToEchoRequest(node, echoMessage).then(() => {
-              addServerLog('bifrost', 'Echo response published', {
-                requesterPubkey,
-                echoId: echoMessage?.id
-              });
+            void respondToEchoRequest(node, echoMessage).then((handled) => {
+              if (handled) {
+                addServerLog('bifrost', 'Echo response published', {
+                  requesterPubkey,
+                  echoId: echoMessage?.id
+                });
+              } else {
+                addServerLog('info', 'Ignored echo request from unknown peer', {
+                  requesterPubkey
+                });
+              }
             }).catch((error) => {
               addServerLog('warn', 'Failed to handle echo request', {
                 error: error instanceof Error ? error.message : String(error),

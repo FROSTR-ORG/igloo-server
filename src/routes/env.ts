@@ -10,7 +10,9 @@ import {
   parseJsonRequestBody,
   getCredentialsSavedAt,
   isContentLengthWithin,
-  DEFAULT_MAX_JSON_BODY
+  DEFAULT_MAX_JSON_BODY,
+  validateRelayUrls,
+  normalizeRelayListForEcho
 } from './utils.js';
 import { hasCredentials, HEADLESS } from '../const.js';
 import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
@@ -20,55 +22,6 @@ import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
 import { getUserCredentials, getUserById } from '../db/database.js';
 import { timingSafeEqual } from 'crypto';
-
-// Helper function to validate relay URLs
-function validateRelayUrls(relays: any): { valid: boolean; urls?: string[]; error?: string } {
-  if (!relays) {
-    return { valid: true, urls: undefined };
-  }
-
-  // Parse relays if they're a string
-  let parsedRelays: string[];
-  if (typeof relays === 'string') {
-    try {
-      parsedRelays = JSON.parse(relays);
-    } catch {
-      // If not valid JSON, try splitting by comma
-      parsedRelays = relays.split(',').map((r: string) => r.trim());
-    }
-  } else if (Array.isArray(relays)) {
-    parsedRelays = relays;
-  } else {
-    return { valid: false, error: 'Relays must be a string or array' };
-  }
-
-  // Validate each relay URL
-  for (const relay of parsedRelays) {
-    if (typeof relay !== 'string') {
-      return { valid: false, error: 'Each relay must be a string' };
-    }
-    
-    try {
-      const url = new URL(relay);
-      // Relays should be WebSocket URLs
-      if (url.protocol !== 'ws:' && url.protocol !== 'wss:') {
-        return { valid: false, error: `Invalid relay protocol: ${url.protocol}. Must be ws:// or wss://` };
-      }
-    } catch {
-      return { valid: false, error: `Invalid relay URL: ${relay}` };
-    }
-  }
-
-  return { valid: true, urls: parsedRelays };
-}
-
-function normalizeRelayListForEcho(relays: any): string[] | undefined {
-  const validation = validateRelayUrls(relays);
-  if (!validation.valid || !validation.urls || validation.urls.length === 0) {
-    return undefined;
-  }
-  return validation.urls;
-}
 
 // Wrapper function to use shared node creation with env variables
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
