@@ -23,7 +23,9 @@ tor: true
 port: 8002
 icon: ./assets/icon.png
 gallery:
-  - ./assets/gallery/dashboard.png
-  - ./assets/gallery/relays.png
+  - ./assets/gallery/login.png
+  - ./assets/gallery/signer.png
+  - ./assets/gallery/api-keys.png
+  - ./assets/gallery/nip46.png
 dependencies: []
 deterministic: false

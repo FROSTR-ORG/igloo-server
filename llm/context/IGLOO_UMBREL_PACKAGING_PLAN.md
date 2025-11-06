@@ -85,6 +85,6 @@ This document outlines the scoped deliverables, configuration defaults, and oper
 ---
 
 **Next Implementation Steps**
-1. Replace placeholder artwork in `packages/umbrel/igloo/assets/` with final icon/gallery captures.
+1. Keep `packages/umbrel/igloo/assets/` updated with current icon/gallery captures (refresh when the UI changes).
 2. Pin `docker-compose.yml` and `umbrel-app.yml` to the published image digest during release and document the update process.
 3. Run local Umbrel sideload tests using `packages/umbrel/igloo/docker-compose.yml` before submitting to the Umbrel app store.

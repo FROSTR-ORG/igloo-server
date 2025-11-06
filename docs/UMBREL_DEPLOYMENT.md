@@ -57,7 +57,7 @@ Record the resulting digest (e.g., `sha256:...`) for the manifest and compose fi
 1. Update `packages/umbrel/igloo/umbrel-app.yml`:
    - Set `version` to the igloo-server tag (e.g., `0.7.0`).
    - Add concise `releaseNotes`.
-   - Replace the icon/gallery placeholders with final artwork and ensure paths match.
+   - Confirm the icon (512×512) and gallery screenshots (16:9) reflect the current UI and ensure paths match.
 2. Replace `packages/umbrel/igloo/docker-compose.yml` `build:` section with the published image reference, for example:
 
    ```yaml
@@ -94,7 +94,7 @@ Visit `http://localhost:8002` to confirm the UI, API (`/api/status`), and websoc
    - API endpoints work via Umbrel’s proxy and Tor (`http://<tor-address>`).
    - Restart preserves SQLite state under `/app/data`.
 
-4. Capture fresh gallery screenshots and replace the placeholder PNGs.
+4. Capture fresh gallery screenshots and update the PNGs if the UI changed.
 
 ---
 

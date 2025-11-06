@@ -7,14 +7,14 @@ This directory contains the Umbrel-specific packaging assets for deploying Igloo
 - `docker-compose.yml`: local bundle for development/sideload testing; release versions should pin the image digest.
 - `umbrel-app.yml`: Umbrel application manifest metadata.
 - `exports.sh`: surfaces key runtime details (admin secret, clearnet/Tor URLs) to the Umbrel dashboard.
-- `assets/`: placeholder icon and gallery images – replace with real captures before release.
+- `assets/`: Umbrel icon (512×512 PNG) and gallery screenshots (≥1024×768, 16:9).
 
 ## Release Checklist
 1. Build and publish multi-architecture images using `docker buildx bake` or the GitHub Actions release workflow:
    - `ghcr.io/frostr-org/igloo-server:umbrel-latest`
    - `ghcr.io/frostr-org/igloo-server:umbrel-<version>`
 2. Update `umbrel-app.yml` with the new semantic `version`, release notes, and pinned image digest.
-3. Replace the placeholder artwork in `assets/` with final 512×512 icon and 1024×768 gallery captures.
+3. Refresh the gallery captures whenever the UI meaningfully changes (keep them 16:9).
 4. Regenerate `exports.sh` output examples if URLs change (e.g., when exposing new endpoints).
 5. Run the Umbrel sideload smoke tests via `docker-compose -f packages/umbrel/igloo/docker-compose.yml up` on an Umbrel dev kit.
 
