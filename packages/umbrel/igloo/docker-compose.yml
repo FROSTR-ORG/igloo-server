@@ -1,10 +1,8 @@
-version: "3.8"
-
 services:
   igloo:
     image: ghcr.io/frostr-org/igloo-server:umbrel-${IGLOO_VERSION:-dev}
     build:
-      context: ../..
+      context: ../../..
       dockerfile: packages/umbrel/igloo/Dockerfile
     restart: unless-stopped
     environment:
