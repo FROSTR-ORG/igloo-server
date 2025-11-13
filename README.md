@@ -68,7 +68,7 @@ Reverse proxy (nginx) and cloud steps are in docs/DEPLOY.md.
 
 ## API & Docs
 - Swagger UI: http://localhost:8002/api/docs (self‑hosted; run `bun run docs:vendor` if assets missing).
-- OpenAPI: docs/openapi.yaml or `/api/docs/openapi.{json|yaml}`.
+- OpenAPI: docs/openapi/openapi.yaml or `/api/docs/openapi.{json|yaml}`.
 - Auth: API Key, Basic, or session; WS `/api/events` supports subprotocol hints (`apikey.<TOKEN>`, `bearer.<TOKEN>`, `session.<ID>`).
 - Validate spec: `bun run docs:validate`.
 
@@ -103,7 +103,7 @@ See SECURITY.md for hardening and CSP details.
 - “Build required”: run `bun run build` (UI assets are not committed).
 - UI not updating: prod caches assets; rebuild + restart. Dev disables cache.
 - Cred/relay issues: verify `bfgroup1...` / `bfshare1...` and reachable relays.
-- More: SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi.yaml (API).
+- More: SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi/openapi.yaml (API).
 
 ## Development
 ```bash
