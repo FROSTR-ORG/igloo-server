@@ -1,9 +1,6 @@
 services:
   igloo:
-    image: ghcr.io/frostr-org/igloo-server:umbrel-${IGLOO_VERSION:-dev}
-    build:
-      context: ../../..
-      dockerfile: packages/umbrel/igloo/Dockerfile
+    image: ghcr.io/frostr-org/igloo-server:umbrel-dev
     restart: unless-stopped
     environment:
       ADMIN_SECRET: ${APP_PASSWORD:?set by Umbrel}
