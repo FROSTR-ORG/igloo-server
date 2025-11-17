@@ -1,8 +1,6 @@
 manifestVersion: 1
-id: frostr-igloo
-category:
-  - bitcoin
-  - lightning
+id: igloo-server
+category: nostr
 name: Igloo Server
 version: 0.0.0-umbrel-dev
 tagline: Multi-user FROSTR signing server with persistent relay.
@@ -28,4 +26,3 @@ gallery:
   - ./assets/gallery/api-keys.png
   - ./assets/gallery/nip46.png
 dependencies: []
-deterministic: false
