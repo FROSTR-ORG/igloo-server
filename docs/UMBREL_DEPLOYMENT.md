@@ -22,7 +22,12 @@ This guide walks through packaging, sideloading, and releasing the Umbrel editio
 ---
 
 ## 3. Build & Publish Images
-GitHub Actions already handles multi-arch builds on release, but you can build locally for testing.
+GitHub Actions now handles both dev and release builds:
+
+- `.github/workflows/umbrel-dev.yml` (new) runs on every push to `master` or `develop`, and can be triggered manually. It publishes `ghcr.io/frostr-org/igloo-server:umbrel-dev` plus a commit-specific tag `ghcr.io/frostr-org/igloo-server:umbrel-dev-<git-sha>`. Umbrel community store bundles should track this tag if you want the "Install" button to succeed between formal releases.
+- `.github/workflows/release.yml` remains the source of immutable release tags (`ghcr.io/frostr-org/igloo-server:umbrel-<version>` and `:umbrel-latest`) after the release job completes.
+
+You can still build locally for testing.
 
 ```bash
 # Build multi-arch image (uses the Umbrel Dockerfile)
@@ -45,11 +50,20 @@ docker buildx build \
   .
 ```
 
-For official releases, trigger the **Release** workflow (`.github/workflows/release.yml`). It publishes:
+For official releases, trigger the **Release** workflow (`.github/workflows/release.yml`) as before. It publishes:
 - `ghcr.io/frostr-org/igloo-server:umbrel-latest`
 - `ghcr.io/frostr-org/igloo-server:umbrel-<version>`
 
 Record the resulting digest (e.g., `sha256:...`) for the manifest and compose file.
+
+After any push (dev or release), you can verify the image exists on GHCR directly from your Umbrel box or local machine:
+
+```bash
+docker pull ghcr.io/frostr-org/igloo-server:umbrel-dev
+docker inspect ghcr.io/frostr-org/igloo-server:umbrel-dev --format '{{ .Id }}'
+```
+
+If the pull succeeds without `manifest unknown`, Umbrel's installer will also be able to fetch it.
 
 ---
 
