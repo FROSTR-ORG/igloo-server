@@ -39,10 +39,10 @@ RUN apt-get update \
 
 # Copy package manifest and required scripts
 COPY package.json bun.lock ./
-COPY scripts/patch-zod-compat.mjs ./scripts/patch-zod-compat.mjs
+COPY scripts ./scripts
 
 # Install production dependencies
-RUN bun install --production --frozen-lockfile
+RUN bun install --production --frozen-lockfile && chmod +x ./scripts/umbrel-entrypoint.sh
 
 # Bring in compiled application artifacts
 COPY --from=build /app/src ./src
@@ -62,5 +62,5 @@ VOLUME ["${APP_HOME}/data"]
 
 USER ${IGLOO_UID}:${IGLOO_GID}
 
-ENTRYPOINT ["tini", "--"]
+ENTRYPOINT ["tini", "--", "./scripts/umbrel-entrypoint.sh"]
 CMD ["bun", "start"]

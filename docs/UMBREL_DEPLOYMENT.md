@@ -26,6 +26,7 @@ GitHub Actions now handles both dev and release builds:
 
 - `.github/workflows/umbrel-dev.yml` (new) runs on every push to `master` or `develop`, and can be triggered manually. It publishes `ghcr.io/frostr-org/igloo-server:umbrel-dev` plus a commit-specific tag `ghcr.io/frostr-org/igloo-server:umbrel-dev-<git-sha>`. Umbrel community store bundles should track this tag if you want the "Install" button to succeed between formal releases.
 - `.github/workflows/release.yml` remains the source of immutable release tags (`ghcr.io/frostr-org/igloo-server:umbrel-<version>` and `:umbrel-latest`) after the release job completes.
+- `scripts/umbrel-entrypoint.sh` runs inside the Umbrel image before `bun start`, making sure `/app/data` exists and is owned by UID/GID 1000 so fresh Umbrel installs don't need manual chmod/chown steps.
 
 You can still build locally for testing.
 
