@@ -2,7 +2,7 @@ import { Database } from 'bun:sqlite';
 import { password as BunPassword } from 'bun';
 import { randomBytes, createCipheriv, createDecipheriv, pbkdf2Sync, createHash, timingSafeEqual } from 'node:crypto';
 import path from 'path';
-import { existsSync, mkdirSync, chmodSync } from 'fs';
+import { existsSync, mkdirSync, chmodSync, statSync } from 'fs';
 import { sanitizePeerPolicyEntries, type PeerPolicyRecord } from '../util/peer-policy.js';
 import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '../config/crypto.js';
 
@@ -13,13 +13,38 @@ const isEnvPathFile = !!envPath && (envPath.endsWith('.db') || path.extname(envP
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
 
-// Ensure data directory exists with secure permissions
-if (!existsSync(DB_DIR)) {
-  mkdirSync(DB_DIR, { recursive: true, mode: 0o700 });
-} else {
-  // Enforce secure permissions on existing directory
-  chmodSync(DB_DIR, 0o700);
-}
+/**
+ * Umbrel mounts `/app/data` from the host and may enforce permissions outside
+ * the container's user namespace. Attempt to set the desired permissions, but
+ * don't crash if the filesystem rejects `chmod` (e.g., because the host owns
+ * the directory). We still log so operators can fix it manually.
+ */
+const ensureDataDirSecure = (): void => {
+  const desiredMode = 0o700;
+  try {
+    if (!existsSync(DB_DIR)) {
+      mkdirSync(DB_DIR, { recursive: true, mode: desiredMode });
+      return;
+    }
+
+    const currentMode = statSync(DB_DIR).mode & 0o777;
+    if (currentMode !== desiredMode) {
+      chmodSync(DB_DIR, desiredMode);
+    }
+  } catch (error) {
+    const err = error as NodeJS.ErrnoException;
+    if (err?.code === 'EPERM' || err?.code === 'EACCES') {
+      console.warn(
+        `[db] Unable to set permissions on ${DB_DIR} (${err.code}). ` +
+        'Continuing; please ensure the directory is owned by the igloo user (UID 1000).'
+      );
+      return;
+    }
+    throw error;
+  }
+};
+
+ensureDataDirSecure();
 
 /**
  * @security
