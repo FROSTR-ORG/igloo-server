@@ -1,0 +1,28 @@
+manifestVersion: 1
+id: igloo-server
+category: social
+name: Igloo Server
+version: 0.0.0-umbrel-dev
+tagline: Multi-user FROSTR signing server with persistent relay.
+description: |
+  Igloo Server packages the full FROSTR multi-user signing experience for Umbrel.
+  It runs in database mode by default, offering a built-in ephemeral relay, rate limiting,
+  and a guided onboarding flow for secure Nostr signing.
+developer: FROSTR
+website: https://github.com/FROSTR-ORG/igloo-server
+repo: https://github.com/FROSTR-ORG/igloo-server
+support: https://github.com/FROSTR-ORG/igloo-server/issues
+license: MIT
+releaseNotes: |
+  - Umbrel packaging preview build.
+path: ""
+defaultPassword: $APP_PASSWORD
+tor: true
+port: 8002
+icon: ./assets/icon.png
+gallery:
+  - ./assets/gallery/login.png
+  - ./assets/gallery/signer.png
+  - ./assets/gallery/api-keys.png
+  - ./assets/gallery/nip46.png
+dependencies: []

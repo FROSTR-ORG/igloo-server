@@ -301,7 +301,7 @@ The CI pipeline runs:
 
 ### Before Submitting
 1. **Update documentation** if you change APIs
-2. **Update OpenAPI spec** if you modify API endpoints (`docs/openapi.yaml`)
+2. **Update OpenAPI spec** if you modify API endpoints (`docs/openapi/openapi.yaml`)
 3. **Add tests** for new functionality
 4. **Update CHANGELOG.md** if needed
 5. **Verify your changes** don't break existing functionality
