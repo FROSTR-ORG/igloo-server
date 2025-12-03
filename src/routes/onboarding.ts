@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'crypto';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
-import { ADMIN_SECRET, HEADLESS } from '../const.js';
+import { ADMIN_SECRET, HEADLESS, SKIP_ADMIN_SECRET_VALIDATION } from '../const.js';
 import { isDatabaseInitialized, createUser } from '../db/database.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody, getTrustedClientIp, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { RouteContext } from './types.js';
@@ -83,15 +83,22 @@ async function processOnboardingSecretRequest(
     return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
   }
 
-  const authHeader = req.headers.get('Authorization');
-  let adminSecret: string | undefined;
-  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
-    adminSecret = authHeader.substring(7).trim();
-  }
+  // When SKIP_ADMIN_SECRET_VALIDATION is enabled (e.g., Umbrel deployments),
+  // skip the admin secret validation step entirely. The ADMIN_SECRET is still
+  // set in the environment, but users don't need to enter it manually.
+  const skipValidation = SKIP_ADMIN_SECRET_VALIDATION && ADMIN_SECRET;
 
-  const isAdminValid = await validateAdminSecret(adminSecret);
-  if (!isAdminValid) {
-    return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+  if (!skipValidation) {
+    const authHeader = req.headers.get('Authorization');
+    let adminSecret: string | undefined;
+    if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
+      adminSecret = authHeader.substring(7).trim();
+    }
+
+    const isAdminValid = await validateAdminSecret(adminSecret);
+    if (!isAdminValid) {
+      return Response.json(UNIFORM_AUTH_ERROR, { status: 401, headers });
+    }
   }
 
   if (mode === 'validate') {
@@ -425,14 +432,18 @@ export async function handleOnboardingRoute(
               { status: 500, headers }
             );
           }
-          
+
           const hasAdminSecret = !!ADMIN_SECRET;
-          
+          // Skip admin validation when flag is set AND admin secret exists
+          // (e.g., Umbrel deployments where the secret is auto-generated)
+          const skipAdminValidation = SKIP_ADMIN_SECRET_VALIDATION && hasAdminSecret;
+
           return Response.json(
             {
               initialized,
               hasAdminSecret,
               headlessMode: false, // We already checked above
+              skipAdminValidation,
             },
             { headers }
           );

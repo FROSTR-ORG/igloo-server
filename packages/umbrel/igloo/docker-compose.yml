@@ -4,6 +4,7 @@ services:
     restart: unless-stopped
     environment:
       ADMIN_SECRET: ${APP_PASSWORD:?set by Umbrel}
+      SKIP_ADMIN_SECRET_VALIDATION: "true"
       AUTH_ENABLED: "true"
       RATE_LIMIT_ENABLED: "true"
       NODE_ENV: production
