@@ -1,5 +1,5 @@
 # Umbrel-specific igloo-server image with non-root runtime user
-FROM oven/bun:1.1.14 AS build
+FROM oven/bun:1.1.30 AS build
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ COPY tsconfig.json ./
 RUN bun run build
 
 # Production stage with non-root user that matches Umbrel defaults
-FROM oven/bun:1.1.14 AS production
+FROM oven/bun:1.1.30 AS production
 
 ARG IGLOO_USER=igloo
 ARG IGLOO_UID=1000

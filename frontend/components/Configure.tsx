@@ -69,7 +69,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
-  const [adminSecret, setAdminSecret] = useState<string | undefined>(undefined);
+  const [adminSecret, setAdminSecret] = useState<string>("");
   const [showAdminSecret, setShowAdminSecret] = useState(false);
   // Initial load gate to prevent empty form flash
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
@@ -118,9 +118,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
-        if (envVars.adminSecret) {
-          setAdminSecret(envVars.adminSecret);
-        }
+        setAdminSecret(envVars.adminSecret ?? "");
         const newSettings: AdvancedSettingsState = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
           FROSTR_SIGN_TIMEOUT: coerceEnvValueToString(envVars.FROSTR_SIGN_TIMEOUT, '30000'),
@@ -573,6 +571,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     }
   };
 
+  const normalizedAdminSecret = adminSecret || "";
+  const hasAdminSecretValue = normalizedAdminSecret.length > 0;
+
   // Compute if any value has changed from the original
   const isChanged = hasExistingCredentials && (
     keysetName !== originalKeysetName ||
@@ -628,7 +629,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
-        {adminSecret && (
+        {hasAdminSecretValue && (
           <div className="space-y-2">
             <label className="text-sm font-medium text-blue-200 flex items-center gap-2">
               <span>Admin Secret</span>
@@ -646,7 +647,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             <div className="relative">
               <Input
                 type={showAdminSecret ? 'text' : 'password'}
-                value={adminSecret}
+                value={normalizedAdminSecret}
                 readOnly
                 className="bg-gray-800/50 border-gray-700/50 text-blue-300 pr-10"
               />
