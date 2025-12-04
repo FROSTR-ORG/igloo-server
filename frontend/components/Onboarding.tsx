@@ -11,10 +11,11 @@ import { Lock, User, Key, ArrowRight, HelpCircle } from 'lucide-react';
 
 interface OnboardingProps {
   onComplete: () => void;
+  initialSkipAdminValidation?: boolean;
 }
 
-const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
-  const [step, setStep] = useState<'admin' | 'setup' | 'complete'>('admin');
+const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminValidation = false }) => {
+  const [step, setStep] = useState<'admin' | 'setup' | 'complete'>(initialSkipAdminValidation ? 'setup' : 'admin');
   const [adminSecret, setAdminSecret] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -22,7 +23,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [hasAdminSecret, setHasAdminSecret] = useState(true);
-  const [skipAdminValidation, setSkipAdminValidation] = useState(false);
+  const [skipAdminValidation, setSkipAdminValidation] = useState<boolean>(Boolean(initialSkipAdminValidation));
   const [networkError, setNetworkError] = useState('');
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,6 +48,14 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
     return null;
   };
+
+  // Prime UI immediately when caller already knows skip flag (e.g., Umbrel).
+  useEffect(() => {
+    if (initialSkipAdminValidation) {
+      setSkipAdminValidation(true);
+      setStep('setup');
+    }
+  }, [initialSkipAdminValidation]);
 
   useEffect(() => {
     checkStatus();
