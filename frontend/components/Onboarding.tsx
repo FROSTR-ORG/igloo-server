@@ -73,6 +73,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     adminSecretRef.current = adminSecret;
   }, [adminSecret]);
 
+  // Force step to setup whenever skip flag is enabled
+  useEffect(() => {
+    if (skipAdminValidation && step === 'admin') {
+      setStep('setup');
+    }
+  }, [skipAdminValidation, step]);
+
   const checkStatus = async () => {
     setIsCheckingStatus(true);
     setNetworkError('');
@@ -650,9 +657,3 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
 };
 
 export default Onboarding;
-  // If skip flag flips to true for any reason, force the step to setup
-  useEffect(() => {
-    if (skipAdminValidation && step === 'admin') {
-      setStep('setup');
-    }
-  }, [skipAdminValidation, step]);
