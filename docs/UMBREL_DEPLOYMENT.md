@@ -128,7 +128,7 @@ Visit `http://localhost:8002` to confirm the UI, API (`/api/status`), and websoc
 ---
 
 ## 7. Troubleshooting
-- **CORS blocked**: ensure `ALLOWED_ORIGINS` includes Umbrel domain and Tor address. Igloo refuses wildcard (`*`) in production.
+- **CORS/WS blocked (403 on /api/events)**: `ALLOWED_ORIGINS` now accepts `@self` to auto-allow the host the user connects through (LAN IP, Tor onion, custom domain). Default Umbrel bundle sets `ALLOWED_ORIGINS=@self,http://umbrel.local`. Add additional origins if you front the app on a different host.
 - **Database write errors**: confirm the container runs as UID/GID 1000 and `/app/data` is writable (non-root user baked into the image).
 - **Session failures**: check `/app/data/.session-secret`. If missing, perms might be wrong; restart container and ensure Umbrel’s volume owner matches the igloo user.
 - **Proxy auth failures**: verify `PROXY_AUTH_WHITELIST` covers `/api/*`, `/api/docs/*`, and `/api/events/*` so APIs stay reachable behind Umbrel’s auth layer.
