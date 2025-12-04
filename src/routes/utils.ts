@@ -527,10 +527,9 @@ export function isWebSocketOriginAllowed(req: Request): { allowed: boolean; reas
   // Helper to check if Origin matches the request host (same-origin fallback).
   const originMatchesHost = (() => {
     if (!hostHeaderRaw) return false;
-    const [reqHostName, reqHostPort] = hostHeaderRaw.split(':');
-    const originPort = originUrl.port || (originUrl.protocol === 'https:' ? '443' : '80');
-    const normalizedReqPort = reqHostPort || (originUrl.protocol === 'https:' ? '443' : '80');
-    return originUrl.hostname === reqHostName && originPort === normalizedReqPort;
+    const [reqHostName] = hostHeaderRaw.split(':');
+    // For @self we consider host match sufficient; ports can differ (e.g., UI on 80, WS on 8002).
+    return originUrl.hostname === reqHostName;
   })();
 
   // Allowlist empty:

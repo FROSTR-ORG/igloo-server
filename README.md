@@ -62,7 +62,7 @@ Reverse proxy (nginx) and cloud steps are in docs/DEPLOY.md.
 
 ### Production Checklist
 - `NODE_ENV=production`, persist `/app/data`, set strong `ADMIN_SECRET` (keep set after onboarding).
-- Explicit `ALLOWED_ORIGINS` (supports `@self` for “whatever host the user connects through”), `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
+- Explicit `ALLOWED_ORIGINS` (supports `@self` for “whatever host the user connects through”; host match, port-agnostic), `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
 - Auth on (`AUTH_ENABLED=true`), rate limit on (`RATE_LIMIT_ENABLED=true`); optional `SESSION_SECRET` (auto‑gen if absent).
 - Timeouts: tune `FROSTR_SIGN_TIMEOUT` or `SIGN_TIMEOUT_MS` (1000–120000ms).
 
