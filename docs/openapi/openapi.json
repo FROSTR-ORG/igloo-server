@@ -3511,12 +3511,17 @@
           },
           "headlessMode": {
             "type": "boolean"
+          },
+          "skipAdminValidation": {
+            "type": "boolean",
+            "description": "When true, the admin secret validation step is skipped (e.g., Umbrel deployments where the secret is auto-generated)"
           }
         },
         "required": [
           "initialized",
           "hasAdminSecret",
-          "headlessMode"
+          "headlessMode",
+          "skipAdminValidation"
         ]
       },
       "OnboardingSetupRequest": {

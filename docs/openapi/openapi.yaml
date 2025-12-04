@@ -2236,7 +2236,10 @@ components:
           type: boolean
         headlessMode:
           type: boolean
-      required: [initialized, hasAdminSecret, headlessMode]
+        skipAdminValidation:
+          type: boolean
+          description: When true, the admin secret validation step is skipped (e.g., Umbrel deployments where the secret is auto-generated)
+      required: [initialized, hasAdminSecret, headlessMode, skipAdminValidation]
 
     OnboardingSetupRequest:
       type: object

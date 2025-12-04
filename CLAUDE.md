@@ -17,7 +17,8 @@ Two operational modes:
 bun install
 
 # Build frontend (required before running - assets not committed)
-bun run build
+bun run build            # Production (minified)
+bun run build:dev        # Development (readable output)
 
 # Run server
 bun run start
@@ -27,7 +28,13 @@ bun run dev          # CSS + JS watch
 bun run start        # Server (separate terminal)
 
 # Run tests
-bun test
+bun test                           # All tests
+bun test tests/routes/auth.spec.ts # Single file
+bun test --watch                   # Watch mode
+
+# API integration tests (scripts/api/)
+bun run api:test:get               # Test GET endpoints
+bun run api:test:sign              # Test signing
 
 # Validate OpenAPI spec
 bun run docs:validate
@@ -78,10 +85,10 @@ Environment variables parsed in `src/const.ts`:
 
 Tests in `/tests/routes/` using Bun test runner. API test scripts in `/scripts/api/`.
 
-```bash
-bun test                           # All tests
-bun test tests/routes/auth.spec.ts # Single file
-```
+Test patterns:
+- Co-locate tests with code as `*.spec.ts` or `*.test.ts`
+- Mock external calls to signing/NIP endpoints
+- Seed fixtures from `data/` directory
 
 ### WebSocket Endpoints
 
@@ -94,3 +101,11 @@ Both have per-IP connection limits and rate limiting.
 
 - Bun runtime (uses `bun:sqlite` native bindings)
 - Run `bun run build` before first start (frontend assets not committed)
+
+## Code Style
+
+- TypeScript strict mode; explicit types, avoid `any`
+- 2-space indentation, Unix newlines
+- Names: `camelCase` variables, `UPPER_SNAKE_CASE` constants
+- Files: backend kebab-case (`nip46.ts`), React PascalCase (`Configure.tsx`)
+- Conventional Commits for PRs (`feat:`, `fix:`, etc.)

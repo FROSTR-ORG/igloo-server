@@ -9,7 +9,7 @@ This document outlines the scoped deliverables, configuration defaults, and oper
 - Publish a multi-architecture container image (`linux/amd64`, `linux/arm64`) tagged `umbrel-<version>` and pinned by digest in the manifest.
 - Ensure the packaged service boots in database mode with persistent state under Umbrel’s app data directory.
 
-- Umbrel build context lives in `packages/umbrel/igloo/Dockerfile` (multi-stage). Both stages pin to `oven/bun:1.1.14` for deterministic builds—update when Bun releases security patches.
+- Umbrel build context lives in `packages/umbrel/igloo/Dockerfile` (multi-stage). Both stages pin to `oven/bun:1.1.30` for deterministic builds—update this value when Bun security patches are applied.
 - Build stage: install dependencies with `bun install --frozen-lockfile`, copy source + frontend assets, and run `bun run build` so the runtime stage receives compiled UI artifacts.
 - Runtime stage: installs only production deps, brings in build outputs, installs `tini` + `curl`, and provisions a dedicated `igloo` user (`uid:1000`, `gid:1000`) to match Umbrel volume ownership. `/app` (including `/app/data`) is owned by this user before switching via `USER`.
 - Image exposes `8002`, sets `HOST_NAME`/`HOST_PORT`, declares `VOLUME /app/data`, and starts with `ENTRYPOINT ["tini","--"]` then `CMD ["bun","start"]`.
