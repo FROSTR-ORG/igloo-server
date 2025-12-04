@@ -371,7 +371,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       
       <ContentCard>
         <div className="space-y-6">
-        {step === 'admin' && (
+        {step === 'admin' && !skipAdminValidation && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -647,3 +647,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
 };
 
 export default Onboarding;
+  // If skip flag flips to true for any reason, force the step to setup
+  useEffect(() => {
+    if (skipAdminValidation && step === 'admin') {
+      setStep('setup');
+    }
+  }, [skipAdminValidation, step]);
