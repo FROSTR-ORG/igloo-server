@@ -262,12 +262,15 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     }
   };
 
+  // Compute effective step (force setup when skipping admin validation)
+  const effectiveStep: typeof step = skipAdminValidation && step === 'admin' ? 'setup' : step;
+
   const getCurrentStepNumber = () => {
     if (skipAdminValidation) {
       // When skipping admin validation, we only have 2 steps: Setup (1) and Complete (2)
-      return step === 'setup' ? 1 : 2;
+      return effectiveStep === 'setup' ? 1 : 2;
     }
-    return step === 'admin' ? 1 : step === 'setup' ? 2 : 3;
+    return effectiveStep === 'admin' ? 1 : effectiveStep === 'setup' ? 2 : 3;
   };
 
   // Step indicator component
@@ -371,7 +374,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       
       <ContentCard>
         <div className="space-y-6">
-        {step === 'admin' && !skipAdminValidation && (
+        {effectiveStep === 'admin' && !skipAdminValidation && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -436,7 +439,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
           </>
         )}
 
-        {step === 'setup' && (
+        {effectiveStep === 'setup' && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -583,7 +586,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
           </>
         )}
 
-        {step === 'complete' && (
+        {effectiveStep === 'complete' && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 

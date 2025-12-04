@@ -14,7 +14,7 @@ import {
   validateRelayUrls,
   normalizeRelayListForEcho
 } from './utils.js';
-import { hasCredentials, HEADLESS } from '../const.js';
+import { hasCredentials, HEADLESS, ADMIN_SECRET } from '../const.js';
 import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { validateShare, validateGroup } from '@frostr/igloo-core';
@@ -231,7 +231,9 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               SHARE_CRED: undefined,
               GROUP_NAME: credentials.group_name || undefined,
               RELAYS: credentials.relays || undefined,
-              hasCredentials: !!(credentials.group_cred && credentials.share_cred)
+              hasCredentials: !!(credentials.group_cred && credentials.share_cred),
+              // Expose ADMIN_SECRET only to authenticated admin users for UI display; never expose in headless mode
+              adminSecret: isRoleAdmin ? ADMIN_SECRET : undefined
             }, { headers });
           } catch (error) {
             console.error('Failed to retrieve user credentials for env:', error);
