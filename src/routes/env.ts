@@ -226,7 +226,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               return Response.json({}, { headers });
             }
 
+            // Expose non-sensitive server/env settings alongside user credentials so the UI
+            // can render Advanced Settings (rate limits, CORS, timeouts, etc.).
+            // Uses the same public filter as headless mode to avoid leaking secrets.
+            const publicEnv = await readPublicEnvFile();
+
             return Response.json({
+              ...publicEnv,
               GROUP_CRED: undefined,
               SHARE_CRED: undefined,
               GROUP_NAME: credentials.group_name || undefined,
