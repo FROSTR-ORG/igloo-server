@@ -113,6 +113,22 @@ Visit `http://localhost:8002` to confirm the UI, API (`/api/status`), and websoc
 
 ---
 
+### 5.3 SKIP_ADMIN_SECRET_VALIDATION (Umbrel only)
+
+Setting `SKIP_ADMIN_SECRET_VALIDATION=true` causes the onboarding UI to skip the "Enter Admin Secret" step and rely on the existing `ADMIN_SECRET` value.
+
+This flag is only safe when `ADMIN_SECRET` is provisioned out-of-band by the host platform (Umbrel does this via its Configure page using the app password). Never enable `SKIP_ADMIN_SECRET_VALIDATION` on public-facing or internet-exposed deployments.
+
+Example one-line environment configuration:
+
+```bash
+ADMIN_SECRET=<umbrel-app-password> SKIP_ADMIN_SECRET_VALIDATION=true
+```
+
+Server-side rate limiting still applies even when this flag is enabled.
+
+---
+
 ## 6. Release Checklist
 1. Create a new igloo-server tag (Conventional Commit release flow).
 2. Trigger the Release GitHub Action or run the multi-arch build manually.
