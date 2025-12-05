@@ -697,7 +697,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         }
         break;
 
-      case '/api/env/admin-secret':
+      case '/api/env/admin-secret': {
         if (req.method !== 'POST') {
           return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
         }
@@ -739,6 +739,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
         // Do not cache this response; handled via headers above.
         return Response.json({ adminSecret: ADMIN_SECRET }, { headers });
+      }
     }
     
     return Response.json({ error: 'Method not allowed' }, { status: 405, headers });

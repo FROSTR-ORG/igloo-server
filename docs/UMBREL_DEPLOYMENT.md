@@ -13,7 +13,7 @@ This guide walks through packaging, sideloading, and releasing the Umbrel editio
 ---
 
 ## 2. Repository Layout
-- `packages/umbrel/igloo/Dockerfile`: multi-stage Bun image pinned to `oven/bun:1.1.14`, runs as non-root `igloo` (UID/GID 1000) to match Umbrel volume ownership.
+- `packages/umbrel/igloo/Dockerfile`: multi-stage Bun image pinned to `oven/bun:1.1.30`, runs as non-root `igloo` (UID/GID 1000) to match Umbrel volume ownership.
 - `packages/umbrel/igloo/docker-compose.yml`: reference compose file for local smoke tests and Umbrel sideloads (replace `build:` with a pinned digest before release).
 - `packages/umbrel/igloo/umbrel-app.yml`: manifest metadata (`manifestVersion: 1`). Update `version`, `releaseNotes`, and image digest per release.
 - `packages/umbrel/igloo/exports.sh`: exposes admin secret plus Tor/clearnet URLs to Umbrel’s dashboard.
