@@ -8,6 +8,7 @@ import { ContentCard } from './ui/content-card';
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card';
 import { Tooltip } from './ui/tooltip';
 import { Lock, User, Key, ArrowRight, HelpCircle } from 'lucide-react';
+import OnboardingInstructions from './OnboardingInstructions';
 
 interface OnboardingProps {
   onComplete: () => void;
@@ -15,7 +16,8 @@ interface OnboardingProps {
 }
 
 const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminValidation = false }) => {
-  const [step, setStep] = useState<'admin' | 'setup' | 'complete'>(initialSkipAdminValidation ? 'setup' : 'admin');
+  // Always start with instructions step regardless of skip admin validation
+  const [step, setStep] = useState<'instructions' | 'admin' | 'setup' | 'complete'>('instructions');
   const [adminSecret, setAdminSecret] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -50,10 +52,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
   };
 
   // Prime UI immediately when caller already knows skip flag (e.g., Umbrel).
+  // Note: We no longer skip to 'setup' here since we always show instructions first
   useEffect(() => {
     if (initialSkipAdminValidation) {
       setSkipAdminValidation(true);
-      setStep('setup');
     }
   }, [initialSkipAdminValidation]);
 
@@ -73,7 +75,8 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     adminSecretRef.current = adminSecret;
   }, [adminSecret]);
 
-  // Force step to setup whenever skip flag is enabled
+  // Force step to setup whenever skip flag is enabled (skip admin step)
+  // This triggers when user advances from instructions to admin with skip flag enabled
   useEffect(() => {
     if (skipAdminValidation && step === 'admin') {
       setStep('setup');
@@ -95,10 +98,10 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       setHasAdminSecret(data.hasAdminSecret);
 
       // If skipAdminValidation is enabled (e.g., Umbrel deployment),
-      // skip the admin secret step and go directly to account creation
+      // the admin step will be skipped (handled by the useEffect that watches skipAdminValidation)
       if (data.skipAdminValidation) {
         setSkipAdminValidation(true);
-        setStep('setup');
+        // Note: We don't setStep here anymore - instructions always shows first
       }
     } catch (error) {
       console.error('Error checking onboarding status:', error);
@@ -274,16 +277,37 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
 
   const getCurrentStepNumber = () => {
     if (skipAdminValidation) {
-      // When skipping admin validation, we only have 2 steps: Setup (1) and Complete (2)
-      return effectiveStep === 'setup' ? 1 : 2;
+      // When skipping admin validation, we have 3 steps: Instructions (1) → Setup (2) → Complete (3)
+      switch (effectiveStep) {
+        case 'instructions': return 1;
+        case 'setup': return 2;
+        case 'complete': return 3;
+        default: return 1;
+      }
     }
-    return effectiveStep === 'admin' ? 1 : effectiveStep === 'setup' ? 2 : 3;
+    // Normal flow: Instructions (1) → Admin (2) → Setup (3) → Complete (4)
+    switch (effectiveStep) {
+      case 'instructions': return 1;
+      case 'admin': return 2;
+      case 'setup': return 3;
+      case 'complete': return 4;
+      default: return 1;
+    }
+  };
+
+  // Handler for continuing from instructions step
+  const handleInstructionsContinue = () => {
+    // Move to admin step (will auto-skip to setup if skipAdminValidation is true)
+    setStep('admin');
   };
 
   // Step indicator component
   const StepIndicator: React.FC<{ currentStep: number }> = ({ currentStep }) => {
-    // When skipping admin validation (e.g., Umbrel), show only Setup and Complete steps
-    const steps = skipAdminValidation ? ['Setup', 'Complete'] : ['Admin', 'Setup', 'Complete'];
+    // When skipping admin validation (e.g., Umbrel), show: Welcome → Setup → Complete
+    // Normal flow: Welcome → Admin → Setup → Complete
+    const steps = skipAdminValidation
+      ? ['Welcome', 'Setup', 'Complete']
+      : ['Welcome', 'Admin', 'Setup', 'Complete'];
 
     return (
       <div className="flex items-center justify-center space-x-2">
@@ -381,6 +405,13 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       
       <ContentCard>
         <div className="space-y-6">
+        {effectiveStep === 'instructions' && (
+          <>
+            <StepIndicator currentStep={getCurrentStepNumber()} />
+            <OnboardingInstructions onContinue={handleInstructionsContinue} />
+          </>
+        )}
+
         {effectiveStep === 'admin' && !skipAdminValidation && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
