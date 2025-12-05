@@ -508,17 +508,42 @@ export function isWebSocketOriginAllowed(req: Request): { allowed: boolean; reas
   const origin = req.headers.get('origin');
   const allowed = parseAllowedOrigins();
   const isProd = process.env.NODE_ENV === 'production';
+  const trustProxy = process.env.TRUST_PROXY === 'true';
 
   // Allow origin-less WebSocket clients (non-browser stacks often omit Origin).
-  // When an Origin is present, enforce allowlist matching.
-  if (!origin) {
-    return { allowed: true };
+  if (!origin) return { allowed: true };
+
+  let originUrl: URL;
+  try {
+    originUrl = new URL(origin);
+  } catch {
+    return { allowed: false, reason: 'Invalid Origin header' };
   }
 
+  // Prefer forwarded host when behind a trusted proxy (Umbrel app proxy); fall back to Host header.
+  const forwardedHostHeader = trustProxy ? req.headers.get('x-forwarded-host') : null;
+  const hostHeaderRaw = (forwardedHostHeader || req.headers.get('host') || '').split(',')[0].trim();
+
+  // Helper to check if Origin matches the request host (same-origin fallback).
+  const originMatchesHost = (() => {
+    if (!hostHeaderRaw) return false;
+    const [reqHostName] = hostHeaderRaw.split(':');
+    // For @self we consider host match sufficient; ports can differ (e.g., UI on 80, WS on 8002).
+    return originUrl.hostname === reqHostName;
+  })();
+
+  // Allowlist empty:
+  // - dev: allow any
+  // - prod: allow same-origin (host match) to avoid breaking LAN/IP/onion access without manual config
   if (allowed.length === 0) {
-    // No allowlist configured: if an Origin is present in production, reject; otherwise allowed was handled above.
-    return isProd ? { allowed: false, reason: 'ALLOWED_ORIGINS not configured' } : { allowed: true };
+    if (!isProd) return { allowed: true };
+    return originMatchesHost
+      ? { allowed: true }
+      : { allowed: false, reason: 'ALLOWED_ORIGINS not configured and Origin does not match Host' };
   }
+
+  // Support special token "@self" to allow any Origin that matches request host.
+  if (allowed.includes('@self') && originMatchesHost) return { allowed: true };
 
   // Explicitly reject wildcard in production
   if (isProd && allowed.includes('*')) {

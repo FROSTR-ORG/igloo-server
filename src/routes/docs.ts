@@ -20,7 +20,7 @@ let openApiYaml: string = '';
 function loadOpenApiSpec() {
   if (!openApiSpec) {
     try {
-      const yamlPath = resolve('docs/openapi.yaml');
+      const yamlPath = resolve('docs/openapi/openapi.yaml');
       openApiYaml = readFileSync(yamlPath, 'utf8');
       openApiSpec = YAML.parse(openApiYaml);
     } catch (error) {

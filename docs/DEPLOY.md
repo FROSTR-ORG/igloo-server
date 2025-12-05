@@ -56,6 +56,13 @@ server {
 server { listen 80; server_name yourdomain.com; return 301 https://$host$request_uri; }
 ```
 
+## Security: TLS Requirements
+
+**WARNING**: Never expose Igloo directly to the internet over HTTP in production.
+Always deploy behind a TLS-terminating reverse proxy (nginx, Traefik, Cloudflare, etc.)
+as shown in the nginx example above. Credentials (API keys, session tokens, Basic Auth)
+transmitted over plain HTTP can be intercepted by attackers.
+
 ## Production Checklist
 
 - `NODE_ENV=production`, `HOST_NAME=0.0.0.0` (container)

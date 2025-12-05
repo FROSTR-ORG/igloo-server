@@ -11,10 +11,11 @@ import { Lock, User, Key, ArrowRight, HelpCircle } from 'lucide-react';
 
 interface OnboardingProps {
   onComplete: () => void;
+  initialSkipAdminValidation?: boolean;
 }
 
-const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
-  const [step, setStep] = useState<'admin' | 'setup' | 'complete'>('admin');
+const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminValidation = false }) => {
+  const [step, setStep] = useState<'admin' | 'setup' | 'complete'>(initialSkipAdminValidation ? 'setup' : 'admin');
   const [adminSecret, setAdminSecret] = useState('');
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -22,6 +23,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [hasAdminSecret, setHasAdminSecret] = useState(true);
+  const [skipAdminValidation, setSkipAdminValidation] = useState<boolean>(Boolean(initialSkipAdminValidation));
   const [networkError, setNetworkError] = useState('');
   const [isCheckingStatus, setIsCheckingStatus] = useState(true);
   const timeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -47,6 +49,14 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     return null;
   };
 
+  // Prime UI immediately when caller already knows skip flag (e.g., Umbrel).
+  useEffect(() => {
+    if (initialSkipAdminValidation) {
+      setSkipAdminValidation(true);
+      setStep('setup');
+    }
+  }, [initialSkipAdminValidation]);
+
   useEffect(() => {
     checkStatus();
     
@@ -63,19 +73,33 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     adminSecretRef.current = adminSecret;
   }, [adminSecret]);
 
+  // Force step to setup whenever skip flag is enabled
+  useEffect(() => {
+    if (skipAdminValidation && step === 'admin') {
+      setStep('setup');
+    }
+  }, [skipAdminValidation, step]);
+
   const checkStatus = async () => {
     setIsCheckingStatus(true);
     setNetworkError('');
-    
+
     try {
       const response = await fetch('/api/onboarding/status');
-      
+
       if (!response.ok) {
         throw new Error(`Server responded with status ${response.status}`);
       }
-      
+
       const data = await response.json();
       setHasAdminSecret(data.hasAdminSecret);
+
+      // If skipAdminValidation is enabled (e.g., Umbrel deployment),
+      // skip the admin secret step and go directly to account creation
+      if (data.skipAdminValidation) {
+        setSkipAdminValidation(true);
+        setStep('setup');
+      }
     } catch (error) {
       console.error('Error checking onboarding status:', error);
       const errorMessage = error instanceof Error ? error.message : 'Network error occurred';
@@ -173,8 +197,9 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
 
     // Check if adminSecret is still available (use ref as fallback)
+    // Skip this check if skipAdminValidation is enabled (e.g., Umbrel)
     const secretToUse = adminSecret || adminSecretRef.current;
-    if (!secretToUse) {
+    if (!skipAdminValidation && !secretToUse) {
       setError('Session expired. Please refresh and try again.');
       return;
     }
@@ -183,12 +208,17 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     setError('');
 
     try {
+      // Build headers - only include Authorization if we have a secret
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (secretToUse) {
+        headers['Authorization'] = `Bearer ${secretToUse}`;
+      }
+
       const response = await fetch('/api/onboarding/setup', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${secretToUse}`,
-        },
+        headers,
         body: JSON.stringify({
           username: trimmedUsername,
           password: trimmedPassword,
@@ -239,45 +269,57 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
     }
   };
 
+  // Compute effective step (force setup when skipping admin validation)
+  const effectiveStep: typeof step = skipAdminValidation && step === 'admin' ? 'setup' : step;
+
   const getCurrentStepNumber = () => {
-    return step === 'admin' ? 1 : step === 'setup' ? 2 : 3;
+    if (skipAdminValidation) {
+      // When skipping admin validation, we only have 2 steps: Setup (1) and Complete (2)
+      return effectiveStep === 'setup' ? 1 : 2;
+    }
+    return effectiveStep === 'admin' ? 1 : effectiveStep === 'setup' ? 2 : 3;
   };
 
   // Step indicator component
-  const StepIndicator: React.FC<{ currentStep: number }> = ({ currentStep }) => (
-    <div className="flex items-center justify-center space-x-2">
-      {['Admin', 'Setup', 'Complete'].map((label, i) => {
-        const stepNum = i + 1;
-        const isActive = stepNum === currentStep;
-        const isPast = stepNum < currentStep;
-        return (
-          <div key={i} className="flex items-center">
-            <div
-              className={`
-                w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
-                ${
-                  isPast
-                    ? 'bg-green-600/80 text-white'
-                    : isActive
-                    ? 'bg-blue-600 text-white'
-                    : 'bg-gray-800/50 text-gray-500'
-                }
-              `}
-            >
-              {isPast ? '✓' : stepNum}
-            </div>
-            {i < 2 && (
+  const StepIndicator: React.FC<{ currentStep: number }> = ({ currentStep }) => {
+    // When skipping admin validation (e.g., Umbrel), show only Setup and Complete steps
+    const steps = skipAdminValidation ? ['Setup', 'Complete'] : ['Admin', 'Setup', 'Complete'];
+
+    return (
+      <div className="flex items-center justify-center space-x-2">
+        {steps.map((label, i) => {
+          const stepNum = i + 1;
+          const isActive = stepNum === currentStep;
+          const isPast = stepNum < currentStep;
+          return (
+            <div key={i} className="flex items-center">
               <div
-                className={`w-8 h-0.5 ${
-                  isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
-                }`}
-              />
-            )}
-          </div>
-        );
-      })}
-    </div>
-  );
+                className={`
+                  w-8 h-8 rounded-full flex items-center justify-center text-sm font-semibold transition-colors
+                  ${
+                    isPast
+                      ? 'bg-green-600/80 text-white'
+                      : isActive
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-gray-800/50 text-gray-500'
+                  }
+                `}
+              >
+                {isPast ? '✓' : stepNum}
+              </div>
+              {i < steps.length - 1 && (
+                <div
+                  className={`w-8 h-0.5 ${
+                    isPast ? 'bg-green-600/50' : 'bg-gray-700/50'
+                  }`}
+                />
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   if (isCheckingStatus) {
     return (
@@ -339,7 +381,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
       
       <ContentCard>
         <div className="space-y-6">
-        {step === 'admin' && (
+        {effectiveStep === 'admin' && !skipAdminValidation && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -404,7 +446,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
           </>
         )}
 
-        {step === 'setup' && (
+        {effectiveStep === 'setup' && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -551,7 +593,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
           </>
         )}
 
-        {step === 'complete' && (
+        {effectiveStep === 'complete' && (
           <>
             <StepIndicator currentStep={getCurrentStepNumber()} />
 
@@ -572,12 +614,14 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete }) => {
             {/* Content */}
             <div className="space-y-4">
               <div className="bg-green-900/20 border border-green-600/30 rounded-lg p-4 space-y-2">
-                <p className="text-green-400 text-sm flex items-center gap-2">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                  </svg>
-                  Admin secret validated
-                </p>
+                {!skipAdminValidation && (
+                  <p className="text-green-400 text-sm flex items-center gap-2">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                    Admin secret validated
+                  </p>
+                )}
                 <p className="text-green-400 text-sm flex items-center gap-2">
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />

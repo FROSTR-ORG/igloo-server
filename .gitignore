@@ -65,3 +65,6 @@ test-*.sh
 debug-*.js
 verify-*.md
 .DS_Store
+
+# LLM files
+.claude

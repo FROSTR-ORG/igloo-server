@@ -190,5 +190,4 @@ curl -sS -H "X-API-Key: $TOKEN" http://localhost:8002/api/status | jq
 
 ---
 
-For API shapes, see `docs/openapi.yaml` (Admin: list/create/revoke) and README’s “API Keys” section for quickstart examples.
-
+For API shapes, see `docs/openapi/openapi.yaml` (Admin: list/create/revoke) and README’s “API Keys” section for quickstart examples.

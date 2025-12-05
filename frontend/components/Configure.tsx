@@ -5,7 +5,7 @@ import { Tooltip } from "./ui/tooltip"
 import { Alert } from "./ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card"
 import Spinner from "./ui/spinner"
-import { HelpCircle, ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { HelpCircle, ChevronDown, ChevronUp, Settings, Eye, EyeOff } from 'lucide-react';
 import { InputWithValidation } from "./ui/input-with-validation"
 
 type AdvancedSettingsState = {
@@ -69,6 +69,8 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
+  const [adminSecret, setAdminSecret] = useState<string>("");
+  const [showAdminSecret, setShowAdminSecret] = useState(false);
   // Initial load gate to prevent empty form flash
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [advancedError, setAdvancedError] = useState<string | undefined>(undefined);
@@ -116,6 +118,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
+        setAdminSecret(envVars.adminSecret ?? "");
         const newSettings: AdvancedSettingsState = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
           FROSTR_SIGN_TIMEOUT: coerceEnvValueToString(envVars.FROSTR_SIGN_TIMEOUT, '30000'),
@@ -568,6 +571,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     }
   };
 
+  const normalizedAdminSecret = adminSecret || "";
+  const hasAdminSecretValue = normalizedAdminSecret.length > 0;
+
   // Compute if any value has changed from the original
   const isChanged = hasExistingCredentials && (
     keysetName !== originalKeysetName ||
@@ -623,6 +629,41 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {hasAdminSecretValue && (
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-blue-200 flex items-center gap-2">
+              <span>Admin Secret</span>
+              <Tooltip
+                trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                content={
+                  <>
+                    <p className="font-semibold mb-1">Server admin secret</p>
+                    <p className="text-sm">Set by the deployment (e.g., Umbrel app password). Required for admin-only API routes.</p>
+                  </>
+                }
+                width="w-64"
+              />
+            </label>
+            <div className="relative">
+              <Input
+                type={showAdminSecret ? 'text' : 'password'}
+                value={normalizedAdminSecret}
+                readOnly
+                className="bg-gray-800/50 border-gray-700/50 text-blue-300 pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowAdminSecret(v => !v)}
+                className="absolute inset-y-0 right-2 flex items-center text-blue-300/70 hover:text-blue-200"
+                aria-label={showAdminSecret ? 'Hide admin secret' : 'Show admin secret'}
+              >
+                {showAdminSecret ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            <p className="text-xs text-blue-300/70">Read-only. Use this value for admin-only endpoints.</p>
+          </div>
+        )}
+
         {hasExistingCredentials && (
           <div className="bg-green-900/30 border border-green-700/30 rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
