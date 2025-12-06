@@ -51,7 +51,7 @@ export const OnboardingInstructions: React.FC<OnboardingInstructionsProps> = ({ 
             <ExternalLink className="w-3 h-3" />
           </a>
           <a
-            href="https://www.npmjs.com/package/@frostr/igloo-core"
+            href="https://www.npmjs.com/package/@frostr/igloo-cli"
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-blue-600/20 hover:bg-blue-600/30 border border-blue-600/30 rounded text-blue-300 text-xs transition-colors"
