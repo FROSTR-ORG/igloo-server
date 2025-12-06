@@ -50,15 +50,11 @@ function getCachingHeaders(filePath: string): Record<string, string> {
       ? 'public, max-age=3600' // 1 hour in dev
       : 'public, max-age=31536000, immutable'; // 1 year in prod
   } else if (ext && ['css', 'js'].includes(ext)) {
-    // CSS/JS files - no cache in development for easier updates
-    headers['Cache-Control'] = isDevelopment 
-      ? 'no-cache, no-store, must-revalidate' // No cache in dev
-      : 'public, max-age=86400'; // 1 day in prod
-    
-    // Add ETag based on file modification time for cache busting
-    if (isDevelopment) {
-      headers['ETag'] = `"${Date.now()}"`;
-    }
+    // CSS/JS must always be fresh because filenames are not content‑hashed.
+    // Using no-store prevents Umbrel/browser caches from serving stale bundles.
+    headers['Cache-Control'] = 'no-cache, no-store, must-revalidate';
+    headers['Pragma'] = 'no-cache';
+    headers['Expires'] = '0';
   } else {
     // Other static files
     headers['Cache-Control'] = isDevelopment 

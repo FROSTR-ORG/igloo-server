@@ -3,7 +3,7 @@
   "info": {
     "title": "Igloo Server API",
     "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol.\n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
-    "version": "0.1.5",
+    "version": "0.1.7",
     "contact": {
       "name": "FROSTR Organization",
       "url": "https://github.com/FROSTR-ORG/igloo-server"
@@ -73,6 +73,14 @@
     {
       "name": "Admin",
       "description": "Administrative endpoints requiring ADMIN_SECRET"
+    },
+    {
+      "name": "User",
+      "description": "Authenticated user endpoints (database mode)"
+    },
+    {
+      "name": "Onboarding",
+      "description": "First-run onboarding and admin validation (database mode)"
     }
   ],
   "paths": {
@@ -93,6 +101,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ServerStatus"
+                },
+                "example": {
+                  "serverRunning": true,
+                  "nodeActive": true,
+                  "hasCredentials": true,
+                  "relayCount": 2,
+                  "relays": [
+                    "wss://relay.primal.net",
+                    "wss://relay.damus.io"
+                  ],
+                  "timestamp": "2025-01-20T12:00:00.000Z",
+                  "restartInfo": {
+                    "blockedByCredentials": false
+                  },
+                  "health": {
+                    "isConnected": true,
+                    "lastActivity": "2025-01-20T11:59:30.000Z",
+                    "lastConnectivityCheck": "2025-01-20T12:00:00.000Z",
+                    "consecutiveConnectivityFailures": 0,
+                    "timeSinceLastActivity": 30000,
+                    "timeSinceLastConnectivityCheck": 1500
+                  },
+                  "publishMetrics": {
+                    "totalAttempts": 10,
+                    "totalFailures": 2,
+                    "failureRate": "20.0",
+                    "isAboveThreshold": false,
+                    "windowAge": 45,
+                    "failuresByRelay": {
+                      "wss://relay.primal.net": 1
+                    },
+                    "failuresByReason": {
+                      "timeout": 2
+                    }
+                  }
                 }
               }
             }
@@ -128,7 +171,25 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest"
+            "$ref": "#/components/responses/BadRequest",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthStatus"
+                },
+                "example": {
+                  "enabled": true,
+                  "methods": [
+                    "api-key",
+                    "bearer",
+                    "basic-auth",
+                    "session"
+                  ],
+                  "rateLimiting": true,
+                  "sessionTimeout": 3600
+                }
+              }
+            }
           }
         }
       }
@@ -1098,9 +1159,6 @@
           "401": {
             "$ref": "#/components/responses/Unauthorized"
           },
-          "404": {
-            "$ref": "#/components/responses/NotFound"
-          },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
           }
@@ -1927,11 +1985,11 @@
         }
       }
     },
-    "/api/admin/whoami": {
+    "/api/admin/users": {
       "get": {
-        "operationId": "getAdminWhoami",
-        "summary": "Check admin authentication status",
-        "description": "Simple endpoint to verify admin privileges and identify the authenticated admin user (if any). Used by the web UI to determine admin access.",
+        "operationId": "listUsers",
+        "summary": "List users",
+        "description": "Returns basic information about users. Database mode only.",
         "tags": [
           "Admin"
         ],
@@ -1948,17 +2006,567 @@
         ],
         "responses": {
           "200": {
-            "description": "Admin status confirmed",
+            "description": "Users listed",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AdminWhoamiResponse"
+                  "type": "object",
+                  "properties": {
+                    "users": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/AdminUser"
+                      }
+                    }
+                  }
                 }
               }
             }
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/admin/users/delete": {
+      "post": {
+        "operationId": "deleteUser",
+        "summary": "Delete a user",
+        "description": "Deletes a user by ID with last-admin guard. Database mode only.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminUserDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean",
+                      "const": true
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/user/profile": {
+      "get": {
+        "operationId": "getUserProfile",
+        "summary": "Get current user profile",
+        "description": "Returns basic information for the authenticated database user. Database mode only.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfile"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/user/credentials": {
+      "get": {
+        "operationId": "getUserCredentials",
+        "summary": "Get stored credentials",
+        "description": "Returns the user’s stored FROSTR credentials (decrypted in memory). Requires password/derived key for the current session.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User credentials",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserCredentials"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "setUserCredentials",
+        "summary": "Create/update credentials",
+        "description": "Saves or updates user credentials. Requires password/derived key.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCredentialsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceUserCredentials",
+        "summary": "Replace credentials",
+        "description": "Replaces user credentials. Requires password/derived key.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserCredentialsUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteUserCredentials",
+        "summary": "Delete credentials",
+        "description": "Deletes stored credentials and stops the node.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/user/relays": {
+      "get": {
+        "operationId": "getUserRelays",
+        "summary": "Get relay preferences",
+        "description": "Returns relay list for the authenticated user.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Relay preferences",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relays": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "post": {
+        "operationId": "setUserRelays",
+        "summary": "Set relay preferences",
+        "description": "Sets or updates relay list.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRelaysUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      },
+      "put": {
+        "operationId": "replaceUserRelays",
+        "summary": "Replace relay preferences",
+        "description": "Replaces relay list.",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserRelaysUpdateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/responses/Ok"
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/admin/whoami": {
+      "get": {
+        "operationId": "adminWhoAmI",
+        "summary": "Check admin session",
+        "description": "Returns admin status for the current authenticated session.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "sessionHeader": []
+          },
+          {
+            "sessionCookie": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Admin status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminWhoAmIResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/onboarding/status": {
+      "get": {
+        "operationId": "onboardingStatus",
+        "summary": "Get onboarding status",
+        "description": "Reports whether the database is initialized and whether an admin secret is configured. Available only in database mode.",
+        "tags": [
+          "Onboarding"
+        ],
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Onboarding status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OnboardingStatus"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/onboarding/validate-admin": {
+      "post": {
+        "operationId": "onboardingValidateAdmin",
+        "summary": "Validate admin secret",
+        "description": "Validates the provided ADMIN_SECRET during onboarding. Only available before the first user is created.",
+        "tags": [
+          "Onboarding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Admin secret validated",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/onboarding/setup": {
+      "post": {
+        "operationId": "onboardingSetup",
+        "summary": "Create initial admin user",
+        "description": "Creates the first admin user when the database is uninitialized. Requires a valid ADMIN_SECRET bearer token.",
+        "tags": [
+          "Onboarding"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/OnboardingSetupRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Setup complete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "500": {
+            "$ref": "#/components/responses/InternalServerError"
           }
         }
       }
@@ -2008,8 +2616,11 @@
             "description": "Whether the Bifrost node is active"
           },
           "hasCredentials": {
-            "type": "boolean",
-            "description": "Whether FROSTR credentials are configured"
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Whether credentials are configured (may be null for unauthenticated DB-mode callers)"
           },
           "relayCount": {
             "type": "integer",
@@ -2028,12 +2639,21 @@
             "format": "date-time",
             "description": "Current server timestamp"
           },
+          "restartInfo": {
+            "type": "object",
+            "properties": {
+              "blockedByCredentials": {
+                "type": "boolean"
+              }
+            },
+            "description": "Restart readiness information"
+          },
           "health": {
             "type": "object",
             "properties": {
-              "isHealthy": {
+              "isConnected": {
                 "type": "boolean",
-                "description": "Whether the node is considered healthy"
+                "description": "Whether the node is currently connected"
               },
               "lastActivity": {
                 "type": [
@@ -2043,21 +2663,17 @@
                 "format": "date-time",
                 "description": "Timestamp of last node activity"
               },
-              "lastHealthCheck": {
+              "lastConnectivityCheck": {
                 "type": [
                   "string",
                   "null"
                 ],
                 "format": "date-time",
-                "description": "Timestamp of last health check"
+                "description": "Timestamp of last connectivity check"
               },
-              "consecutiveFailures": {
+              "consecutiveConnectivityFailures": {
                 "type": "integer",
-                "description": "Number of consecutive health check failures"
-              },
-              "restartCount": {
-                "type": "integer",
-                "description": "Total number of automatic restarts"
+                "description": "Number of consecutive failed connectivity checks"
               },
               "timeSinceLastActivity": {
                 "type": [
@@ -2065,23 +2681,69 @@
                   "null"
                 ],
                 "description": "Milliseconds since last activity"
+              },
+              "timeSinceLastConnectivityCheck": {
+                "type": [
+                  "integer",
+                  "null"
+                ],
+                "description": "Milliseconds since last connectivity check"
               }
             },
             "required": [
-              "isHealthy",
+              "isConnected",
               "lastActivity",
-              "lastHealthCheck",
-              "consecutiveFailures",
-              "restartCount",
-              "timeSinceLastActivity"
+              "lastConnectivityCheck",
+              "consecutiveConnectivityFailures"
             ],
             "description": "Node health monitoring information"
+          },
+          "publishMetrics": {
+            "type": "object",
+            "properties": {
+              "totalAttempts": {
+                "type": "integer"
+              },
+              "totalFailures": {
+                "type": "integer"
+              },
+              "failureRate": {
+                "type": "string",
+                "description": "Percentage string with one decimal place"
+              },
+              "isAboveThreshold": {
+                "type": "boolean"
+              },
+              "threshold": {
+                "type": "integer",
+                "description": "Failure threshold used to flag high error rates"
+              },
+              "windowAge": {
+                "type": "integer",
+                "description": "Age of the metrics window (seconds)"
+              },
+              "windowSize": {
+                "type": "integer",
+                "description": "Size of the metrics window (seconds)"
+              },
+              "failuresByRelay": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              },
+              "failuresByReason": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "integer"
+                }
+              }
+            }
           }
         },
         "required": [
           "serverRunning",
           "nodeActive",
-          "hasCredentials",
           "relayCount",
           "relays",
           "timestamp",
@@ -2101,6 +2763,7 @@
               "type": "string",
               "enum": [
                 "api-key",
+                "bearer",
                 "basic-auth",
                 "session"
               ]
@@ -2813,26 +3476,215 @@
           "apiKeyId"
         ]
       },
-      "AdminWhoamiResponse": {
+      "AdminWhoAmIResponse": {
         "type": "object",
         "properties": {
           "admin": {
-            "type": "boolean",
-            "const": true,
-            "description": "Always true for successful admin authentication"
+            "type": "boolean"
           },
           "userId": {
-            "type": [
-              "string",
-              "null"
-            ],
-            "description": "Authenticated admin user ID (if using session auth), or null if using ADMIN_SECRET directly"
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         },
         "required": [
           "admin"
-        ],
-        "description": "Response confirming admin access and user context"
+        ]
+      },
+      "OnboardingStatus": {
+        "type": "object",
+        "properties": {
+          "initialized": {
+            "type": "boolean"
+          },
+          "hasAdminSecret": {
+            "type": "boolean"
+          },
+          "headlessMode": {
+            "type": "boolean"
+          },
+          "skipAdminValidation": {
+            "type": "boolean",
+            "description": "When true, the admin secret validation step is skipped (e.g., Umbrel deployments where the secret is auto-generated)"
+          }
+        },
+        "required": [
+          "initialized",
+          "hasAdminSecret",
+          "headlessMode",
+          "skipAdminValidation"
+        ]
+      },
+      "OnboardingSetupRequest": {
+        "type": "object",
+        "properties": {
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "username",
+          "password"
+        ]
+      },
+      "AdminUser": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "hasCredentials": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminUserDeleteRequest": {
+        "type": "object",
+        "properties": {
+          "userId": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          }
+        },
+        "required": [
+          "userId"
+        ]
+      },
+      "UserProfile": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "username": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string"
+          },
+          "hasCredentials": {
+            "type": "boolean"
+          }
+        }
+      },
+      "UserCredentials": {
+        "type": "object",
+        "properties": {
+          "group_cred": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_cred": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relays": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "group_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UserCredentialsUpdate": {
+        "type": "object",
+        "properties": {
+          "group_cred": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "share_cred": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "relays": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "group_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "UserRelaysUpdateRequest": {
+        "type": "object",
+        "properties": {
+          "relays": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "relays"
+        ]
       }
     },
     "responses": {
@@ -2862,6 +3714,7 @@
               "error": "Authentication required",
               "authMethods": [
                 "api-key",
+                "bearer",
                 "basic-auth",
                 "session"
               ]
@@ -2938,6 +3791,25 @@
           "application/json": {
             "schema": {
               "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Ok": {
+        "description": "Operation succeeded",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "properties": {
+                "success": {
+                  "type": "boolean",
+                  "const": true
+                },
+                "message": {
+                  "type": "string"
+                }
+              }
             }
           }
         }

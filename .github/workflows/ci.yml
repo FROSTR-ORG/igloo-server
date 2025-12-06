@@ -111,3 +111,25 @@ jobs:
         curl -f http://localhost:8002/api/status || exit 1
         docker stop test-container
         docker rm test-container 
+
+    - name: Build Umbrel Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: packages/umbrel/igloo/Dockerfile
+        load: true
+        tags: igloo-server-umbrel:test
+        cache-from: type=gha
+        cache-to: type=gha,mode=max
+
+    - name: Test Umbrel Docker image
+      run: |
+        docker run -d --name test-umbrel -p 8003:8002 \
+          -e ADMIN_SECRET=ci-admin-secret \
+          -e ALLOWED_ORIGINS=http://localhost:8003 \
+          -e TRUST_PROXY=true \
+          igloo-server-umbrel:test
+        sleep 10
+        curl -f http://localhost:8003/api/status || exit 1
+        docker stop test-umbrel
+        docker rm test-umbrel

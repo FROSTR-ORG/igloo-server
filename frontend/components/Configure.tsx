@@ -5,8 +5,9 @@ import { Tooltip } from "./ui/tooltip"
 import { Alert } from "./ui/alert"
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card"
 import Spinner from "./ui/spinner"
-import { HelpCircle, ChevronDown, ChevronUp, Settings } from 'lucide-react';
+import { HelpCircle, ChevronDown, ChevronUp, Settings, Eye, EyeOff } from 'lucide-react';
 import { InputWithValidation } from "./ui/input-with-validation"
+import ConfirmModal from "./ui/ConfirmModal"
 
 type AdvancedSettingsState = {
   SESSION_TIMEOUT: string;
@@ -69,6 +70,12 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [advancedSettings, setAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [originalAdvancedSettings, setOriginalAdvancedSettings] = useState<AdvancedSettingsState>(() => ({ ...defaultAdvancedSettings }));
   const [isLoadingAdvanced, setIsLoadingAdvanced] = useState(false);
+  const [adminSecretValue, setAdminSecretValue] = useState<string | null>(null);
+  const [canRevealAdminSecret, setCanRevealAdminSecret] = useState(false);
+  const [showAdminSecret, setShowAdminSecret] = useState(false);
+  const [isRevealingAdminSecret, setIsRevealingAdminSecret] = useState(false);
+  const [adminSecretError, setAdminSecretError] = useState<string | undefined>(undefined);
+  const [showAdminSecretConfirm, setShowAdminSecretConfirm] = useState(false);
   // Initial load gate to prevent empty form flash
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [advancedError, setAdvancedError] = useState<string | undefined>(undefined);
@@ -116,6 +123,11 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       });
       if (envResponse.ok) {
         const envVars = await envResponse.json();
+        setCanRevealAdminSecret(envVars.adminSecretAvailable === true);
+        // Clear any previously revealed secret when reloading settings to avoid keeping it in memory longer than necessary
+        setAdminSecretValue(null);
+        setShowAdminSecret(false);
+        setAdminSecretError(undefined);
         const newSettings: AdvancedSettingsState = {
           SESSION_TIMEOUT: coerceEnvValueToString(envVars.SESSION_TIMEOUT, '3600'),
           FROSTR_SIGN_TIMEOUT: coerceEnvValueToString(envVars.FROSTR_SIGN_TIMEOUT, '30000'),
@@ -150,6 +162,51 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     } finally {
       setIsLoadingAdvanced(false);
     }
+  };
+
+  const handleRevealAdminSecret = async () => {
+    if (!canRevealAdminSecret) return;
+    setShowAdminSecretConfirm(false);
+    setAdminSecretError(undefined);
+    setIsRevealingAdminSecret(true);
+    setShowAdminSecret(false);
+
+    try {
+      const response = await fetch('/api/env/admin-secret', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify({ confirm: true })
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        setAdminSecretValue(null);
+        setAdminSecretError('Admin authentication is required to reveal this secret.');
+        return;
+      }
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}));
+        setAdminSecretError(err.error || `Failed to reveal admin secret (status ${response.status}).`);
+        return;
+      }
+
+      const data = await response.json();
+      const secret = typeof data.adminSecret === 'string' ? data.adminSecret : '';
+      setAdminSecretValue(secret);
+      setShowAdminSecret(false); // keep masked until the user chooses to show
+    } catch (error) {
+      setAdminSecretError('Unable to reveal admin secret. Please try again.');
+    } finally {
+      setIsRevealingAdminSecret(false);
+    }
+  };
+
+  const clearAdminSecretFromView = () => {
+    setAdminSecretValue(null);
+    setShowAdminSecret(false);
   };
 
   useEffect(() => {
@@ -568,6 +625,9 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     }
   };
 
+  const hasAdminSecretValue = typeof adminSecretValue === 'string' && adminSecretValue.length > 0;
+  const shouldRenderAdminSecretSection = canRevealAdminSecret || hasAdminSecretValue;
+
   // Compute if any value has changed from the original
   const isChanged = hasExistingCredentials && (
     keysetName !== originalKeysetName ||
@@ -623,6 +683,79 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {shouldRenderAdminSecretSection && (
+          <div className="space-y-3">
+            <label className="text-sm font-medium text-blue-200 flex items-center gap-2">
+              <span>Admin Secret</span>
+              <Tooltip
+                trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                content={
+                  <>
+                    <p className="font-semibold mb-1">Server admin secret</p>
+                    <p className="text-sm">Only reveal on trusted devices. Required for admin-only API routes.</p>
+                  </>
+                }
+                width="w-64"
+              />
+            </label>
+
+            {!hasAdminSecretValue && (
+              <div className="flex flex-col gap-2">
+                <p className="text-xs text-blue-300/70">
+                  The secret is fetched on demand for admin users and is not preloaded into the page.
+                </p>
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    onClick={() => setShowAdminSecretConfirm(true)}
+                    disabled={!canRevealAdminSecret || isRevealingAdminSecret}
+                    className="bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-60"
+                  >
+                    {isRevealingAdminSecret ? 'Revealing…' : 'Reveal admin secret'}
+                  </Button>
+                  <span className="text-xs text-blue-300/70">Requires an authenticated admin session; rate limits still apply.</span>
+                </div>
+              </div>
+            )}
+
+            {hasAdminSecretValue && (
+              <div className="space-y-2">
+                <div className="relative">
+                  <Input
+                    type={showAdminSecret ? 'text' : 'password'}
+                    value={adminSecretValue || ''}
+                    readOnly
+                    className="bg-gray-800/50 border-gray-700/50 text-blue-300 pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowAdminSecret(v => !v)}
+                    className="absolute inset-y-0 right-2 flex items-center text-blue-300/70 hover:text-blue-200"
+                    aria-label={showAdminSecret ? 'Hide admin secret' : 'Show admin secret'}
+                  >
+                    {showAdminSecret ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-blue-300/70">
+                  <span>Read-only. Clears when you navigate away.</span>
+                  <button
+                    type="button"
+                    onClick={clearAdminSecretFromView}
+                    className="text-blue-200 underline underline-offset-2 hover:text-blue-100"
+                  >
+                    Hide from view
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {adminSecretError && (
+              <Alert variant="error">
+                {adminSecretError}
+              </Alert>
+            )}
+          </div>
+        )}
+
         {hasExistingCredentials && (
           <div className="bg-green-900/30 border border-green-700/30 rounded-lg p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -1136,6 +1269,19 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             {keysetGenerated.location}
           </Alert>
         )}
+
+        <ConfirmModal
+          isOpen={showAdminSecretConfirm}
+          title="Reveal admin secret?"
+          body={
+            <>
+              <p>Revealing will fetch the admin secret for this session only. Do this on trusted devices and avoid screen sharing.</p>
+              <p className="text-xs text-blue-200/80">The value stays in memory until you hide it or leave this page. Rate limiting still applies.</p>
+            </>
+          }
+          onConfirm={handleRevealAdminSecret}
+          onCancel={() => setShowAdminSecretConfirm(false)}
+        />
 
         {/* Clear Credentials Confirmation Modal */}
         {showClearConfirm && (

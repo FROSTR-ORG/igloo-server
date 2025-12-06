@@ -33,6 +33,7 @@ interface AuthState {
   needsOnboarding?: boolean;
   headlessMode?: boolean;
   isAdmin?: boolean;
+  skipAdminValidation?: boolean;
 }
 
 const App: React.FC = () => {
@@ -107,7 +108,8 @@ const App: React.FC = () => {
           isAuthenticated: false, 
           authEnabled: true, 
           needsOnboarding: true,
-          headlessMode: false 
+          headlessMode: false,
+          skipAdminValidation: Boolean(onboardingData.skipAdminValidation)
         });
         setInitializing(false);
         return;
@@ -465,7 +467,12 @@ const App: React.FC = () => {
 
   // Show onboarding if needed
   if (authState.needsOnboarding) {
-    return <Onboarding onComplete={handleOnboardingComplete} />;
+    return (
+      <Onboarding 
+        onComplete={handleOnboardingComplete} 
+        initialSkipAdminValidation={authState.skipAdminValidation}
+      />
+    );
   }
 
   // Show login screen if authentication is required and user is not authenticated

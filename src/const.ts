@@ -77,3 +77,15 @@ export const HEADLESS = (() => {
 
 // Helper function to check if credentials are available
 export const hasCredentials = () => GROUP_CRED !== undefined && SHARE_CRED !== undefined
+
+// Skip admin secret validation during onboarding (for Umbrel and similar managed deployments)
+// When true, users skip the "Enter Admin Secret" screen and go directly to account creation.
+// The ADMIN_SECRET is still set and used internally, but users don't need to enter it manually.
+export const SKIP_ADMIN_SECRET_VALIDATION = (() => {
+  const value = process.env['SKIP_ADMIN_SECRET_VALIDATION'];
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const normalized = trimmed.toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
