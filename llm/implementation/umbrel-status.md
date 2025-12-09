@@ -23,7 +23,7 @@
    - **Action to eliminate the workaround:** Start the container as `root`, run the entrypoint (which creates/chowns `/app/data`), then drop privileges (e.g., via `su-exec`/`gosu`) before launching `bun start`. This allows the container to fix permissions automatically without manual intervention while still running the app as UID `1000`.
 2. **Digest pinning:** The community store bundle references `ghcr.io/frostr-org/igloo-server:umbrel-dev` without a digest. Umbrel caches tags aggressively, so installs may pull an older image if a user installed before the latest push.  
    - **Action:** After rebuilding the image with the privilege-drop fix, pin `image: ghcr.io/frostr-org/igloo-server@sha256:<digest>` in `igloo-server-store/igloo-server/docker-compose.yml`.
-3. **Documentation refresh:** Update `docs/UMBREL_DEPLOYMENT.md` (and `llm/context` plan) once the privilege-drop change lands to reflect that no SSH steps are required. Mention the new entrypoint behaviour and the pinned digest workflow.
+3. **Documentation refresh:** Update `llm/workflows/UMBREL_DEPLOYMENT.md` (and the `llm/context` plan) once the privilege-drop change lands to reflect that no SSH steps are required. Mention the new entrypoint behaviour and the pinned digest workflow.
 4. **Automated workflow surface:** Once `.github/workflows/umbrel-dev.yml` merges into `master`/`develop`, document how to trigger it pre-merge (currently invisible on feature branches). Optional but removes confusion for future devs.
 
 ## Suggested Next Implementation Tasks

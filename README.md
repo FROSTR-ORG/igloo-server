@@ -2,6 +2,8 @@
 
 Server‑based signing device and personal ephemeral relay for the FROSTR protocol. Igloo provides an always‑on signing node with an optional web UI for configuration and monitoring. Built on @frostr/igloo-core.
 
+Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` (Umbrel App Store or Docker/Compose).
+
 ## What It Is
 - Threshold Schnorr signing for Nostr using your FROSTR shares (k‑of‑n). The full private key is never reconstructed.
 - Two modes: Database (multi‑user, encrypted creds, web UI) or Headless (env‑only, API‑first, no UI).
@@ -11,9 +13,9 @@ Server‑based signing device and personal ephemeral relay for the FROSTR protoc
 - Always‑on signer built on igloo‑core with multi‑relay support
 - Web UI (React + Tailwind) for setup, monitoring, recovery
 - REST + WebSocket APIs with API‑key, Basic, or session auth
-- Ephemeral relay for testing (not for production data)
 - Health monitor + auto‑restart on repeated failures
 - Works as a single node or part of a k‑of‑n signer group
+- Ephemeral relay for testing and local development (not for production data)
 
 ## Quick Start
 
@@ -45,7 +47,16 @@ bun run start
 - Database (recommended): multi‑user, AES‑encrypted creds, admin onboarding via `ADMIN_SECRET`, SQLite at `./data/igloo.db` (override with `DB_PATH`).
 - Headless: env‑only config, API‑first, UI disabled. Supports `PEER_POLICIES` blocks and API key auth.
 
-### Docker / Compose
+### Deployment Options
+
+#### Umbrel (1.1.0+)
+1. In Umbrel, open the App Store → click the `…` menu (top‑right) → **Community App Stores**.
+2. Add `https://github.com/frostr-org/igloo-server-store` and save.
+3. Open the newly added store entry, select **Igloo Server**, and click **Install**.
+4. Configure via the Igloo UI inside Umbrel: set `ADMIN_SECRET`, connect relays, and add your `GROUP_CRED` / `SHARE_CRED`.
+5. Updates follow the Umbrel app store; manage start/stop from the Umbrel dashboard.
+
+#### Docker / Compose
 ```bash
 # one‑off
 docker build -t igloo-server .
