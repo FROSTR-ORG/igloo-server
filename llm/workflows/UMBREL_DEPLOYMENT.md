@@ -95,12 +95,12 @@ Visit `http://localhost:8002` to confirm the UI, API (`/api/status`), and websoc
 
 ### 5.2 Umbrel sideload
 1. Copy the bundle directory to Umbrel (e.g., `scp -r packages/umbrel/igloo umbrel@umbrel.local:/home/umbrel/apps/frostr-igloo`).
-2. On Umbrel, run:
+2. On Umbrel, install the app with the official CLI (app id `frostr-igloo`):
 
    ```bash
-   cd /home/umbrel/apps/frostr-igloo
-   umbrel-dev tools register-app .
-   umbrel-dev apps install frostr-igloo
+   umbreld client apps.install.mutate --appId frostr-igloo
+   # or in the dev environment
+   npm run dev client -- apps.install.mutate -- --appId frostr-igloo
    ```
 
 3. Confirm:
@@ -147,7 +147,7 @@ Server-side rate limiting still applies even when this flag is enabled.
 - **CORS/WS blocked (403 on /api/events)**: `ALLOWED_ORIGINS` supports `@self` to auto-allow the host the user connects through (LAN IP, Tor onion, custom domain), ignoring port differences (UI on 80, API on 8002). Default bundle: `ALLOWED_ORIGINS=@self,http://umbrel.local`. Add more if fronting on another host.
 - **Database write errors**: confirm the container runs as UID/GID 1000 and `/app/data` is writable (non-root user baked into the image).
 - **Session failures**: check `/app/data/.session-secret`. If missing, perms might be wrong; restart container and ensure Umbrel’s volume owner matches the igloo user.
-- **Proxy auth failures**: verify `PROXY_AUTH_WHITELIST` covers `/api/*`, `/api/docs/*`, and `/api/events/*` so APIs stay reachable behind Umbrel’s auth layer.
+- **Proxy auth / 401 after Umbrel login**: Umbrel’s app proxy enforces the user’s Umbrel session; there is no `PROXY_AUTH_WHITELIST` env. Make sure `umbrel-app.yml` has an `app_proxy` block pointing to the Igloo service/port (default 8002) and that the app is started from the Umbrel dashboard so the proxy route is registered. For Tor/clearnet issues, restart the app to refresh routes and verify `ALLOWED_ORIGINS` includes the hostname you’re using.
 
 ---
 
