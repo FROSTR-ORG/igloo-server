@@ -49,6 +49,19 @@ const App: React.FC = () => {
   // Reference to the Signer component to call its stop method
   const signerRef = useRef<SignerHandle>(null);
 
+  // Set a transparent favicon that matches the app branding
+  useEffect(() => {
+    const faviconHref = "/assets/frostr-logo-transparent.png";
+    const head = document.head;
+    if (!head) return;
+    const existing = head.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    const link = existing ?? document.createElement('link');
+    link.rel = "icon";
+    link.type = "image/png";
+    link.href = faviconHref;
+    if (!existing) head.appendChild(link);
+  }, []);
+
   useEffect(() => {
     initializeApp();
   }, []);
