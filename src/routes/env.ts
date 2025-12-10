@@ -14,7 +14,7 @@ import {
   validateRelayUrls,
   normalizeRelayListForEcho
 } from './utils.js';
-import { hasCredentials, HEADLESS } from '../const.js';
+import { hasCredentials, HEADLESS, ADMIN_SECRET } from '../const.js';
 import { createNodeWithCredentials, sendSelfEcho, broadcastShareEcho } from '../node/manager.js';
 import { executeUnderNodeLock, cleanupNodeSynchronized } from '../utils/node-lock.js';
 import { validateShare, validateGroup } from '@frostr/igloo-core';
@@ -74,12 +74,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   if (!url.pathname.startsWith('/api/env')) return null;
   
   const corsHeaders = getSecureCorsHeaders(req);
-  
   const mergedVary = mergeVaryHeaders(corsHeaders);
   
   const headers = {
     'Content-Type': 'application/json',
     ...corsHeaders,
+    'Cache-Control': 'no-store',
     'Vary': mergedVary,
   };
 
@@ -189,7 +189,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
         if (req.method === 'GET') {
           if (HEADLESS) {
             const publicEnv = await readPublicEnvFile();
-            return Response.json(publicEnv, { headers });
+            return Response.json({ ...publicEnv, adminSecretAvailable: false }, { headers });
           }
 
           if (!auth || !auth.authenticated) {
@@ -226,12 +226,19 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               return Response.json({}, { headers });
             }
 
+            // Expose non-sensitive server/env settings alongside user credentials so the UI
+            // can render Advanced Settings (rate limits, CORS, timeouts, etc.).
+            // Uses the same public filter as headless mode to avoid leaking secrets.
+            const publicEnv = await readPublicEnvFile();
+
             return Response.json({
+              ...publicEnv,
               GROUP_CRED: undefined,
               SHARE_CRED: undefined,
               GROUP_NAME: credentials.group_name || undefined,
               RELAYS: credentials.relays || undefined,
-              hasCredentials: !!(credentials.group_cred && credentials.share_cred)
+              hasCredentials: !!(credentials.group_cred && credentials.share_cred),
+              adminSecretAvailable: isRoleAdmin && !!ADMIN_SECRET
             }, { headers });
           } catch (error) {
             console.error('Failed to retrieve user credentials for env:', error);
@@ -689,6 +696,50 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
         }
         break;
+
+      case '/api/env/admin-secret': {
+        if (req.method !== 'POST') {
+          return Response.json({ error: 'Method not allowed' }, { status: 405, headers });
+        }
+
+        if (HEADLESS) {
+          // Avoid exposing ADMIN_SECRET in headless mode; operators can manage secrets via env/CLI.
+          return Response.json({ error: 'Not found' }, { status: 404, headers });
+        }
+
+        if (!auth || !auth.authenticated) {
+          return Response.json({ error: 'Authentication required' }, { status: 401, headers });
+        }
+
+        if (!isRoleAdmin) {
+          return Response.json({ error: 'Admin privileges required' }, { status: 403, headers });
+        }
+
+        // Optional small body guard to avoid large payloads
+        if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
+          return Response.json({ error: 'Request too large' }, { status: 413, headers });
+        }
+
+        // Require explicit confirmation flag to ensure the client intentionally requested a reveal
+        let confirmReveal = false;
+        try {
+          const body = await parseJsonRequestBody(req);
+          confirmReveal = body?.confirm === true || body?.confirmReveal === true;
+        } catch {
+          confirmReveal = false;
+        }
+
+        if (!confirmReveal) {
+          return Response.json({ error: 'Confirmation required to reveal admin secret' }, { status: 400, headers });
+        }
+
+        if (!ADMIN_SECRET) {
+          return Response.json({ error: 'Admin secret not configured' }, { status: 404, headers });
+        }
+
+        // Do not cache this response; handled via headers above.
+        return Response.json({ adminSecret: ADMIN_SECRET }, { headers });
+      }
     }
     
     return Response.json({ error: 'Method not allowed' }, { status: 405, headers });

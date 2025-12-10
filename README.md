@@ -2,6 +2,8 @@
 
 Server‑based signing device and personal ephemeral relay for the FROSTR protocol. Igloo provides an always‑on signing node with an optional web UI for configuration and monitoring. Built on @frostr/igloo-core.
 
+Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` (Umbrel App Store or Docker/Compose).
+
 ## What It Is
 - Threshold Schnorr signing for Nostr using your FROSTR shares (k‑of‑n). The full private key is never reconstructed.
 - Two modes: Database (multi‑user, encrypted creds, web UI) or Headless (env‑only, API‑first, no UI).
@@ -11,9 +13,9 @@ Server‑based signing device and personal ephemeral relay for the FROSTR protoc
 - Always‑on signer built on igloo‑core with multi‑relay support
 - Web UI (React + Tailwind) for setup, monitoring, recovery
 - REST + WebSocket APIs with API‑key, Basic, or session auth
-- Ephemeral relay for testing (not for production data)
 - Health monitor + auto‑restart on repeated failures
 - Works as a single node or part of a k‑of‑n signer group
+- Ephemeral relay for testing and local development (not for production data)
 
 ## Quick Start
 
@@ -45,7 +47,16 @@ bun run start
 - Database (recommended): multi‑user, AES‑encrypted creds, admin onboarding via `ADMIN_SECRET`, SQLite at `./data/igloo.db` (override with `DB_PATH`).
 - Headless: env‑only config, API‑first, UI disabled. Supports `PEER_POLICIES` blocks and API key auth.
 
-### Docker / Compose
+### Deployment Options
+
+#### Umbrel (1.1.0+)
+1. In Umbrel, open the App Store → click the `…` menu (top‑right) → **Community App Stores**.
+2. Add `https://github.com/frostr-org/igloo-server-store` and save.
+3. Open the newly added store entry, select **Igloo Server**, and click **Install**.
+4. Configure via the Igloo UI inside Umbrel: set `ADMIN_SECRET`, connect relays, and add your `GROUP_CRED` / `SHARE_CRED`.
+5. Updates follow the Umbrel app store; manage start/stop from the Umbrel dashboard.
+
+#### Docker / Compose
 ```bash
 # one‑off
 docker build -t igloo-server .
@@ -62,13 +73,13 @@ Reverse proxy (nginx) and cloud steps are in docs/DEPLOY.md.
 
 ### Production Checklist
 - `NODE_ENV=production`, persist `/app/data`, set strong `ADMIN_SECRET` (keep set after onboarding).
-- Explicit `ALLOWED_ORIGINS`, `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
+- Explicit `ALLOWED_ORIGINS` (supports `@self` for “whatever host the user connects through”; host match, port-agnostic), `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
 - Auth on (`AUTH_ENABLED=true`), rate limit on (`RATE_LIMIT_ENABLED=true`); optional `SESSION_SECRET` (auto‑gen if absent).
 - Timeouts: tune `FROSTR_SIGN_TIMEOUT` or `SIGN_TIMEOUT_MS` (1000–120000ms).
 
 ## API & Docs
 - Swagger UI: http://localhost:8002/api/docs (self‑hosted; run `bun run docs:vendor` if assets missing).
-- OpenAPI: docs/openapi.yaml or `/api/docs/openapi.{json|yaml}`.
+- OpenAPI: docs/openapi/openapi.yaml or `/api/docs/openapi.{json|yaml}`.
 - Auth: API Key, Basic, or session; WS `/api/events` supports subprotocol hints (`apikey.<TOKEN>`, `bearer.<TOKEN>`, `session.<ID>`).
 - Validate spec: `bun run docs:validate`.
 
@@ -103,7 +114,7 @@ See SECURITY.md for hardening and CSP details.
 - “Build required”: run `bun run build` (UI assets are not committed).
 - UI not updating: prod caches assets; rebuild + restart. Dev disables cache.
 - Cred/relay issues: verify `bfgroup1...` / `bfshare1...` and reachable relays.
-- More: SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi.yaml (API).
+- More: SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi/openapi.yaml (API).
 
 ## Development
 ```bash

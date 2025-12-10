@@ -2,6 +2,18 @@
 
 This page collects detailed deploy steps and reverse‑proxy examples that were trimmed from README for brevity.
 
+## Umbrel (App Store, 1.1.0+)
+
+Use the packaged Umbrel app if you prefer a one-click install on your node. The bundle runs **Database mode** by default and persists `/app/data` on Umbrel’s volume.
+
+1) On your Umbrel dashboard, open **App Store** → click the `…` menu (top-right) → **Community App Stores**.
+2) Add `https://github.com/frostr-org/igloo-server-store` and save.
+3) Open the new store entry, choose **Igloo Server**, and click **Install**.
+4) First launch: go straight to the Igloo UI and create your admin user. Umbrel provides `ADMIN_SECRET` automatically, and the package sets `SKIP_ADMIN_SECRET_VALIDATION=true` so you don’t need to copy the secret from the CLI—the first user you create becomes the admin.
+5) Configure relays and add your `GROUP_CRED` / `SHARE_CRED` in the UI. Subsequent updates arrive via the Umbrel store; start/stop from the Umbrel dashboard.
+
+**Note:** `SKIP_ADMIN_SECRET_VALIDATION` should remain enabled only on Umbrel where the platform injects `ADMIN_SECRET` for you. Leave it `false` in other deployments to require the secret during onboarding.
+
 ## DigitalOcean (Docker)
 
 1) Create a Droplet (Ubuntu 22.04+; 2GB RAM recommended).
@@ -56,6 +68,13 @@ server {
 server { listen 80; server_name yourdomain.com; return 301 https://$host$request_uri; }
 ```
 
+## Security: TLS Requirements
+
+**WARNING**: Never expose Igloo directly to the internet over HTTP in production.
+Always deploy behind a TLS-terminating reverse proxy (nginx, Traefik, Cloudflare, etc.)
+as shown in the nginx example above. Credentials (API keys, session tokens, Basic Auth)
+transmitted over plain HTTP can be intercepted by attackers.
+
 ## Production Checklist
 
 - `NODE_ENV=production`, `HOST_NAME=0.0.0.0` (container)
@@ -68,7 +87,6 @@ server { listen 80; server_name yourdomain.com; return 301 https://$host$request
 
 ## Other Targets
 
-- Umbrel: packaging planned.
 - Start9: service manifest planned.
 
 Keep an eye on `compose.yml` for a working reference configuration.

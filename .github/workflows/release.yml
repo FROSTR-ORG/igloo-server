@@ -220,3 +220,22 @@ jobs:
           org.opencontainers.image.revision=${{ github.sha }}
         cache-from: type=gha
         cache-to: type=gha,mode=max 
+
+    - name: Build and push Umbrel Docker image
+      uses: docker/build-push-action@v5
+      with:
+        context: .
+        file: packages/umbrel/igloo/Dockerfile
+        push: true
+        platforms: linux/amd64,linux/arm64
+        tags: |
+          ghcr.io/frostr-org/igloo-server:umbrel-latest
+          ghcr.io/frostr-org/igloo-server:umbrel-${{ needs.release.outputs.version_number }}
+        labels: |
+          org.opencontainers.image.title=Igloo Server (Umbrel)
+          org.opencontainers.image.description=Igloo Server packaged for Umbrel app deployments
+          org.opencontainers.image.source=https://github.com/FROSTR-ORG/igloo-server
+          org.opencontainers.image.version=${{ needs.release.outputs.version_number }}
+          org.opencontainers.image.revision=${{ github.sha }}
+        cache-from: type=gha
+        cache-to: type=gha,mode=max

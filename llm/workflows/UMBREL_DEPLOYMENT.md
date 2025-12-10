@@ -1,0 +1,168 @@
+# Umbrel Deployment Guide
+
+This guide walks through packaging, sideloading, and releasing the Umbrel edition of **igloo-server**. Follow these steps to build the Umbrel image, validate the bundle locally, and publish updates upstream.
+
+---
+
+## 1. Prerequisites
+- Docker Engine 24+ with Buildx enabled (`docker buildx version`).
+- GitHub access to `FROSTR-ORG/igloo-server` with permission to push container images to GHCR (`ghcr.io/frostr-org`).
+- Umbrel dev environment or hardware device (v0.5.5+ recommended).
+- Bun 1.1.x locally if you plan to run any scripts outside containers.
+
+---
+
+## 2. Repository Layout
+- `packages/umbrel/igloo/Dockerfile`: multi-stage Bun image pinned to `oven/bun:1.1.30`, runs as non-root `igloo` (UID/GID 1000) to match Umbrel volume ownership.
+- `packages/umbrel/igloo/docker-compose.yml`: reference compose file for local smoke tests and Umbrel sideloads (replace `build:` with a pinned digest before release).
+- `packages/umbrel/igloo/umbrel-app.yml`: manifest metadata (`manifestVersion: 1`). Update `version`, `releaseNotes`, and image digest per release.
+- `packages/umbrel/igloo/exports.sh`: exposes admin secret plus Tor/clearnet URLs to Umbrel’s dashboard.
+- `packages/umbrel/igloo/assets/`: Umbrel icon (512×512 PNG) and 16:9 gallery screenshots (1024×768). Replace placeholders with real captures before shipping.
+
+---
+
+## 3. Build & Publish Images
+GitHub Actions now handles both dev and release builds:
+
+- `.github/workflows/umbrel-dev.yml` (new) runs on every push to `master` or `develop`, and can be triggered manually. It publishes `ghcr.io/frostr-org/igloo-server:umbrel-dev` plus a commit-specific tag `ghcr.io/frostr-org/igloo-server:umbrel-dev-<git-sha>`. Umbrel community store bundles should track this tag if you want the "Install" button to succeed between formal releases.
+- `.github/workflows/release.yml` remains the source of immutable release tags (`ghcr.io/frostr-org/igloo-server:umbrel-<version>` and `:umbrel-latest`) after the release job completes.
+- `scripts/umbrel-entrypoint.sh` runs inside the Umbrel image before `bun start`, making sure `/app/data` exists and is owned by UID/GID 1000 so fresh Umbrel installs don't need manual chmod/chown steps.
+
+You can still build locally for testing.
+
+```bash
+# Build multi-arch image (uses the Umbrel Dockerfile)
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --file packages/umbrel/igloo/Dockerfile \
+  --tag ghcr.io/frostr-org/igloo-server:umbrel-dev \
+  .
+```
+
+To push test tags (requires GHCR login):
+
+```bash
+docker login ghcr.io
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --file packages/umbrel/igloo/Dockerfile \
+  --tag ghcr.io/frostr-org/igloo-server:umbrel-${GIT_SHA} \
+  --push \
+  .
+```
+
+For official releases, trigger the **Release** workflow (`.github/workflows/release.yml`) as before. It publishes:
+- `ghcr.io/frostr-org/igloo-server:umbrel-latest`
+- `ghcr.io/frostr-org/igloo-server:umbrel-<version>`
+
+Record the resulting digest (e.g., `sha256:...`) for the manifest and compose file.
+
+After any push (dev or release), you can verify the image exists on GHCR directly from your Umbrel box or local machine:
+
+```bash
+docker pull ghcr.io/frostr-org/igloo-server:umbrel-dev
+docker inspect ghcr.io/frostr-org/igloo-server:umbrel-dev --format '{{ .Id }}'
+```
+
+If the pull succeeds without `manifest unknown`, Umbrel's installer will also be able to fetch it.
+
+---
+
+## 4. Prepare Bundle Artifacts
+1. Update `packages/umbrel/igloo/umbrel-app.yml`:
+   - Set `version` to the igloo-server tag (e.g., `0.7.0`).
+   - Add concise `releaseNotes`.
+   - Confirm the icon (512×512) and gallery screenshots (16:9) reflect the current UI and ensure paths match.
+2. Replace `packages/umbrel/igloo/docker-compose.yml` `build:` section with the published image reference, for example:
+
+   ```yaml
+   image: ghcr.io/frostr-org/igloo-server:umbrel-0.7.0@sha256:<digest>
+   ```
+
+3. Update `exports.sh` if new environment values should appear on Umbrel’s dashboard.
+
+---
+
+## 5. Local Sideload Testing
+### 5.1 Compose smoke test (no Umbrel)
+
+```bash
+ALLOWED_ORIGINS=http://umbrel.local \
+docker compose -f packages/umbrel/igloo/docker-compose.yml up --build
+```
+
+Visit `http://localhost:8002` to confirm the UI, API (`/api/status`), and websocket events load. Stop with `Ctrl+C`.
+
+### 5.2 Umbrel sideload
+1. Copy the bundle directory to Umbrel (e.g., `scp -r packages/umbrel/igloo umbrel@umbrel.local:/home/umbrel/apps/frostr-igloo`).
+2. On Umbrel, install the app with the official CLI (app id `frostr-igloo`):
+
+   ```bash
+   umbreld client apps.install.mutate --appId frostr-igloo
+   # or in the dev environment
+   npm run dev client -- apps.install.mutate -- --appId frostr-igloo
+   ```
+
+3. Confirm:
+   - First launch prompts for onboarding with `ADMIN_SECRET` set to Umbrel’s `$APP_PASSWORD`.
+   - `SESSION_SECRET` auto-generates at `/app/data/.session-secret`.
+   - API endpoints work via Umbrel’s proxy and Tor (`http://<tor-address>`).
+   - Restart preserves SQLite state under `/app/data`.
+
+4. Capture fresh gallery screenshots and update the PNGs if the UI changed.
+
+---
+
+### 5.3 SKIP_ADMIN_SECRET_VALIDATION (Umbrel only)
+
+Setting `SKIP_ADMIN_SECRET_VALIDATION=true` causes the onboarding UI to skip the "Enter Admin Secret" step and rely on the existing `ADMIN_SECRET` value.
+
+This flag is only safe when `ADMIN_SECRET` is provisioned out-of-band by the host platform (Umbrel does this via its Configure page using the app password). Never enable `SKIP_ADMIN_SECRET_VALIDATION` on public-facing or internet-exposed deployments.
+
+Example one-line environment configuration:
+
+```bash
+ADMIN_SECRET=<umbrel-app-password> SKIP_ADMIN_SECRET_VALIDATION=true
+```
+
+Server-side rate limiting still applies even when this flag is enabled.
+
+---
+
+## 6. Release Checklist
+1. Create a new igloo-server tag (Conventional Commit release flow).
+2. Trigger the Release GitHub Action or run the multi-arch build manually.
+3. Pin `umbrel-app.yml` and `docker-compose.yml` to the pushed image digest.
+4. Commit bundle updates on `feature/<slug>` branch and open PR:
+   - Include verification steps (`ci.yml`, compose smoke test, Umbrel sideload proof).
+   - Attach updated screenshots if the UI changed.
+5. After merge, submit a PR to `getumbrel/umbrel-apps` with:
+   - Bundle contents (manifest, compose, exports, docs, assets).
+   - Digest references.
+   - Testing notes (clearnet/Tor access, persistence, API whitelist).
+
+---
+
+## 7. Troubleshooting
+- **CORS/WS blocked (403 on /api/events)**: `ALLOWED_ORIGINS` supports `@self` to auto-allow the host the user connects through (LAN IP, Tor onion, custom domain), ignoring port differences (UI on 80, API on 8002). Default bundle: `ALLOWED_ORIGINS=@self,http://umbrel.local`. Add more if fronting on another host.
+- **Database write errors**: confirm the container runs as UID/GID 1000 and `/app/data` is writable (non-root user baked into the image).
+- **Session failures**: check `/app/data/.session-secret`. If missing, perms might be wrong; restart container and ensure Umbrel’s volume owner matches the igloo user.
+- **Proxy auth / 401 after Umbrel login**: Umbrel’s app proxy enforces the user’s Umbrel session; there is no `PROXY_AUTH_WHITELIST` env. Make sure `umbrel-app.yml` has an `app_proxy` block pointing to the Igloo service/port (default 8002) and that the app is started from the Umbrel dashboard so the proxy route is registered. For Tor/clearnet issues, restart the app to refresh routes and verify `ALLOWED_ORIGINS` includes the hostname you’re using.
+
+---
+
+## 8. Reference Commands
+```bash
+# Format manifest (optional)
+yq e '.' packages/umbrel/igloo/umbrel-app.yml
+
+# Validate compose file
+docker compose -f packages/umbrel/igloo/docker-compose.yml config
+
+# Curl health endpoint during tests
+curl -fsS http://localhost:8002/api/status
+```
+
+---
+
+Maintain this document as packaging requirements evolve (e.g., manifestVersion 1.1 hooks, new environment variables, or Umbrel app proxy changes). Pull requests touching the bundle should update both this guide and `llm/context/IGLOO_UMBREL_PACKAGING_PLAN.md`.

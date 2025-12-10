@@ -1,5 +1,5 @@
 /*
- Lists GET endpoints from docs/openapi.yaml to help operators audit coverage.
+ Lists GET endpoints from docs/openapi/openapi.yaml to help operators audit coverage.
  Usage: bun scripts/api/list-get-endpoints-from-openapi.ts
  */
 
@@ -7,9 +7,9 @@ import { readFile } from 'node:fs/promises';
 import YAML from 'yaml';
 
 async function main() {
-  const raw = await readFile('docs/openapi.yaml', 'utf8').catch(() => null);
+  const raw = await readFile('docs/openapi/openapi.yaml', 'utf8').catch(() => null);
   if (!raw) {
-    console.error('docs/openapi.yaml not found.');
+    console.error('docs/openapi/openapi.yaml not found.');
     process.exit(1);
   }
   const doc = YAML.parse(raw);
@@ -24,4 +24,3 @@ async function main() {
 }
 
 main();
-
