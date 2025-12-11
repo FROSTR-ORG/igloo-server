@@ -90,6 +90,13 @@ Igloo Server operates in two distinct modes with different environment variable 
 | `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | Identical behavior | `1.5` | 1.0 - 10.0 | `src/server.ts:33,40` |
 | `NODE_MAX_RETRY_DELAY` | Max delay between retries (ms) | Identical behavior | `300000` | 1ms - 2 hours | `src/server.ts:34,41` |
 
+### Operation Timeouts
+
+| Variable | Purpose | Both Modes Usage | Default | Range | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `FROSTR_SIGN_TIMEOUT` | Signing operation timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/routes/utils.ts:700-711`, `src/node/manager.ts:176` |
+| `CONNECTIVITY_PING_TIMEOUT_MS` | Keepalive ping timeout (ms) | Identical behavior | `10000` | 1000ms - 120000ms | `src/node/manager.ts:101-111` |
+
 ### Error Circuit Breaker
 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |

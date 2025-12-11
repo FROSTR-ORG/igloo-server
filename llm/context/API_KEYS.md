@@ -166,13 +166,20 @@ curl -sS -H "X-API-Key: $TOKEN" http://localhost:8002/api/status | jq
 
 API test scripts live in `scripts/api/` and are run via package.json:
 
-- `bun run api:test:get` — test GET endpoints (status, peers, etc.)
+- `bun run api:test:get` — test accessible GET endpoints (should succeed)
+- `bun run api:test:get:blocked` — test permission probes (should be blocked)
+- `bun run api:test:get:list` — list GET endpoints from OpenAPI spec
+- `bun run api:test:ws` — test WebSocket event stream
+- `bun run api:test:nip` — test NIP-44/NIP-04 encryption roundtrip
+
+Additional scripts (not in README):
+
 - `bun run api:test:sign` — test signing endpoint
 - `bun run api:test:cors` — test CORS preflight handling
-- `bun run api:test:nip` — test NIP-44/NIP-04 encryption
-- `bun run api:test:ws` — test WebSocket event stream
+- `bun run api:test:get:openapi` — OpenAPI endpoint sweep
+- `bun run api:test:get:all` — run both get and get:blocked
 
-See `scripts/api/README.md` for usage details.
+See `scripts/api/README.md` for environment setup and usage details.
 
 ## 12) Testing Coverage (Summary)
 
