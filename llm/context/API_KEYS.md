@@ -164,8 +164,15 @@ curl -sS -H "X-API-Key: $TOKEN" http://localhost:8002/api/status | jq
 
 ## 11) Helper Scripts
 
-- `scripts/api-admin-keys.sh` — list/create/revoke admin keys (requires `jq`).
-- `scripts/api-test.sh` — smoke test of `/api/status`, `/api/auth/status`, `/api/peers` using a token.
+API test scripts live in `scripts/api/` and are run via package.json:
+
+- `bun run api:test:get` — test GET endpoints (status, peers, etc.)
+- `bun run api:test:sign` — test signing endpoint
+- `bun run api:test:cors` — test CORS preflight handling
+- `bun run api:test:nip` — test NIP-44/NIP-04 encryption
+- `bun run api:test:ws` — test WebSocket event stream
+
+See `scripts/api/README.md` for usage details.
 
 ## 12) Testing Coverage (Summary)
 

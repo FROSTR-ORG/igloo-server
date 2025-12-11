@@ -16,23 +16,42 @@ Use the packaged Umbrel app if you prefer a one-click install on your node. The 
 
 ## DigitalOcean (Docker)
 
-1) Create a Droplet (Ubuntu 22.04+; 2GB RAM recommended).
-2) Install Docker + Compose:
+You can skip cloning and building; pull the published image from GHCR.
+
+1) Create a Droplet (Ubuntu 22.04+; 2GB RAM recommended) and install Docker + Compose:
 ```bash
 curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
 sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 ```
-3) Clone and deploy:
+2) Pull and run (pin a release tag for reproducibility, e.g., `1.4.2` or `umbrel-1.4.2`):
 ```bash
-git clone https://github.com/FROSTR-ORG/igloo-server.git
-cd igloo-server
-cp .env.example .env
-# Edit .env for non‑sensitive defaults, export secrets in shell or use secrets manager
-export ADMIN_SECRET=$(openssl rand -hex 32)
-export API_KEY=$(openssl rand -hex 32)
-docker compose up -d --build
+docker pull ghcr.io/frostr-org/igloo-server:latest
+docker run -d --name igloo-server -p 8002:8002 \
+  -v $PWD/data:/app/data \
+  -e ADMIN_SECRET=$(openssl rand -hex 32) \
+  -e AUTH_ENABLED=true \
+  -e TRUST_PROXY=true \
+  -e ALLOWED_ORIGINS=https://yourdomain.com \
+  ghcr.io/frostr-org/igloo-server:latest
 ```
+3) Docker Compose option (create `docker-compose.yml`):
+```yaml
+services:
+  igloo:
+    image: ghcr.io/frostr-org/igloo-server:latest  # pin a version for prod
+    env_file: .env
+    ports: ["8002:8002"]
+    volumes:
+      - ./data:/app/data
+    environment:
+      - HOST_NAME=0.0.0.0
+      - HOST_PORT=8002
+      - NODE_ENV=production
+    restart: unless-stopped
+```
+Start with `docker compose up -d` after creating and editing `.env` (copy from `.env.example`).
+
 4) Firewall (UFW):
 ```bash
 sudo ufw allow 80 443 22

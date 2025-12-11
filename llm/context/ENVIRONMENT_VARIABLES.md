@@ -60,20 +60,20 @@ Igloo Server operates in two distinct modes with different environment variable 
 
 | Variable | Purpose | Headless Mode | Database Mode | Default | Key Differences |
 |----------|---------|---------------|---------------|---------|-----------------|
-| `AUTH_ENABLED` | Enable authentication | Same behavior | Same behavior | `true` | `src/routes/auth.ts:95` |
+| `AUTH_ENABLED` | Enable authentication | Same behavior | Same behavior | `true` | `src/routes/auth.ts:230` |
 | `API_KEY` | API authentication key | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
 | `BASIC_AUTH_USER` | Basic auth username | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
 | `BASIC_AUTH_PASS` | Basic auth password | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
 | `SESSION_SECRET` | Session signing key (⚠️ NEVER exposed via API) | Auto-generated in `data/.session-secret` | Auto-generated in `{DB_PATH}/.session-secret` | Auto-generated | Server-only, excluded from all API operations |
-| `SESSION_TIMEOUT` | Session expiration (seconds) | Same behavior | Same behavior | `3600` | `src/routes/auth.ts:104` |
+| `SESSION_TIMEOUT` | Session expiration (seconds) | Same behavior | Same behavior | `3600` | `src/routes/auth.ts:239` |
 
 ### Rate Limiting
 
 | Variable | Purpose | Both Modes Usage | Default | Source |
 |----------|---------|------------------|---------|--------|
-| `RATE_LIMIT_ENABLED` | Enable rate limiting | Identical behavior | `true` | `src/routes/auth.ts:107` |
-| `RATE_LIMIT_WINDOW` | Rate limit window (seconds) | Identical behavior | `900` | `src/routes/auth.ts:108` |
-| `RATE_LIMIT_MAX` | Max requests per window | Identical behavior | `100` | `src/routes/auth.ts:109` |
+| `RATE_LIMIT_ENABLED` | Enable rate limiting | Identical behavior | `true` | `src/routes/auth.ts:242` |
+| `RATE_LIMIT_WINDOW` | Rate limit window (seconds) | Identical behavior | `900` | `src/routes/auth.ts:243` |
+| `RATE_LIMIT_MAX` | Max requests per window | Headless: `300`, Database: `600` | Mode-dependent | `src/routes/auth.ts:225,245` |
 
 ### CORS Security
 
@@ -85,10 +85,26 @@ Igloo Server operates in two distinct modes with different environment variable 
 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |
 |----------|---------|------------------|---------|-------|--------|
-| `NODE_RESTART_DELAY` | Initial restart delay (ms) | Identical behavior | `30000` | 1ms - 1 hour | `src/server.ts:22-29` |
-| `NODE_MAX_RETRIES` | Max restart attempts | Identical behavior | `5` | 1 - 100 | `src/server.ts:23-30` |
-| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | Identical behavior | `1.5` | 1.0 - 10.0 | `src/server.ts:24-31` |
-| `NODE_MAX_RETRY_DELAY` | Max delay between retries (ms) | Identical behavior | `300000` | 1ms - 2 hours | `src/server.ts:25-32` |
+| `NODE_RESTART_DELAY` | Initial restart delay (ms) | Identical behavior | `30000` | 1ms - 1 hour | `src/server.ts:31,38` |
+| `NODE_MAX_RETRIES` | Max restart attempts | Identical behavior | `5` | 1 - 100 | `src/server.ts:32,39` |
+| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | Identical behavior | `1.5` | 1.0 - 10.0 | `src/server.ts:33,40` |
+| `NODE_MAX_RETRY_DELAY` | Max delay between retries (ms) | Identical behavior | `300000` | 1ms - 2 hours | `src/server.ts:34,41` |
+
+### Error Circuit Breaker
+
+| Variable | Purpose | Both Modes Usage | Default | Range | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `ERROR_CIRCUIT_WINDOW_MS` | Time window for error counting | Identical behavior | `60000` | 1s - 1 hour | `src/server.ts:65,70` |
+| `ERROR_CIRCUIT_THRESHOLD` | Errors before circuit trips | Identical behavior | `10` | 1 - 1000 | `src/server.ts:66,71` |
+| `ERROR_CIRCUIT_EXIT_CODE` | Exit code when circuit trips | Identical behavior | `1` | 0 - 255 | `src/server.ts:67,72` |
+
+### Proxy Configuration
+
+| Variable | Purpose | Both Modes Usage | Default | Source |
+|----------|---------|------------------|---------|--------|
+| `TRUST_PROXY` | Trust proxy headers for client IP | Identical behavior | `false` | `src/routes/utils.ts:606` |
+
+When `TRUST_PROXY=true`, the server trusts these headers (in order): `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`. Required for accurate rate limiting behind reverse proxies.
 
 ### System Environment
 
@@ -166,7 +182,7 @@ function getSessionSecretDir(): string {
 
 **CRITICAL SECURITY NOTE**: `SESSION_SECRET` must NEVER be exposed via any API endpoint. It is strictly server-only and excluded from all API read/write operations.
 
-**Environment Variables API** (`src/routes/utils.ts`):
+**Environment Variables API** (`src/routes/utils.ts:103-147`):
 ```typescript
 // Security: Whitelist of allowed environment variable keys (for write/validation)
 // IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
@@ -176,8 +192,10 @@ const ALLOWED_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - server configuration
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -186,6 +204,7 @@ const ALLOWED_ENV_KEYS = new Set([
   'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
   'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
   'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'CONNECTIVITY_PING_TIMEOUT_MS', // Keepalive ping timeout override (ms)
   'ALLOWED_ORIGINS'     // CORS allowed origins configuration
   // SESSION_SECRET explicitly excluded - must never be exposed via API
 ]);
@@ -196,8 +215,10 @@ const PUBLIC_ENV_KEYS = new Set([
   'RELAYS',             // Relay URLs configuration
   'GROUP_NAME',         // Display name for the signing group
   'CREDENTIALS_SAVED_AT', // Timestamp when credentials were last saved
+  'PEER_POLICIES',      // Optional headless peer policy configuration
   // Advanced settings - safe to expose for configuration UI
   'SESSION_TIMEOUT',    // Session timeout in seconds
+  'FROSTR_SIGN_TIMEOUT', // Signing timeout in milliseconds
   'RATE_LIMIT_ENABLED', // Enable/disable rate limiting
   'RATE_LIMIT_WINDOW',  // Rate limit time window in seconds
   'RATE_LIMIT_MAX',     // Maximum requests per window
@@ -206,6 +227,7 @@ const PUBLIC_ENV_KEYS = new Set([
   'NODE_BACKOFF_MULTIPLIER', // Exponential backoff multiplier
   'NODE_MAX_RETRY_DELAY', // Maximum delay between retry attempts
   'INITIAL_CONNECTIVITY_DELAY', // Initial delay before connectivity check
+  'CONNECTIVITY_PING_TIMEOUT_MS', // Keepalive ping timeout override (ms)
   'ALLOWED_ORIGINS'     // CORS allowed origins configuration
   // SESSION_SECRET, SHARE_CRED, GROUP_CRED explicitly excluded from public exposure
 ]);
@@ -449,17 +471,20 @@ cp .env.database .env  # Test database
 
 ### Key Implementation Files
 
-- **Environment Constants**: `src/const.ts:1-40`
-- **Authentication Config**: `src/routes/auth.ts:78-110`  
-- **Environment Utils**: `src/routes/utils.ts:20-85`
-- **Database Config**: `src/db/database.ts:4-8`
-- **Restart Config**: `src/server.ts:21-52`
-- **CORS Security**: `src/routes/utils.ts:261-275`
+- **Environment Constants**: `src/const.ts:1-91`
+- **Authentication Config**: `src/routes/auth.ts:228-246`
+- **Environment Utils**: `src/routes/utils.ts:101-180`
+- **Database Config**: `src/db/database.ts:11-14`
+- **Restart Config**: `src/server.ts:30-61`
+- **Error Circuit Config**: `src/server.ts:64-88`
+- **CORS Security**: `src/routes/utils.ts:447-557`
+- **Proxy/IP Detection**: `src/routes/utils.ts:599-624`
 
 ### Environment Variable Whitelisting
 
-- **Write/Validation Whitelist**: `src/routes/utils.ts:20-26` (`ALLOWED_ENV_KEYS`)
-- **Public Read Whitelist**: `src/routes/utils.ts:30-34` (`PUBLIC_ENV_KEYS`)
-- **Key Validation**: `src/routes/utils.ts:37-40` (`validateEnvKeys`)
+- **Write/Validation Whitelist**: `src/routes/utils.ts:103-124` (`ALLOWED_ENV_KEYS`)
+- **Public Read Whitelist**: `src/routes/utils.ts:128-147` (`PUBLIC_ENV_KEYS`)
+- **Forbidden Keys**: `src/routes/utils.ts:150` (`FORBIDDEN_ENV_KEYS`)
+- **Key Validation**: `src/routes/utils.ts:173-180` (`validateEnvKeys`)
 
 This reference serves as the definitive guide for understanding Igloo Server's dual-mode architecture and environment variable system.
