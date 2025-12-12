@@ -3,7 +3,7 @@
 If you discover a vulnerability in igloo-server, please report it privately so we can fix it quickly.
 
 ## How to Report
-- Email: bitcoinplebdev@protonmail.com (preferred for coordinated disclosure)
+- Email: <bitcoinplebdev@protonmail.com> (preferred for coordinated disclosure)
 - GitHub: open a [private security advisory](https://github.com/FROSTR-ORG/igloo-server/security/advisories/new)
 
 ## Please Do
