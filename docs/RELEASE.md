@@ -83,6 +83,6 @@ Each release creates:
 
 ## 📞 Help
 
-- 📖 **Full docs**: [CONTRIBUTING.md](CONTRIBUTING.md)
+- 📖 **Full docs**: [CONTRIBUTING.md](../CONTRIBUTING.md)
 - 🐛 **Issues**: [GitHub Issues](https://github.com/FROSTR-ORG/igloo-server/issues)
 - 💬 **Discord**: [FROSTR Community](https://discord.gg/frostr) 

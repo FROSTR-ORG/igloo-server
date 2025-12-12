@@ -137,7 +137,7 @@ git commit -m "chore: update dependencies"
 
 ## Release Process
 
-> 📖 **Quick Reference**: See [RELEASE.md](RELEASE.md) for a streamlined release guide
+> 📖 **Quick Reference**: See [docs/RELEASE.md](docs/RELEASE.md) for a streamlined release guide
 
 ### Automatic Releases
 
@@ -330,14 +330,14 @@ Please report security vulnerabilities privately to:
 ### Security Guidelines
 - Never commit secrets or credentials
 - Use environment variables for sensitive data
-- Follow the security configuration guide in `SECURITY.md`
+- Follow the security configuration guide in `docs/SECURITY.md`
 - Keep dependencies updated
 
 ## Getting Help
 
 ### Resources
 - **Documentation**: [README.md](README.md)
-- **Security Guide**: [SECURITY.md](SECURITY.md)
+- **Security Guide**: [docs/SECURITY.md](docs/SECURITY.md)
 - **Issues**: [GitHub Issues](https://github.com/FROSTR-ORG/igloo-server/issues)
 - **Discussions**: [GitHub Discussions](https://github.com/FROSTR-ORG/igloo-server/discussions)
 

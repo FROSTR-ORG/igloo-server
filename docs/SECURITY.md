@@ -510,8 +510,8 @@ grep "login" server.log
 ```
 
 > See canonical guidance in the main README:
-> - [Migration Between Modes](README.md#migration-between-modes)
-> - [Database directory permissions and ownership](README.md#database-directory-permissions-and-ownership)
+> - [Migration Between Modes](../README.md#migration-between-modes)
+> - [Database directory permissions and ownership](../README.md#database-directory-permissions-and-ownership)
 > These links consolidate backup/migration notes and permissions in one place, avoiding duplicate content here.
 
 

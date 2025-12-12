@@ -1,5 +1,34 @@
 # CHANGELOG
 
+## [1.1.0] — 2025-12-10
+
+### Highlights
+
+* **Umbrel app packaging**: official Umbrel bundle (compose, manifest, entrypoint) plus GHCR workflow to ship `umbrel-dev` images for beta installs. ([GitHub][3])
+
+### Added
+
+* Onboarding "Before you start" screen with guidance and links to Igloo Desktop/CLI and other FROSTR apps. ([GitHub][3])
+* `SKIP_ADMIN_SECRET_VALIDATION` flag to bypass the admin-secret step on managed installs (e.g., Umbrel); UI auto-skips when present. ([GitHub][3])
+* Configure screen can reveal the configured admin secret for signed-in admins via `/api/env/admin-secret`. ([GitHub][3])
+* FROSTR-branded favicon plus Umbrel assets, manifest, Docker compose, and entrypoint scripts. ([GitHub][3])
+
+### Changed
+
+* WebSocket/CORS handling now trusts proxy `x-forwarded-host` and `@self` tokens so LAN/Tor Umbrel access no longer returns 403; configure origin input fixed. ([GitHub][3])
+* Serve static JS/CSS with `no-cache, no-store` to prevent stale bundles behind Umbrel/browser caches. ([GitHub][3])
+* Hardened data directory permissions for Umbrel volumes during startup. ([GitHub][3])
+* OpenAPI docs relocated to `docs/openapi/` with updated scripts and docs touch-ups. ([GitHub][3])
+
+### Fixed
+
+* Hardened skip-admin onboarding flows, rate limits, and admin secret handling to avoid accidental leaks or empty secrets. ([GitHub][3])
+* Minor documentation corrections and Bun version bump. ([GitHub][3])
+
+### Notes
+
+* Version bump commit: **1.1.0**. ([GitHub][4])
+
 ## [1.0.1] — 2025-10-24
 
 ### Highlights
@@ -118,3 +147,5 @@
 
 [1]: https://github.com/FROSTR-ORG/igloo-server/pull/29
 [2]: https://github.com/FROSTR-ORG/igloo-server/commits/master
+[3]: https://github.com/FROSTR-ORG/igloo-server/pull/32
+[4]: https://github.com/FROSTR-ORG/igloo-server/commits/v1.1.0
