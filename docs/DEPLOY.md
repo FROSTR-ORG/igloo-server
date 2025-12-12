@@ -14,6 +14,8 @@ Use the packaged Umbrel app if you prefer a one-click install on your node. The 
 
 **Note:** `SKIP_ADMIN_SECRET_VALIDATION` should remain enabled only on Umbrel where the platform injects `ADMIN_SECRET` for you. Leave it `false` in other deployments to require the secret during onboarding.
 
+**Umbrel setup walkthrough (video):** https://plebdevs-bucket.nyc3.cdn.digitaloceanspaces.com/videos/random/igloo-server-umbrel-announcement.mp4
+
 ## DigitalOcean (Docker)
 
 You can skip cloning and building; pull the published image from GHCR.

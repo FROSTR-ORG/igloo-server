@@ -17,6 +17,12 @@ Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` 
 - Works as a single node or part of a k‑of‑n signer group
 - Ephemeral relay for testing and local development (not for production data)
 
+## Documentation
+- [docs/DEPLOY.md](docs/DEPLOY.md) — Umbrel, Docker/Compose, and cloud deployment steps
+- [docs/SECURITY.md](docs/SECURITY.md) — hardening, CSP, headers, and rate limiting guidance
+- [docs/RELEASE.md](docs/RELEASE.md) — release workflow, automation, and emergency fixes
+- [docs/openapi/openapi.yaml](docs/openapi/openapi.yaml) — OpenAPI spec (served at `/api/docs`)
+
 ## Quick Start
 
 ### Prerequisites
@@ -51,10 +57,10 @@ bun run start
 
 #### Umbrel (1.1.0+)
 1. In Umbrel, open the App Store → click the `…` menu (top‑right) → **Community App Stores**.
-2. Add `https://github.com/frostr-org/igloo-server-store` and save.
-3. Open the newly added store entry, select **Igloo Server**, and click **Install**.
-4. Configure via the Igloo UI inside Umbrel: set `ADMIN_SECRET`, connect relays, and add your `GROUP_CRED` / `SHARE_CRED`.
-5. Updates follow the Umbrel app store; manage start/stop from the Umbrel dashboard.
+2. Add `https://github.com/frostr-org/igloo-server-store` and save, then install **Igloo Server**.
+3. First launch: Umbrel injects `ADMIN_SECRET` (its app password) and the package sets `SKIP_ADMIN_SECRET_VALIDATION=true`, so you go straight to creating the first admin user. Follow the instructions screen, create your admin, then add `GROUP_CRED` / `SHARE_CRED`.
+4. If the install reports data-dir permission errors, fix volume ownership once (see Umbrel note in docs/DEPLOY.md) and restart from the Umbrel dashboard.
+5. Updates arrive via the store; start/stop from the Umbrel dashboard.
 
 #### Docker / Compose
 ```bash
@@ -86,7 +92,7 @@ Reverse proxy (nginx) and cloud steps are in docs/DEPLOY.md.
 ### API Keys
 - Headless: set a single `API_KEY` in env; HTTP cannot rotate it.
 - Database mode: manage multiple keys via the UI or admin endpoints. Admin APIs accept either `Authorization: Bearer <ADMIN_SECRET>` or an authenticated admin session.
-  - Helpers: `scripts/api-admin-keys.sh`, `scripts/api-test.sh`.
+  - CLI helpers: `bun run api:test:get`, `bun run api:test:ws`, `bun run api:test:nip` (see `scripts/api/README.md`).
 
 ## Operations
 - Health monitor: periodic connectivity checks; auto‑recreate node on repeated failures; status at `/api/status`.
@@ -108,13 +114,13 @@ chmod 700 ./data
 chmod 600 ./data/igloo.db ./data/.session-secret 2>/dev/null || true
 ```
 
-See SECURITY.md for hardening and CSP details.
+See docs/SECURITY.md for hardening and CSP details.
 
 ## Troubleshooting
-- “Build required”: run `bun run build` (UI assets are not committed).
+- UI assets missing/outdated: run `bun run build` to regenerate `static/app.js` and `static/styles.css`.
 - UI not updating: prod caches assets; rebuild + restart. Dev disables cache.
 - Cred/relay issues: verify `bfgroup1...` / `bfshare1...` and reachable relays.
-- More: SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi/openapi.yaml (API).
+- More: docs/SECURITY.md (hardening), docs/DEPLOY.md (proxy/cloud), docs/openapi/openapi.yaml (API).
 
 ## Development
 ```bash
@@ -122,9 +128,6 @@ bun run dev   # frontend watch
 bun run start # server
 bun test      # backend tests
 ```
-
-## Security
-See SECURITY.md for hardening, CSP, headers, rate limiting, and secret management. Secrets should be provided via environment, not files.
 
 ## Contributing & License
 MIT (see LICENSE). PRs welcome—use Conventional Commits and verify: `bun run build`, `bun test`, `bun run docs:validate`.

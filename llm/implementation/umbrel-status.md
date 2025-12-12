@@ -1,38 +1,28 @@
-# Igloo Server Umbrel Packaging Status (2025-11-21)
+# Igloo Server Umbrel Packaging Status (2025-12-12)
 
 ## Current State
-- **Image availability:** `ghcr.io/frostr-org/igloo-server:umbrel-dev` now publishes on demand and contains the Umbrel-specific Dockerfile plus the new `scripts/umbrel-entrypoint.sh`.
-- **Data-dir bootstrap:** The entrypoint ensures `/app/data` exists, attempts to chown/chmod it to UID/GID `1000`, and converts permission failures into warnings so the Bun process no longer crashes immediately.
-- **Community store bundle:** `igloo-server-store/igloo-server/docker-compose.yml` points at the `:umbrel-dev` tag, fixes `APP_HOST` to `igloo`, and otherwise matches Umbrel’s template (named volume + app proxy overrides). Fresh installs succeed once the host volume is writable.
-- **Umbrel verification:** After seeding `/home/umbrel/umbrel/app-data/igloo-server` with UID/GID `1000`, the backend runs, the proxy connects, and the UI loads on multiple clients.
+- **Images:** `ghcr.io/frostr-org/igloo-server:umbrel-dev` builds via `.github/workflows/umbrel-dev.yml` (smoke-test only, no push) and `:umbrel-<version>`/`:umbrel-latest` publish via `.github/workflows/release.yml`.
+- **Runtime user:** Image runs as non-root `igloo` (UID/GID 1000). Entrypoint creates `/app/data`, tries to chown/chmod 700, and logs a warning if host volume is owned by root.
+- **Community store bundle:** `packages/umbrel/igloo/docker-compose.yml` points at `:umbrel-dev` tag and uses a named `app-data` volume; works when the volume is writable.
+- **UI/UX:** Onboarding shows the instructions screen first; `SKIP_ADMIN_SECRET_VALIDATION=true` (default in compose) skips the admin-secret step. Configure page can reveal the admin secret for signed-in admins via `/api/env/admin-secret`.
+- **CORS/WS:** `ALLOWED_ORIGINS` defaults to `@self,http://umbrel.local`; `@self` now also works when Umbrel app proxy sets `x-forwarded-host`.
 
-## Remaining Gaps Before “zero-touch” installs
-1. **Host volume ownership:** Umbrel mounts `${APP_DATA_DIR}` owned by `root:root`. Our entrypoint runs as UID `1000`, so it still cannot chown the mount on first boot; users must currently set ownership via SSH.  
-   - **Current workaround (document for operators):**
+## Remaining Gaps
+1) **Volume ownership on fresh installs:** Umbrel mounts `${APP_DATA_DIR}` as root. Our entrypoint (running as UID 1000) cannot chown the mount, so first-boot writes may fail unless the user fixes ownership manually.
+   - Current workaround (documented in `docs/DEPLOY.md`, Umbrel section):
      ```bash
-     ssh umbrel@<umbrel-host>
+     ssh umbrel@<host>
      sudo mkdir -p /home/umbrel/umbrel/app-data/igloo-server/data
      sudo chown -R 1000:1000 /home/umbrel/umbrel/app-data/igloo-server
      sudo chmod 700 /home/umbrel/umbrel/app-data/igloo-server/data
      ```
-     After running those commands, reinstall or restart Igloo via the Umbrel UI so Docker reattaches the now-writable volume.
-   - **To print out the generated admin secret**
-     ```bash
-     sudo docker exec igloo-server_igloo_1 printenv ADMIN_SECRET
-     ```
-   - **Action to eliminate the workaround:** Start the container as `root`, run the entrypoint (which creates/chowns `/app/data`), then drop privileges (e.g., via `su-exec`/`gosu`) before launching `bun start`. This allows the container to fix permissions automatically without manual intervention while still running the app as UID `1000`.
-2. **Digest pinning:** The community store bundle references `ghcr.io/frostr-org/igloo-server:umbrel-dev` without a digest. Umbrel caches tags aggressively, so installs may pull an older image if a user installed before the latest push.  
-   - **Action:** After rebuilding the image with the privilege-drop fix, pin `image: ghcr.io/frostr-org/igloo-server@sha256:<digest>` in `igloo-server-store/igloo-server/docker-compose.yml`.
-3. **Documentation refresh:** Update `llm/workflows/UMBREL_DEPLOYMENT.md` (and the `llm/context` plan) once the privilege-drop change lands to reflect that no SSH steps are required. Mention the new entrypoint behaviour and the pinned digest workflow.
-4. **Automated workflow surface:** Once `.github/workflows/umbrel-dev.yml` merges into `master`/`develop`, document how to trigger it pre-merge (currently invisible on feature branches). Optional but removes confusion for future devs.
+   - Proposed fix (not yet implemented): start container as root, run entrypoint to chown/chmod, then drop privileges with `su-exec`/`gosu` before `bun start`.
+2) **Digest pinning:** Compose/manifest still reference the `:umbrel-dev` tag without a digest. Umbrel may cache an older tag. Need to rebuild, capture digest, and pin in `packages/umbrel/igloo/docker-compose.yml` and `umbrel-app.yml` before shipping.
+3) **Docs alignment:** After privilege-drop + digest pinning land, refresh `docs/DEPLOY.md` and `packages/umbrel/igloo/README.md` to remove the SSH ownership workaround and describe the new entrypoint flow.
+4) **Workflow exposure:** `umbrel-dev` GH Action only smoke-tests; no push occurs. Decide whether to push `:umbrel-dev`/commit tags from that workflow or document manual `docker buildx --push` for testers.
 
-## Suggested Next Implementation Tasks
-1. Modify `packages/umbrel/igloo/Dockerfile`:
-   - Keep `USER root`.
-   - Install `su-exec` (or equivalent) in production stage.
-   - Update the entrypoint to `exec su-exec "${IGLOO_UID}:${IGLOO_GID}" "$@"` after fixing `/app/data`.
-2. Rebuild and push `ghcr.io/frostr-org/igloo-server:umbrel-dev`, capture the digest, and pin it in the community store compose.
-3. Validate on a factory-reset Umbrel that installs succeed without SSH. Capture logs/screenshots for docs.
-4. Update docs + store README with troubleshooting now that the process is fully automated.
-
-Once those steps land, Igloo Server should install from the Umbrel Community Store with no manual shell access, matching the “instantly works” bar.
+## Next Actions
+- Update `packages/umbrel/igloo/Dockerfile` to run entrypoint as root, install `su-exec` (or `gosu`), and drop to UID/GID 1000 after fixing `/app/data` permissions.
+- Rebuild and push a fresh `:umbrel-dev`, record its digest, and pin compose/manifest to `@sha256:<digest>`.
+- Validate on a clean Umbrel (no pre-chown) that install succeeds without SSH. Capture logs and screenshots.
+- Update docs (`docs/DEPLOY.md`, bundle README) once automation is confirmed.
