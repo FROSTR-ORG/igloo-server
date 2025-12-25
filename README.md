@@ -4,6 +4,8 @@ Server‑based signing device and personal ephemeral relay for the FROSTR protoc
 
 Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` (Umbrel App Store or Docker/Compose).
 
+[▶ Watch the umbrel demo](https://plebdevs-bucket.nyc3.cdn.digitaloceanspaces.com/videos/random/igloo-server-umbrel-announcement.mp4)
+
 ## What It Is
 - Threshold Schnorr signing for Nostr using your FROSTR shares (k‑of‑n). The full private key is never reconstructed.
 - Two modes: Database (multi‑user, encrypted creds, web UI) or Headless (env‑only, API‑first, no UI).
