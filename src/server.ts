@@ -216,11 +216,14 @@ const restartState = { blockedByCredentials: false };
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
 const addServerLog = createAddServerLog(broadcastEvent);
-initNip46Service({
-  addServerLog,
-  broadcastEvent,
-  getNode: () => node
-});
+// NIP-46 service only needed in database mode (perf optimization 3.3)
+if (!CONST.HEADLESS) {
+  initNip46Service({
+    addServerLog,
+    broadcastEvent,
+    getNode: () => node
+  });
+}
 
 // Removed global nostr-tools SimplePool monkey-patch in favor of proxy-based instrumentation
 // See: src/node/manager.ts createInstrumentedNode/createInstrumentedClient/createInstrumentedPool
@@ -536,7 +539,8 @@ if (CONST.hasCredentials()) {
         scheduleRestartWithBackoff('watchdog timeout');
       }, activeCredentials?.group, activeCredentials?.share);
 
-      if (CONST.HEADLESS) {
+      // Startup echo broadcasts verify connectivity (perf optimization 5.2: skippable)
+      if (CONST.HEADLESS && !CONST.SKIP_STARTUP_ECHO) {
         const echoOptions = {
           relaysEnv: process.env.RELAYS,
           addServerLog,

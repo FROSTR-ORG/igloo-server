@@ -170,9 +170,16 @@ function loadOrGenerateSessionSecret(): string | null {
 
 // Validate SESSION_SECRET configuration
 function validateSessionSecret(): string | null {
+  // Fast path: headless with API key doesn't need sessions (perf optimization 3.2)
+  // Skip file I/O for session secret when using API key auth
+  if (HEADLESS && process.env.API_KEY) {
+    console.log('Headless mode with API_KEY: session management disabled');
+    return null;
+  }
+
   let sessionSecret = process.env.SESSION_SECRET;
   const isProduction = process.env.NODE_ENV === 'production';
-  
+
   // If no SESSION_SECRET provided, attempt to auto-generate or load
   if (!sessionSecret) {
     const generatedSecret = loadOrGenerateSessionSecret();
@@ -778,15 +785,18 @@ const CLEANUP_INTERVAL = 10 * 60 * 1000;
 let sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
 let vaultCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
-// Start session cleanup timer
-sessionCleanupTimer = setInterval(() => {
-  void cleanupExpiredSessions();
-}, CLEANUP_INTERVAL);
+// Skip timers in headless mode with API key - sessions are disabled anyway (perf optimization 2.3)
+if (!HEADLESS || !process.env.API_KEY) {
+  // Start session cleanup timer
+  sessionCleanupTimer = setInterval(() => {
+    void cleanupExpiredSessions();
+  }, CLEANUP_INTERVAL);
 
-// Start vault cleanup timer
-vaultCleanupTimer = setInterval(() => {
-  cleanupExpiredVaultEntries();
-}, VAULT_CLEANUP_INTERVAL_MS);
+  // Start vault cleanup timer
+  vaultCleanupTimer = setInterval(() => {
+    cleanupExpiredVaultEntries();
+  }, VAULT_CLEANUP_INTERVAL_MS);
+}
 
 // Export cleanup function for graceful shutdown
 export function stopAuthCleanup(): void {

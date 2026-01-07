@@ -49,6 +49,7 @@ describe('Onboarding routes', () => {
       process.env.HEADLESS = 'false';
       process.env.DB_PATH = ${JSON.stringify(dbPath)};
       process.env.ADMIN_SECRET = 'integration-secret';
+      process.env.SKIP_ADMIN_SECRET_VALIDATION = 'false';
 
       const { handleOnboardingRoute } = await import(root + 'src/routes/onboarding.ts');
       const context = {

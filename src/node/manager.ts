@@ -15,7 +15,7 @@ import type { NodePolicyInput, NodeEventConfig, EnhancedNodeConfig } from '@fros
 import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
-import { SKIP_RELAY_PROBE, DEFER_RELAY_PROBE } from '../const.js';
+import { SKIP_RELAY_PROBE, DEFER_RELAY_PROBE, MAX_PEER_STATUS_ENTRIES } from '../const.js';
 import { loadFallbackPeerPolicies } from './peer-policy-store.js';
 import { mergePolicyInputs } from '../util/peer-policy.js';
 import type { ServerWebSocket } from 'bun';
@@ -1509,7 +1509,12 @@ export function setupNodeEventListeners(
                 latency: latency || existingStatus?.latency,
                 lastPingAttempt: existingStatus?.lastPingAttempt
               };
-              
+
+              // FIFO eviction: if at capacity and this is a new key, evict oldest-inserted (perf optimization 2.2)
+              if (peerStatuses.size >= MAX_PEER_STATUS_ENTRIES && !existingStatus) {
+                const oldestKey = peerStatuses.keys().next().value;
+                if (oldestKey) peerStatuses.delete(oldestKey);
+              }
               peerStatuses.set(normalizedPubkey, updatedStatus);
               
               // Broadcast peer status update for peer list (not logged to event stream)
