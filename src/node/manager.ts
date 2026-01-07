@@ -644,7 +644,8 @@ let nextRecreationBackoffMs = 60000; // Start with 1 minute backoff
 let nextRecreationAllowedAt = 0; // Timestamp when next recreation is allowed
 
 // Background relay probe state (perf optimization 3.1)
-let backgroundProbePromise: Promise<void> | null = null;
+// Note: _backgroundProbePromise tracks the running probe for potential future use (e.g., awaiting on shutdown)
+let _backgroundProbePromise: Promise<void> | null = null;
 let backgroundProbeGeneration = 0;
 
 interface BackgroundProbeResult {
@@ -752,7 +753,7 @@ async function runBackgroundRelayProbe(
     }
   } finally {
     if (backgroundProbeGeneration === myGeneration) {
-      backgroundProbePromise = null;
+      _backgroundProbePromise = null;
     }
   }
 }
@@ -767,9 +768,12 @@ export function getLastBackgroundProbeResult(): BackgroundProbeResult | null {
 /**
  * Cancel any running background probe by clearing the promise reference.
  * Note: This does not abort in-flight relay checks; they will complete naturally.
+ * @returns true if there was a running probe to cancel, false otherwise
  */
-export function cancelBackgroundProbe(): void {
-  backgroundProbePromise = null;
+export function cancelBackgroundProbe(): boolean {
+  const hadProbe = _backgroundProbePromise !== null;
+  _backgroundProbePromise = null;
+  return hadProbe;
 }
 
 // Helper function to update node activity
@@ -2265,7 +2269,7 @@ export async function createNodeWithCredentials(
 
           // Start background probe if deferred (perf optimization 3.1)
           if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
-            backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+            _backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
           }
 
           return wrappedNode;
@@ -2300,7 +2304,7 @@ export async function createNodeWithCredentials(
 
               // Start background probe if deferred (perf optimization 3.1)
               if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
-                backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+                _backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
               }
 
               return wrappedNode;
