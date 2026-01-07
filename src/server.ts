@@ -25,6 +25,14 @@ import {
 } from './node/manager.js';
 import { initNip46Service, getNip46Service } from './nip46/index.js'
 import { clearCleanupTimers } from './routes/node-manager.js';
+// Static imports for auth and rate-limiter (previously dynamic for perf optimization 1.1)
+import {
+  authenticate,
+  AUTH_CONFIG,
+  checkRateLimit,
+  stopAuthCleanup
+} from './routes/auth.js';
+import { cleanupRateLimiter } from './utils/rate-limiter.js';
 
 // Node restart configuration with validation
 const parseRestartConfig = () => {
@@ -731,7 +739,7 @@ const server = serve<AppWebSocketData>({
     // Handle WebSocket upgrade for event stream
     if (url.pathname === '/api/events' && req.headers.get('upgrade') === 'websocket') {
       // WebSocket upgrade rate limit and Origin check
-      const { authenticate, AUTH_CONFIG, checkRateLimit } = await import('./routes/auth.js');
+      // (auth functions now available via static import at top of file)
 
       // Sanitize ws-upgrade rate limiter envs
       const wsWinSecRaw = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
@@ -840,7 +848,7 @@ const server = serve<AppWebSocketData>({
     // Handle WebSocket upgrade for Nostr relay
     if (url.pathname === '/' && req.headers.get('upgrade') === 'websocket') {
       // Origin and per-IP protections for relay WS
-      const { checkRateLimit } = await import('./routes/auth.js');
+      // (checkRateLimit now available via static import at top of file)
       const wsWinSecRaw2 = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
       const wsWinSecParsed2 = Number.parseInt(wsWinSecRaw2, 10);
       const wsUpWindow = Math.max(1000, (Number.isFinite(wsWinSecParsed2) ? wsWinSecParsed2 : 900) * 1000);
@@ -995,18 +1003,16 @@ async function handleShutdown(signal: string): Promise<void> {
   cleanupMonitoring();
   clearCleanupTimers();
 
-  // Clean up rate limiter
+  // Clean up rate limiter (cleanupRateLimiter now available via static import)
   try {
-    const { cleanupRateLimiter } = await import('./utils/rate-limiter.js');
     cleanupRateLimiter();
     addServerLog('system', 'Rate limiter cleaned up');
   } catch (err) {
     addServerLog('error', 'Error cleaning up rate limiter', err);
   }
 
-  // Clean up auth timers and vault
+  // Clean up auth timers and vault (stopAuthCleanup now available via static import)
   try {
-    const { stopAuthCleanup } = await import('./routes/auth.js');
     stopAuthCleanup();
     addServerLog('system', 'Auth cleanup completed');
   } catch (err) {

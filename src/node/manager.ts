@@ -15,6 +15,7 @@ import type { NodePolicyInput, NodeEventConfig, EnhancedNodeConfig } from '@fros
 import { randomBytes } from 'crypto';
 import type { ServerBifrostNode, PeerStatus, PingResult } from '../routes/types.js';
 import { getValidRelays, safeStringify, getOpTimeoutMs } from '../routes/utils.js';
+import { SKIP_RELAY_PROBE, DEFER_RELAY_PROBE } from '../const.js';
 import { loadFallbackPeerPolicies } from './peer-policy-store.js';
 import { mergePolicyInputs } from '../util/peer-policy.js';
 import type { ServerWebSocket } from 'bun';
@@ -642,6 +643,17 @@ const MAX_RECREATION_ATTEMPTS = 5;
 let nextRecreationBackoffMs = 60000; // Start with 1 minute backoff
 let nextRecreationAllowedAt = 0; // Timestamp when next recreation is allowed
 
+// Background relay probe state (perf optimization 3.1)
+let backgroundProbePromise: Promise<void> | null = null;
+let backgroundProbeGeneration = 0;
+
+interface BackgroundProbeResult {
+  originalRelays: string[];
+  filteredRelays: string[];
+  timestamp: number;
+}
+let lastBackgroundProbeResult: BackgroundProbeResult | null = null;
+
 // Quick relay capability probe: keep relays that accept the given kind.
 // Uses an ephemeral keypair and a tiny, throwaway event, and closes connections immediately.
 export async function filterRelaysForKindSupport(
@@ -683,6 +695,81 @@ export async function filterRelaysForKindSupport(
   } finally {
     try { pool.close(relays); } catch {}
   }
+}
+
+/**
+ * Runs relay probe in background and logs results.
+ * Does not block startup. (perf optimization 3.1)
+ */
+async function runBackgroundRelayProbe(
+  relays: string[],
+  kind: number = 20004,
+  addServerLog?: ReturnType<typeof createAddServerLog>
+): Promise<void> {
+  if (relays.length === 0) {
+    return;
+  }
+
+  const myGeneration = ++backgroundProbeGeneration;
+
+  try {
+    if (addServerLog) {
+      addServerLog('info', 'Starting background relay probe', { relayCount: relays.length });
+    }
+
+    const filtered = await filterRelaysForKindSupport(relays, kind, addServerLog);
+
+    // Store result for potential future use
+    lastBackgroundProbeResult = {
+      originalRelays: relays,
+      filteredRelays: filtered,
+      timestamp: Date.now()
+    };
+
+    if (filtered.length === 0) {
+      if (addServerLog) {
+        addServerLog('warning', 'Background probe: all relays reject kind 20004; keeping original relay list');
+      }
+      return;
+    }
+
+    if (filtered.length < relays.length) {
+      const dropped = relays.filter(r => !filtered.includes(r));
+      if (addServerLog) {
+        addServerLog('info', `Background probe complete: filtered ${dropped.length} relay(s)`, {
+          dropped,
+          kept: filtered
+        });
+      }
+    } else if (addServerLog) {
+      addServerLog('debug', 'Background probe complete: all relays support kind 20004');
+    }
+  } catch (error) {
+    if (addServerLog) {
+      addServerLog('warning', 'Background relay probe failed', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  } finally {
+    if (backgroundProbeGeneration === myGeneration) {
+      backgroundProbePromise = null;
+    }
+  }
+}
+
+/**
+ * Get the last background probe result if available.
+ */
+export function getLastBackgroundProbeResult(): BackgroundProbeResult | null {
+  return lastBackgroundProbeResult;
+}
+
+/**
+ * Cancel any running background probe by clearing the promise reference.
+ * Note: This does not abort in-flight relay checks; they will complete naturally.
+ */
+export function cancelBackgroundProbe(): void {
+  backgroundProbePromise = null;
 }
 
 // Helper function to update node activity
@@ -1975,18 +2062,33 @@ export async function createNodeWithCredentials(
     }
   }
 
-  // Minimal startup self-test: drop relays that reject kind 20004 (Bifrost)
-  try {
-    const tested = await filterRelaysForKindSupport(relays, 20004, addServerLog);
-    if (tested.length === 0) {
-      if (addServerLog) addServerLog('warning', 'All configured relays reject kind 20004; proceeding with original list but server may log policy rejections');
-    } else if (tested.length < relays.length) {
-      const dropped = relays.filter(r => !tested.includes(r));
-      if (addServerLog) addServerLog('info', `Filtering ${dropped.length} relay(s) that reject kind 20004`, { dropped, kept: tested });
-      relays = tested;
+  // Relay probe configuration via environment variables (perf optimization 3.1)
+  // Capture relays for potential background probing
+  const relaysToProbe = [...relays];
+
+  if (SKIP_RELAY_PROBE) {
+    if (addServerLog) {
+      addServerLog('info', 'SKIP_RELAY_PROBE enabled: skipping relay kind 20004 verification');
     }
-  } catch (e) {
-    if (addServerLog) addServerLog('warning', 'Relay self-test failed; using configured relays as-is', e);
+  } else if (DEFER_RELAY_PROBE) {
+    if (addServerLog) {
+      addServerLog('info', 'DEFER_RELAY_PROBE enabled: relay verification will run in background');
+    }
+    // Background probe will be started after node creation (see below)
+  } else {
+    // Minimal startup self-test: drop relays that reject kind 20004 (Bifrost)
+    try {
+      const tested = await filterRelaysForKindSupport(relays, 20004, addServerLog);
+      if (tested.length === 0) {
+        if (addServerLog) addServerLog('warning', 'All configured relays reject kind 20004; proceeding with original list but server may log policy rejections');
+      } else if (tested.length < relays.length) {
+        const dropped = relays.filter(r => !tested.includes(r));
+        if (addServerLog) addServerLog('info', `Filtering ${dropped.length} relay(s) that reject kind 20004`, { dropped, kept: tested });
+        relays = tested;
+      }
+    } catch (e) {
+      if (addServerLog) addServerLog('warning', 'Relay self-test failed; using configured relays as-is', e);
+    }
   }
   
   if (addServerLog) {
@@ -2155,7 +2257,12 @@ export async function createNodeWithCredentials(
               // Don't fail node creation - let monitoring handle it
             }
           }
-          
+
+          // Start background probe if deferred (perf optimization 3.1)
+          if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
+            backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+          }
+
           return wrappedNode;
         } else {
           throw new Error('Enhanced node creation returned no node');
@@ -2185,6 +2292,12 @@ export async function createNodeWithCredentials(
                 addServerLog('info', 'Node connected and ready (basic mode)');
               }
               const wrappedNode = createInstrumentedNode(node, addServerLog);
+
+              // Start background probe if deferred (perf optimization 3.1)
+              if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
+                backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+              }
+
               return wrappedNode;
             }
           } catch (basicError) {
@@ -2252,6 +2365,7 @@ export function getPublishMetrics() {
 // Export cleanup function
 export function cleanupMonitoring() {
   stopConnectivityMonitoring();
+  cancelBackgroundProbe();
 }
 
 // Reset monitoring state completely (for manual restarts)
