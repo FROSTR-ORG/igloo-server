@@ -644,8 +644,7 @@ let nextRecreationBackoffMs = 60000; // Start with 1 minute backoff
 let nextRecreationAllowedAt = 0; // Timestamp when next recreation is allowed
 
 // Background relay probe state (perf optimization 3.1)
-// Note: _backgroundProbePromise tracks the running probe for potential future use (e.g., awaiting on shutdown)
-let _backgroundProbePromise: Promise<void> | null = null;
+// Generation counter prevents stale probe results from being stored after cancellation
 let backgroundProbeGeneration = 0;
 
 interface BackgroundProbeResult {
@@ -720,7 +719,14 @@ async function runBackgroundRelayProbe(
 
     const filtered = await filterRelaysForKindSupport(relays, kind, addServerLog);
 
-    // Store result for potential future use
+    // Only store result if this probe is still current (not cancelled or superseded)
+    if (backgroundProbeGeneration !== myGeneration) {
+      if (addServerLog) {
+        addServerLog('debug', 'Background probe result discarded (superseded by newer probe)');
+      }
+      return;
+    }
+
     lastBackgroundProbeResult = {
       originalRelays: relays,
       filteredRelays: filtered,
@@ -751,10 +757,6 @@ async function runBackgroundRelayProbe(
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  } finally {
-    if (backgroundProbeGeneration === myGeneration) {
-      _backgroundProbePromise = null;
-    }
   }
 }
 
@@ -766,14 +768,12 @@ export function getLastBackgroundProbeResult(): BackgroundProbeResult | null {
 }
 
 /**
- * Cancel any running background probe by clearing the promise reference.
+ * Cancel any running background probe by bumping the generation counter.
+ * This causes in-flight probes to be considered stale (their results won't be stored).
  * Note: This does not abort in-flight relay checks; they will complete naturally.
- * @returns true if there was a running probe to cancel, false otherwise
  */
-export function cancelBackgroundProbe(): boolean {
-  const hadProbe = _backgroundProbePromise !== null;
-  _backgroundProbePromise = null;
-  return hadProbe;
+export function cancelBackgroundProbe(): void {
+  backgroundProbeGeneration++;
 }
 
 // Helper function to update node activity
@@ -2269,7 +2269,7 @@ export async function createNodeWithCredentials(
 
           // Start background probe if deferred (perf optimization 3.1)
           if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
-            _backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+            void runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
           }
 
           return wrappedNode;
@@ -2304,7 +2304,7 @@ export async function createNodeWithCredentials(
 
               // Start background probe if deferred (perf optimization 3.1)
               if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {
-                _backgroundProbePromise = runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
+                void runBackgroundRelayProbe(relaysToProbe, 20004, addServerLog);
               }
 
               return wrappedNode;
