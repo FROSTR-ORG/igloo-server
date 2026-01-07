@@ -89,3 +89,46 @@ export const SKIP_ADMIN_SECRET_VALIDATION = (() => {
   const normalized = trimmed.toLowerCase();
   return normalized === 'true' || normalized === '1' || normalized === 'yes';
 })();
+
+// Skip relay probing during node creation for faster startup (perf optimization 3.1)
+// When true, uses all configured relays without testing kind 20004 support
+export const SKIP_RELAY_PROBE = (() => {
+  const value = process.env['SKIP_RELAY_PROBE'];
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const normalized = trimmed.toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
+
+// Defer relay probing to background for faster startup (perf optimization 3.1)
+// When true, node starts with all relays; probe runs in background for diagnostics only
+// SKIP_RELAY_PROBE takes precedence over this setting
+export const DEFER_RELAY_PROBE = (() => {
+  const value = process.env['DEFER_RELAY_PROBE'];
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const normalized = trimmed.toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
+
+// Skip startup echo broadcasts for faster cold start (perf optimization 5.2)
+// When true, skips sendSelfEcho and broadcastShareEcho at headless startup
+export const SKIP_STARTUP_ECHO = (() => {
+  const value = process.env['SKIP_STARTUP_ECHO'];
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return false;
+  const normalized = trimmed.toLowerCase();
+  return normalized === 'true' || normalized === '1' || normalized === 'yes';
+})();
+
+// Maximum peer status entries before FIFO eviction (perf optimization 2.2)
+// Prevents unbounded memory growth in long-running servers
+export const MAX_PEER_STATUS_ENTRIES = (() => {
+  const value = process.env['MAX_PEER_STATUS_ENTRIES'];
+  if (!value) return 1000;
+  const parsed = parseInt(value.trim(), 10);
+  return isNaN(parsed) || parsed < 1 ? 1000 : parsed;
+})();
