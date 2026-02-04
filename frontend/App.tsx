@@ -74,7 +74,7 @@ const App: React.FC = () => {
       try {
         const response = await fetch('/api/update');
         if (!response.ok) return;
-        const data = await response.json();
+        const data = await response.json() as UpdateInfo;
         if (!cancelled) setUpdateInfo(data);
       } catch (error) {
         console.warn('Update check failed:', error);
