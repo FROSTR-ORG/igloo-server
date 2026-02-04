@@ -1,5 +1,15 @@
 # CHANGELOG
 
+## [1.1.1] — 2026-02-04
+
+### Added
+
+* Update check banner for non-managed installs, backed by `/api/update`.
+
+### Notes
+
+* Version bump commit: **1.1.1**.
+
 ## [1.1.0] — 2025-12-10
 
 ### Highlights

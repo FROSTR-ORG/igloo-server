@@ -6,12 +6,13 @@ import { NIP46 } from "./components/NIP46"
 import ApiKeys from "./components/ApiKeys"
 import Login from "./components/Login"
 import Onboarding from "./components/Onboarding"
-import type { SignerHandle } from "./types"
+import type { SignerHandle, UpdateInfo } from "./types"
 import { Button } from "./components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
 import { PageLayout } from "./components/ui/page-layout"
 import { AppHeader } from "./components/ui/app-header"
 import { ContentCard } from "./components/ui/content-card"
+import { UpdateBanner } from "./components/ui/update-banner"
 import Spinner from "./components/ui/spinner"
 
 interface SignerData {
@@ -42,6 +43,7 @@ const App: React.FC = () => {
   const [initializing, setInitializing] = useState(true);
   // Loading gate used after login to prevent Configure flash
   const [loadingAppData, setLoadingAppData] = useState(false);
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [authState, setAuthState] = useState<AuthState>({
     isAuthenticated: false,
     authEnabled: false
@@ -64,6 +66,25 @@ const App: React.FC = () => {
 
   useEffect(() => {
     initializeApp();
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const fetchUpdateInfo = async () => {
+      try {
+        const response = await fetch('/api/update');
+        if (!response.ok) return;
+        const data = await response.json();
+        if (!cancelled) setUpdateInfo(data);
+      } catch (error) {
+        console.warn('Update check failed:', error);
+      }
+    };
+
+    fetchUpdateInfo();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Global handler for authentication/credentials expiry from child components
@@ -470,6 +491,7 @@ const App: React.FC = () => {
     return (
       <PageLayout>
         <AppHeader subtitle="Frostr keyset manager and remote signer." />
+        <UpdateBanner info={updateInfo} />
         
         <ContentCard>
           <Spinner label="Loading…" size="md" />
@@ -490,7 +512,13 @@ const App: React.FC = () => {
 
   // Show login screen if authentication is required and user is not authenticated
   if (authState.authEnabled && !authState.isAuthenticated) {
-    return <Login onLogin={handleLogin} authEnabled={authState.authEnabled} />;
+    return (
+      <Login
+        onLogin={handleLogin}
+        authEnabled={authState.authEnabled}
+        updateInfo={updateInfo}
+      />
+    );
   }
 
   // After login, while fetching user data, show loading (prevents Configure flash)
@@ -502,6 +530,7 @@ const App: React.FC = () => {
           userId={authState.userId}
           onLogout={authState.authEnabled ? handleLogout : undefined}
         />
+        <UpdateBanner info={updateInfo} />
         <ContentCard>
           <Spinner label="Loading your signer…" size="md" />
         </ContentCard>
@@ -518,6 +547,7 @@ const App: React.FC = () => {
           userId={authState.userId}
           onLogout={authState.authEnabled ? handleLogout : undefined}
         />
+        <UpdateBanner info={updateInfo} />
         
         <ContentCard
           title="Signer"
@@ -598,6 +628,7 @@ const App: React.FC = () => {
         userId={authState.userId}
         onLogout={authState.authEnabled ? handleLogout : undefined}
       />
+      <UpdateBanner info={updateInfo} />
 
       <ContentCard>
         <Configure 

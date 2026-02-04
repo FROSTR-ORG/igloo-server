@@ -116,6 +116,17 @@ export interface SignerHandle {
   checkStatus: () => Promise<void>;
 }
 
+export interface UpdateInfo {
+  enabled: boolean;
+  managedDeployment?: boolean;
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  releaseUrl?: string;
+  checkedAt?: string;
+  error?: string;
+}
+
 export interface SignerProps {
   initialData?: {
     share: string;
