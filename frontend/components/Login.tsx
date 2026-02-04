@@ -5,7 +5,7 @@ import { PageLayout } from './ui/page-layout';
 import { AppHeader } from './ui/app-header';
 import { ContentCard } from './ui/content-card';
 import { Alert } from './ui/alert';
-import { UpdateBanner } from './ui/update-banner';
+import { UpdateBanner } from './ui/UpdateBanner';
 import Spinner from './ui/spinner';
 import type { UpdateInfo } from '../types';
 

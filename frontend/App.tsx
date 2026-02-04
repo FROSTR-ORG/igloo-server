@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "./components/ui/tabs"
 import { PageLayout } from "./components/ui/page-layout"
 import { AppHeader } from "./components/ui/app-header"
 import { ContentCard } from "./components/ui/content-card"
-import { UpdateBanner } from "./components/ui/update-banner"
+import { UpdateBanner } from "./components/ui/UpdateBanner"
 import Spinner from "./components/ui/spinner"
 
 interface SignerData {
