@@ -5,11 +5,14 @@ import { PageLayout } from './ui/page-layout';
 import { AppHeader } from './ui/app-header';
 import { ContentCard } from './ui/content-card';
 import { Alert } from './ui/alert';
+import { UpdateBanner } from './ui/UpdateBanner';
 import Spinner from './ui/spinner';
+import type { UpdateInfo } from '../types';
 
 interface LoginProps {
   onLogin: (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => void;
   authEnabled: boolean;
+  updateInfo?: UpdateInfo | null;
 }
 
 interface AuthStatus {
@@ -19,7 +22,7 @@ interface AuthStatus {
   sessionTimeout: number;
 }
 
-const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
+const Login: React.FC<LoginProps> = ({ onLogin, authEnabled, updateInfo }) => {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [apiKey, setApiKey] = useState('');
@@ -104,6 +107,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled }) => {
   return (
     <PageLayout maxWidth="max-w-lg">
       <AppHeader subtitle="Authentication required to access this server" />
+      <UpdateBanner info={updateInfo} />
 
       <ContentCard>
         <div className="space-y-6">

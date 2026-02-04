@@ -8,6 +8,7 @@ export { handleSignRoute } from './sign.js';
 export { handleNip44Route } from './nip44.js';
 export { handleNip04Route } from './nip04.js';
 export { handleNip46Route } from './nip46.js';
+export { handleUpdateRoute } from './update.js';
 
 // Export types and utilities
 export * from './types.js';
@@ -24,6 +25,7 @@ import { handleSignRoute } from './sign.js';
 import { handleNip44Route } from './nip44.js';
 import { handleNip04Route } from './nip04.js';
 import { handleNip46Route } from './nip46.js';
+import { handleUpdateRoute } from './update.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
 import { handleUserRoute } from './user.js';
@@ -174,7 +176,8 @@ export async function handleRequest(
     '/api/auth/status',
     '/api/onboarding/status',
     '/api/onboarding/validate-admin',
-    '/api/onboarding/setup'
+    '/api/onboarding/setup',
+    '/api/update'
   ];
 
   const isPublicEndpoint = publicEndpoints.some(endpoint => url.pathname === endpoint);
@@ -307,6 +310,7 @@ export async function handleRequest(
   // Note: These handlers now accept auth as an optional parameter
   const routeHandlers = [
     handleStatusRoute,    // Allow unauthenticated for health checks
+    handleUpdateRoute,
     handlePeersRoute,
     handleSignRoute,
     handleNip44Route,
