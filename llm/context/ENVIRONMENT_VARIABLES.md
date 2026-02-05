@@ -8,7 +8,7 @@
 - The ALLOWED_ENV_KEYS whitelist
 - The PUBLIC_ENV_KEYS set
 
-This secret is automatically generated and stored in a secure file with restricted permissions (0600). Any attempt to expose SESSION_SECRET via API would compromise the entire session security model.
+When session auth is enabled, this secret is automatically generated and stored in a secure file with restricted permissions (0600). Any attempt to expose SESSION_SECRET via API would compromise the entire session security model.
 
 ## Overview
 
@@ -17,13 +17,14 @@ Igloo Server operates in two distinct modes with different environment variable 
 ## Mode Architecture
 
 ### Operation Modes
-- **Database Mode** (`HEADLESS=false` or unset): Multi-user operation with encrypted credential storage in SQLite database
-- **Headless Mode** (`HEADLESS=true`): Single-user operation with environment variable-based configuration
+- **Database Mode** (`HEADLESS` unset or false): Multi-user operation with encrypted credential storage in SQLite. This is the default.
+- **Headless Mode** (`HEADLESS=true|1|yes`): Single-user operation with environment variable-based configuration. DB-only routes (`/api/user`, `/api/admin`, `/api/nip46`) are disabled.
 
 ### Key Architectural Differences
-1. **Credential Storage**: Plain text environment variables (Headless) vs encrypted database storage (Database)
-2. **User Model**: Environment auth users vs database users with different API access patterns
-3. **Security Model**: Basic env-based auth vs full user management with persistent salts
+1. **Credential Storage**: Plain text environment variables (Headless) vs encrypted database storage (Database). Env creds can still boot the node in DB mode but are not persisted until saved via the UI/API.
+2. **User Model**: Environment-auth users (API key/Basic) vs database users (numeric IDs) with different API access patterns.
+3. **Session Persistence**: DB users get persisted sessions in SQLite; env-auth sessions are in-memory only. In headless mode with `API_KEY` set, sessions are disabled entirely.
+4. **API Surface**: `/api/user`, `/api/admin`, and `/api/nip46` are available only in DB mode.
 
 ## Complete Environment Variables Reference
 
@@ -31,85 +32,91 @@ Igloo Server operates in two distinct modes with different environment variable 
 
 | Variable | Purpose | Headless Mode | Database Mode | Default | Notes |
 |----------|---------|---------------|---------------|---------|-------|
-| `HEADLESS` | Controls operation mode | `true` | `false` | `false` | Core mode selector |
+| `HEADLESS` | Controls operation mode | `true` | `false` | `false` | Truthy values: `true`, `1`, `yes` (case-insensitive) |
 
 ### Credential Storage
 
 | Variable | Purpose | Headless Mode | Database Mode | Default | Security Impact |
 |----------|---------|---------------|---------------|---------|-----------------|
-| `GROUP_CRED` | FROSTR group credential | **REQUIRED** - stored as plain text | **OPTIONAL** - stored encrypted in DB | - | ⚠️ **CRITICAL**: Plain text vs encrypted |
-| `SHARE_CRED` | FROSTR share credential | **REQUIRED** - stored as plain text | **OPTIONAL** - stored encrypted in DB | - | ⚠️ **CRITICAL**: Plain text vs encrypted |
-| `ADMIN_SECRET` | Initial setup secret | **IGNORED** | **REQUIRED** on first setup only | - | Only enforced when DB uninitialized |
+| `GROUP_CRED` | FROSTR group credential | **REQUIRED** - stored as plain text env | **OPTIONAL** - if set, boots node from env but is not persisted until saved | - | ⚠️ **CRITICAL**: Plain text env vs encrypted DB storage |
+| `SHARE_CRED` | FROSTR share credential | **REQUIRED** - stored as plain text env | **OPTIONAL** - if set, boots node from env but is not persisted until saved | - | ⚠️ **CRITICAL**: Plain text env vs encrypted DB storage |
+| `ADMIN_SECRET` | Initial setup secret | **IGNORED** | **REQUIRED** on first setup only | - | Enforced only when DB is uninitialized |
 
 ### Database Configuration
 
 | Variable | Purpose | Headless Mode | Database Mode | Default | Implementation |
 |----------|---------|---------------|---------------|---------|----------------|
-| `DB_PATH` | Database file/directory location | **IGNORED** | Active | `./data` | Also controls SESSION_SECRET file location |
+| `DB_PATH` | Database file/directory location | **IGNORED** | Active | `./data` | File or directory. Also controls `.session-secret` location |
 
 ### Network Configuration
 
 | Variable | Purpose | Both Modes Usage | Default | Source |
 |----------|---------|------------------|---------|--------|
-| `HOST_NAME` | Server bind address | Identical behavior | `localhost` | `src/const.ts:25` |
-| `HOST_PORT` | Server port | Identical behavior | `8002` | `src/const.ts:26` |
-| `RELAYS` | Relay URLs (JSON array or CSV) | Identical parsing logic | `[]` | `src/const.ts:2-23` |
+| `HOST_NAME` | Server bind address | Identical behavior | `localhost` | `src/const.ts` |
+| `HOST_PORT` | Server port | Identical behavior | `8002` | `src/const.ts` |
+| `RELAYS` | Relay URLs (JSON array or CSV) | Identical parsing logic | `[]` | `src/const.ts` |
 | `GROUP_NAME` | Display name for signing group | Identical behavior | - | Optional metadata |
 
 ### Authentication & Security
 
 | Variable | Purpose | Headless Mode | Database Mode | Default | Key Differences |
 |----------|---------|---------------|---------------|---------|-----------------|
-| `AUTH_ENABLED` | Enable authentication | Same behavior | Same behavior | `true` | `src/routes/auth.ts:230` |
-| `API_KEY` | API authentication key | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
-| `BASIC_AUTH_USER` | Basic auth username | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
-| `BASIC_AUTH_PASS` | Basic auth password | Creates **env auth user** | Creates **env auth user** | - | Different user type implications |
-| `SESSION_SECRET` | Session signing key (⚠️ NEVER exposed via API) | Auto-generated in `data/.session-secret` | Auto-generated in `{DB_PATH}/.session-secret` | Auto-generated | Server-only, excluded from all API operations |
-| `SESSION_TIMEOUT` | Session expiration (seconds) | Same behavior | Same behavior | `3600` | `src/routes/auth.ts:239` |
+| `AUTH_ENABLED` | Enable authentication | Same behavior | Same behavior | `true` | Applies to all modes |
+| `API_KEY` | API authentication key | **Used** (env API key) | **Ignored** (use DB API keys instead) | - | Headless only; disables sessions when set |
+| `BASIC_AUTH_USER` | Basic auth username | Creates **env auth user** | Creates **env auth user** | - | Env-auth users are not DB users |
+| `BASIC_AUTH_PASS` | Basic auth password | Creates **env auth user** | Creates **env auth user** | - | Env-auth users are not DB users |
+| `SESSION_SECRET` | Session enablement secret (⚠️ NEVER exposed via API) | Auto-generated in `.session-secret` | Auto-generated in `.session-secret` | Auto-generated | Location is `{DB_PATH}` (file or dir) or `./data` |
+| `SESSION_TIMEOUT` | Session expiration (seconds) | Same behavior | Same behavior | `3600` | Applies to DB + ephemeral sessions |
+| `AUTH_DERIVED_KEY_TTL_MS` | Derived-key vault TTL (ms) | Same behavior | Same behavior | `120000` | Session derived key vault |
+| `AUTH_DERIVED_KEY_MAX_READS` | Derived-key vault max reads | Same behavior | Same behavior | `100` | Session derived key vault |
+| `AUTH_DERIVED_KEY_MAX_REHYDRATIONS` | Max rehydrate attempts | Same behavior | Same behavior | `3` | Session derived key cache |
+| `VAULT_CLEANUP_INTERVAL_MS` | Vault cleanup interval (ms) | Same behavior | Same behavior | `120000` | Runs in-session cleanup |
 
 ### Rate Limiting
 
 | Variable | Purpose | Both Modes Usage | Default | Source |
 |----------|---------|------------------|---------|--------|
-| `RATE_LIMIT_ENABLED` | Enable rate limiting | Identical behavior | `true` | `src/routes/auth.ts:242` |
-| `RATE_LIMIT_WINDOW` | Rate limit window (seconds) | Identical behavior | `900` | `src/routes/auth.ts:243` |
-| `RATE_LIMIT_MAX` | Max requests per window | Headless: `300`, Database: `600` | Mode-dependent | `src/routes/auth.ts:225,245` |
+| `RATE_LIMIT_ENABLED` | Enable rate limiting | Identical behavior | `true` | `src/routes/auth.ts` |
+| `RATE_LIMIT_WINDOW` | Rate limit window (seconds) | Identical behavior | `900` | `src/routes/auth.ts` |
+| `RATE_LIMIT_MAX` | Max requests per window | Headless: `300`, Database: `600` | Mode-dependent | `src/routes/auth.ts` |
+| `NIP46_SESSION_RATE_LIMIT_MAX` | NIP-46 session create max | Headless: `30`, Database: `120` | Mode-dependent | Applies to `/api/nip46/sessions` |
+| `NIP46_SESSION_RATE_LIMIT_WINDOW` | NIP-46 session rate limit window (seconds) | Identical behavior | `3600` | Applies to `/api/nip46/sessions` |
 
 ### CORS Security
 
 | Variable | Purpose | Both Modes Usage | Default | Security Warning |
 |----------|---------|------------------|---------|------------------|
-| `ALLOWED_ORIGINS` | CORS allowed origins (CSV) | Identical parsing | `*` | Warns in production if unset (`src/routes/utils.ts:269-271`) |
+| `ALLOWED_ORIGINS` | CORS allowed origins (CSV) | Identical parsing | `*` | Warns in production if unset (`src/routes/utils.ts`) |
 
 ### Node Restart Configuration
 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |
 |----------|---------|------------------|---------|-------|--------|
-| `NODE_RESTART_DELAY` | Initial restart delay (ms) | Identical behavior | `30000` | 1ms - 1 hour | `src/server.ts:31,38` |
-| `NODE_MAX_RETRIES` | Max restart attempts | Identical behavior | `5` | 1 - 100 | `src/server.ts:32,39` |
-| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | Identical behavior | `1.5` | 1.0 - 10.0 | `src/server.ts:33,40` |
-| `NODE_MAX_RETRY_DELAY` | Max delay between retries (ms) | Identical behavior | `300000` | 1ms - 2 hours | `src/server.ts:34,41` |
+| `NODE_RESTART_DELAY` | Initial restart delay (ms) | Identical behavior | `30000` | 1ms - 1 hour | `src/server.ts` |
+| `NODE_MAX_RETRIES` | Max restart attempts | Identical behavior | `5` | 1 - 100 | `src/server.ts` |
+| `NODE_BACKOFF_MULTIPLIER` | Exponential backoff multiplier | Identical behavior | `1.5` | 1.0 - 10.0 | `src/server.ts` |
+| `NODE_MAX_RETRY_DELAY` | Max delay between retries (ms) | Identical behavior | `300000` | 1ms - 2 hours | `src/server.ts` |
 
 ### Operation Timeouts
 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |
 |----------|---------|------------------|---------|-------|--------|
-| `FROSTR_SIGN_TIMEOUT` | Signing operation timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/routes/utils.ts:700-711`, `src/node/manager.ts:176` |
-| `CONNECTIVITY_PING_TIMEOUT_MS` | Keepalive ping timeout (ms) | Identical behavior | `10000` | 1000ms - 120000ms | `src/node/manager.ts:101-111` |
+| `FROSTR_SIGN_TIMEOUT` | Signing operation timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/routes/utils.ts`, `src/node/manager.ts` |
+| `CONNECTIVITY_PING_TIMEOUT_MS` | Keepalive ping timeout (ms) | Identical behavior | `10000` | 1000ms - 120000ms | `src/node/manager.ts` |
 
 ### Error Circuit Breaker
 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |
 |----------|---------|------------------|---------|-------|--------|
-| `ERROR_CIRCUIT_WINDOW_MS` | Time window for error counting | Identical behavior | `60000` | 1s - 1 hour | `src/server.ts:65,70` |
-| `ERROR_CIRCUIT_THRESHOLD` | Errors before circuit trips | Identical behavior | `10` | 1 - 1000 | `src/server.ts:66,71` |
-| `ERROR_CIRCUIT_EXIT_CODE` | Exit code when circuit trips | Identical behavior | `1` | 0 - 255 | `src/server.ts:67,72` |
+| `ERROR_CIRCUIT_WINDOW_MS` | Time window for error counting | Identical behavior | `60000` | 1s - 1 hour | `src/server.ts` |
+| `ERROR_CIRCUIT_THRESHOLD` | Errors before circuit trips | Identical behavior | `10` | 1 - 1000 | `src/server.ts` |
+| `ERROR_CIRCUIT_EXIT_CODE` | Exit code when circuit trips | Identical behavior | `1` | 0 - 255 | `src/server.ts` |
 
 ### Proxy Configuration
 
 | Variable | Purpose | Both Modes Usage | Default | Source |
 |----------|---------|------------------|---------|--------|
-| `TRUST_PROXY` | Trust proxy headers for client IP | Identical behavior | `false` | `src/routes/utils.ts:606` |
+| `TRUST_PROXY` | Trust proxy headers for client IP | Identical behavior | `false` | `src/routes/utils.ts` |
 
 When `TRUST_PROXY=true`, the server trusts these headers (in order): `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`. Required for accurate rate limiting behind reverse proxies.
 
@@ -157,8 +164,10 @@ process.env.SHARE_CRED = "bfshare1qqsqp..."
 ### 2. User Authentication Models
 
 **Environment Auth Users** (API Key/Basic Auth):
-- **User ID Type**: `string` (e.g., "api-key-user", "basic-auth-user")  
+- **User ID Type**: `string`
+- **Examples**: Headless API key -> `api-user`, DB API key -> `api-key:<prefix>`, Basic Auth -> `<username>`
 - **Salt Type**: Ephemeral session-specific salts
+- **Session Storage**: In-memory only (not persisted in SQLite)
 - **API Access**: **CANNOT** access `/api/user/*` endpoints
 - **Purpose**: API access only, not credential management
 - **Security**: Prevents accidental data loss from ephemeral keys
@@ -166,22 +175,34 @@ process.env.SHARE_CRED = "bfshare1qqsqp..."
 **Database Users** (Created via onboarding):
 - **User ID Type**: `number` (database primary key)
 - **Salt Type**: Persistent salts stored in database
+- **Session Storage**: Persisted in SQLite `sessions` table plus in-memory metadata
 - **API Access**: **CAN** access all endpoints including `/api/user/*`
 - **Purpose**: Full web UI functionality with credential storage
 - **Security**: Consistent key derivation for credential encryption/decryption
 
 ### 3. Session Secret Storage
 
-**File Location Logic** (`src/routes/auth.ts:31-40`):
+`SESSION_SECRET` is a server-only enablement secret. Session IDs are random 32-byte hex values stored server-side; cookies are not signed.
+
+**File Location Logic** (`src/routes/auth.ts`):
 ```typescript
 function getSessionSecretDir(): string {
   const dbPath = process.env.DB_PATH;
-  if (!dbPath) {
-    return path.join(process.cwd(), 'data');
+  if (!dbPath) return path.join(process.cwd(), 'data');
+
+  try {
+    const stats = statSync(dbPath);
+    return stats.isFile() ? path.dirname(dbPath) : dbPath;
+  } catch {
+    const normalized = path.normalize(dbPath);
+    if (normalized.endsWith(path.sep)) return normalized;
+    const base = path.basename(normalized);
+    const dbExtensions = ['.db', '.sqlite', '.sqlite3'];
+    if (dbExtensions.some(ext => base.toLowerCase().endsWith(ext))) {
+      return path.dirname(normalized);
+    }
+    return normalized;
   }
-  // Handle DB_PATH as file or directory
-  const isFile = dbPath.endsWith('.db') || path.extname(dbPath) !== '';
-  return isFile ? path.dirname(dbPath) : dbPath;
 }
 ```
 
@@ -189,7 +210,7 @@ function getSessionSecretDir(): string {
 
 **CRITICAL SECURITY NOTE**: `SESSION_SECRET` must NEVER be exposed via any API endpoint. It is strictly server-only and excluded from all API read/write operations.
 
-**Environment Variables API** (`src/routes/utils.ts:103-147`):
+**Environment Variables API** (`src/routes/utils.ts`):
 ```typescript
 // Security: Whitelist of allowed environment variable keys (for write/validation)
 // IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
@@ -247,7 +268,7 @@ const PUBLIC_ENV_KEYS = new Set([
 
 ### 5. Startup Behavior
 
-**Headless Mode** (`src/const.ts:39`):
+**Headless Mode** (`src/const.ts`):
 ```typescript
 export const hasCredentials = () => 
   GROUP_CRED !== undefined && SHARE_CRED !== undefined;
@@ -255,15 +276,15 @@ export const hasCredentials = () =>
 ```
 
 **Database Mode**:
-- Node starts when user logs in with valid credentials
-- Node starts when credentials are saved to database
-- `ADMIN_SECRET` required only when database is uninitialized
+- If `GROUP_CRED`/`SHARE_CRED` are present, the node still boots from env at startup.
+- When a DB user loads credentials (`GET /api/user/credentials`) or saves new ones, the node auto-starts (if not already running).
+- `ADMIN_SECRET` is required only when the database is uninitialized (onboarding).
 
 ## Environment Variable Security Patterns
 
 ### 1. Validation and Defaults
 
-Node restart configuration with validation (`src/server.ts:21-52`):
+Node restart configuration with validation (`src/server.ts`):
 ```typescript
 const parseRestartConfig = () => {
   const initialRetryDelay = parseInt(process.env.NODE_RESTART_DELAY || '30000');
@@ -287,47 +308,40 @@ const parseRestartConfig = () => {
 
 ### 2. Auto-Generation Patterns
 
-SESSION_SECRET auto-generation (`src/routes/auth.ts:44-136`):
+SESSION_SECRET auto-generation (`src/routes/auth.ts`):
 ```typescript
-function getOrCreateSessionSecret(): string {
-  // Ensure directory exists with secure permissions
+function loadOrGenerateSessionSecret(): string | null {
   if (!existsSync(SESSION_SECRET_DIR)) {
     mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
-  } else {
-    chmodSync(SESSION_SECRET_DIR, 0o700);
   }
-  
-  // Check if secret already exists
+  chmodSync(SESSION_SECRET_DIR, 0o700);
+
   if (existsSync(SESSION_SECRET_FILE)) {
     const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
-    if (secret && secret.length >= 32) {
-      return secret;
-    }
+    if (/^[0-9a-f]{64}$/i.test(secret)) return secret;
   }
-  
-  // Generate new secret (32 bytes = 64 hex characters)
+
   const newSecret = randomBytes(32).toString('hex');
-  
-  // Atomically write the new secret
-  const tempFilePath = path.join(SESSION_SECRET_DIR, '.session-secret.tmp');
-  
-  // Write to temp file with secure permissions
-  writeFileSync(tempFilePath, newSecret, { encoding: 'utf8', mode: 0o600 });
-  
-  // Atomically rename to final location
+  const tempFileName = `.session-secret.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
+  const tempFilePath = path.join(SESSION_SECRET_DIR, tempFileName);
+
+  const fd = openSync(tempFilePath, 'wx', 0o600);
+  writeSync(fd, newSecret, 0, 'utf8');
+  fsyncSync(fd);
   renameSync(tempFilePath, SESSION_SECRET_FILE);
-  
-  // Enforce file permissions
   chmodSync(SESSION_SECRET_FILE, 0o600);
-  
+
   process.env.SESSION_SECRET = newSecret;
   return newSecret;
 }
 ```
+Notes:
+- On Windows, chmod and directory fsync are best-effort; warnings are logged.
+- In production, a missing/invalid secret that cannot be generated will terminate the process.
 
 ### 3. CORS Security Warnings
 
-Production security warning (`src/routes/utils.ts:269-271`):
+Production security warning (`src/routes/utils.ts`):
 ```typescript
 if (!allowedOriginsEnv) {
   headers['Access-Control-Allow-Origin'] = '*';
@@ -339,7 +353,7 @@ if (!allowedOriginsEnv) {
 
 ## Migration Patterns
 
-### Headless → Database Mode Migration
+### Headless -> Database Mode Migration
 
 1. **Preparation**:
    ```bash
@@ -364,11 +378,11 @@ if (!allowedOriginsEnv) {
    - Credentials move to encrypted database storage
 
 4. **Security Upgrade**:
-   - Plain text env credentials → AES-256-GCM encrypted storage
-   - Environment auth users → Full database user accounts
-   - Session-specific salts → Persistent salts for consistent key derivation
+   - Plain text env credentials -> AES-256-GCM encrypted storage
+   - Environment auth users -> Full database user accounts
+   - Session-specific salts -> Persistent salts for consistent key derivation
 
-### Database → Headless Mode Migration
+### Database -> Headless Mode Migration
 
 1. **Credential Export** (manual process):
    - Login to web UI
@@ -388,9 +402,9 @@ if (!allowedOriginsEnv) {
    ```
 
 4. **Security Downgrade**:
-   - Encrypted database storage → Plain text env credentials
-   - Full user accounts → Environment auth users
-   - Persistent salts → Ephemeral session-specific salts
+   - Encrypted database storage -> Plain text env credentials
+   - Full user accounts -> Environment auth users
+   - Persistent salts -> Ephemeral session-specific salts
 
 ## Development Guidelines
 
@@ -478,20 +492,20 @@ cp .env.database .env  # Test database
 
 ### Key Implementation Files
 
-- **Environment Constants**: `src/const.ts:1-91`
-- **Authentication Config**: `src/routes/auth.ts:228-246`
-- **Environment Utils**: `src/routes/utils.ts:101-180`
-- **Database Config**: `src/db/database.ts:11-14`
-- **Restart Config**: `src/server.ts:30-61`
-- **Error Circuit Config**: `src/server.ts:64-88`
-- **CORS Security**: `src/routes/utils.ts:447-557`
-- **Proxy/IP Detection**: `src/routes/utils.ts:599-624`
+- **Environment Constants**: `src/const.ts`
+- **Authentication Config**: `src/routes/auth.ts`
+- **Environment Utils**: `src/routes/utils.ts`
+- **Database Config**: `src/db/database.ts`
+- **Restart Config**: `src/server.ts`
+- **Error Circuit Config**: `src/server.ts`
+- **CORS Security**: `src/routes/utils.ts`
+- **Proxy/IP Detection**: `src/routes/utils.ts`
 
 ### Environment Variable Whitelisting
 
-- **Write/Validation Whitelist**: `src/routes/utils.ts:103-124` (`ALLOWED_ENV_KEYS`)
-- **Public Read Whitelist**: `src/routes/utils.ts:128-147` (`PUBLIC_ENV_KEYS`)
-- **Forbidden Keys**: `src/routes/utils.ts:150` (`FORBIDDEN_ENV_KEYS`)
-- **Key Validation**: `src/routes/utils.ts:173-180` (`validateEnvKeys`)
+- **Write/Validation Whitelist**: `src/routes/utils.ts` (`ALLOWED_ENV_KEYS`)
+- **Public Read Whitelist**: `src/routes/utils.ts` (`PUBLIC_ENV_KEYS`)
+- **Forbidden Keys**: `src/routes/utils.ts` (`FORBIDDEN_ENV_KEYS`)
+- **Key Validation**: `src/routes/utils.ts` (`validateEnvKeys`)
 
 This reference serves as the definitive guide for understanding Igloo Server's dual-mode architecture and environment variable system.
