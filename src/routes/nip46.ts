@@ -293,8 +293,25 @@ export async function handleNip46Route(
       const statusFilter = parseStatusFilter(url.searchParams.get('status'))
       const limitParam = url.searchParams.get('limit')
       const limit = limitParam ? Math.min(Math.max(parseInt(limitParam, 10) || 100, 1), 500) : 100
-      const requests = listNip46Requests(userId, { status: statusFilter ?? undefined, limit })
-      return Response.json({ requests }, { headers })
+      const beforeCreatedAt = url.searchParams.get('beforeCreatedAt')?.trim() || ''
+      const beforeId = url.searchParams.get('beforeId')?.trim() || ''
+
+      // Require both or neither for cursor-based pagination
+      if ((beforeCreatedAt && !beforeId) || (!beforeCreatedAt && beforeId)) {
+        return Response.json(
+          { error: 'Both beforeCreatedAt and beforeId are required for pagination' },
+          { status: 400, headers }
+        )
+      }
+
+      const before = (beforeCreatedAt && beforeId)
+        ? { createdAt: beforeCreatedAt, id: beforeId }
+        : undefined
+      const requests = listNip46Requests(userId, { status: statusFilter ?? undefined, limit, before })
+      const nextCursor = requests.length === limit
+        ? { createdAt: requests[requests.length - 1]?.created_at, id: requests[requests.length - 1]?.id }
+        : null
+      return Response.json({ requests, nextCursor }, { headers })
     }
 
     if (req.method === 'POST') {

@@ -8,18 +8,39 @@ export interface EventLogProps {
   logs: LogEntryData[];
   isSignerRunning: boolean;
   onClearLogs: () => void;
+  onDownload?: () => void;
+  downloading?: boolean;
   hideHeader?: boolean;
   autoExpandTypes?: string[];
+  onLoadOlder?: () => void;
+  hasMore?: boolean;
+  loadingOlder?: boolean;
 }
 
-export const EventLog: React.FC<EventLogProps> = ({ logs, isSignerRunning, onClearLogs, hideHeader, autoExpandTypes }) => {
+export const EventLog: React.FC<EventLogProps> = ({
+  logs,
+  isSignerRunning,
+  onClearLogs,
+  onDownload,
+  downloading,
+  hideHeader,
+  autoExpandTypes,
+  onLoadOlder,
+  hasMore,
+  loadingOlder
+}) => {
   return (
     <UIEventLog
       logs={logs}
       isSignerRunning={isSignerRunning}
       onClearLogs={onClearLogs}
+      onDownload={onDownload}
+      downloading={downloading}
       hideHeader={hideHeader}
       autoExpandTypes={autoExpandTypes}
+      onLoadOlder={onLoadOlder}
+      hasMore={hasMore}
+      loadingOlder={loadingOlder}
     />
   );
 };

@@ -8,6 +8,7 @@ export { handleSignRoute } from './sign.js';
 export { handleNip44Route } from './nip44.js';
 export { handleNip04Route } from './nip04.js';
 export { handleNip46Route } from './nip46.js';
+export { handleEventLogRoute } from './event-log.js';
 export { handleUpdateRoute } from './update.js';
 
 // Export types and utilities
@@ -25,6 +26,7 @@ import { handleSignRoute } from './sign.js';
 import { handleNip44Route } from './nip44.js';
 import { handleNip04Route } from './nip04.js';
 import { handleNip46Route } from './nip46.js';
+import { handleEventLogRoute } from './event-log.js';
 import { handleUpdateRoute } from './update.js';
 import { handleDocsRoute } from './docs.js';
 import { handleOnboardingRoute } from './onboarding.js';
@@ -311,6 +313,7 @@ export async function handleRequest(
   const routeHandlers = [
     handleStatusRoute,    // Allow unauthenticated for health checks
     handleUpdateRoute,
+    handleEventLogRoute,
     handlePeersRoute,
     handleSignRoute,
     handleNip44Route,
