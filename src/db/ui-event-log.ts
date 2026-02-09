@@ -97,7 +97,7 @@ function sanitizeForPersistence(value: unknown): unknown {
     if (depth > MAX_DEPTH) return { _truncated: true, reason: 'max_depth' }
 
     const t = typeof v
-    if (t === 'string') return truncateString(v)
+    if (t === 'string') return truncateString(v as string)
     if (t === 'number' || t === 'boolean') return v
     if (t === 'bigint') return v.toString()
     if (t === 'function' || t === 'symbol') return String(v)
