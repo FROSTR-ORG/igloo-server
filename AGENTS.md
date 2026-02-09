@@ -11,10 +11,10 @@ This guide keeps backend, frontend, and deployment workflows consistent for this
 - Co‑locate tests with code as `feature.test.ts` or `feature.spec.ts`.
 
 ## Build, Test, and Development Commands
-- `bun run dev` — run backend, React, and Tailwind in watch mode.
+- `bun run dev` — watch/rebuild frontend assets (Tailwind CSS + esbuild JS bundle).
 - `bun run build` — create production bundles.
 - `bun run build:dev` — readable bundles for debugging.
-- `bun run start` — start packaged server; use `HEADLESS=true bun run start` to skip UI assets.
+- `bun run start` — start the server (use a separate terminal alongside `bun run dev` during development); use `HEADLESS=true bun run start` to skip UI assets.
 - `bun test` — run backend tests.
 - `bun run docs:validate` — validate the OpenAPI contract.
 
@@ -40,4 +40,3 @@ This guide keeps backend, frontend, and deployment workflows consistent for this
 - Load secrets from environment files or `data/` fixtures; never hard‑code.
 - Production: set `AUTH_ENABLED=true`, strong `ADMIN_SECRET`, and run behind TLS on `0.0.0.0`.
 - Tune `FROSTR_SIGN_TIMEOUT`, `SIGN_TIMEOUT_MS`, `AUTH_DERIVED_KEY_TTL_MS`, and `AUTH_DERIVED_KEY_MAX_READS` per environment.
-

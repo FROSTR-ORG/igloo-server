@@ -1,7 +1,9 @@
 services:
 
   igloo-server:
-    build          : ./
+    build:
+      context: ./
+      dockerfile: Dockerfile
     env_file       : .env
     image          : igloo-server
     environment:
@@ -28,6 +30,8 @@ services:
       - "8002:8002"
     volumes:
       - ./src:/app/src:rw
+      # Mount .env so /api/env writes persist back to the host file (env_file only injects values).
+      - ./.env:/app/.env:rw
       # Persist database and session secrets between container recreations
       - ./data:/app/data:rw
 

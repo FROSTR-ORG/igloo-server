@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Igloo Server API",
-    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol.\n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address. Default limits:\n- 100 requests per 15-minute window\n- Rate limit headers included in responses\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
-    "version": "0.1.7",
+    "description": "A server-based signing device and personal ephemeral relay for the FROSTR protocol.\n\n## Health Monitoring & Auto-Restart\n\nIgloo Server includes comprehensive health monitoring with automatic restart capabilities:\n- **Activity Tracking**: Monitors node activity and connection status\n- **Health Checks**: Automated health checks every 30 seconds\n- **Auto-Restart**: Automatic recovery from silent failures (5-minute watchdog)\n- **Connection Resilience**: Enhanced reconnection with exponential backoff\n\n## Security Requirements\n\n**HTTPS is mandatory for all production deployments.** This API handles sensitive cryptographic operations and credentials that must be protected in transit.\n\n## Authentication\n\nThe Igloo Server supports multiple authentication methods:\n- **API Key**: Use `X-API-Key` header or `Authorization: Bearer <key>` (HTTPS required)\n- **Basic Auth**: Standard HTTP Basic Authentication (HTTPS strongly required)\n- **Session**: Cookie-based sessions for web UI (HTTPS required)\n\n**Production Recommendation:** For enhanced security in production environments, consider implementing OAuth2/OIDC flows with proper token management, rotation, and scope control.\n\n## Rate Limiting\n\nAPI requests are rate limited per IP address.\n\nDefaults are mode-dependent:\n- Headless mode (`HEADLESS=true`): 300 requests per 15-minute window\n- Database mode (`HEADLESS=false`): 600 requests per 15-minute window\n\nTune `RATE_LIMIT_WINDOW` and `RATE_LIMIT_MAX` explicitly for production.\nMost endpoints return `429` with `Retry-After` when rate limited (some endpoints may include additional `X-RateLimit-*` headers).\n\n## CORS\n\nCross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.\n",
+    "version": "1.1.1",
     "contact": {
       "name": "FROSTR Organization",
       "url": "https://github.com/FROSTR-ORG/igloo-server"
@@ -145,6 +145,79 @@
           },
           "500": {
             "$ref": "#/components/responses/InternalServerError"
+          }
+        }
+      }
+    },
+    "/api/events": {
+      "get": {
+        "operationId": "eventsWebSocket",
+        "summary": "WebSocket event stream",
+        "description": "Real-time server event stream using a WebSocket upgrade.\n\nThis endpoint only upgrades when the request includes `Upgrade: websocket`.\n\nAuthentication:\n- If `AUTH_ENABLED=true`, the upgrade is authorized using the same auth methods as HTTP requests (API key, Bearer, Basic, or session).\n- For non-browser clients, credentials may be provided via `Sec-WebSocket-Protocol` hints (first offered protocol is echoed back):\n  - `apikey.<TOKEN>` or `api-key.<TOKEN>` maps to `X-API-Key: <TOKEN>`\n  - `bearer.<TOKEN>` maps to `Authorization: Bearer <TOKEN>`\n  - `session.<ID>` maps to `X-Session-ID: <ID>`\n- Legacy query params `apiKey` and `sessionId` are supported for compatibility but are discouraged.\n\nSecurity:\n- Origin checks apply to browser WebSocket upgrades (configure `ALLOWED_ORIGINS`; wildcard `*` is rejected in production).\n- Upgrades are rate limited (see `RATE_LIMIT_WS_UPGRADE_*`) and connections are capped per IP (`WS_MAX_CONNECTIONS_PER_IP`).\n\nMessage format:\n- The stream emits JSON objects shaped like `{ type, message, data?, timestamp, id }`.\n",
+        "tags": [
+          "Events"
+        ],
+        "responses": {
+          "101": {
+            "description": "Switching Protocols (WebSocket upgrade accepted)"
+          },
+          "200": {
+            "description": "WebSocket event stream (documentation-only). In practice, successful upgrades return `101 Switching Protocols`.\n"
+          },
+          "400": {
+            "description": "WebSocket upgrade failed (plain text)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "WebSocket upgrade failed"
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthorized (plain text)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Unauthorized"
+              }
+            }
+          },
+          "403": {
+            "description": "Forbidden (origin rejected; plain text)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Forbidden"
+              }
+            }
+          },
+          "429": {
+            "description": "Too many WebSocket attempts or too many concurrent connections (plain text)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Too many WebSocket attempts"
+              }
+            }
+          },
+          "503": {
+            "description": "Service temporarily unavailable (plain text)",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                },
+                "example": "Service temporarily unavailable"
+              }
+            }
           }
         }
       }

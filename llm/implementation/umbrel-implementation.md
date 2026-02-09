@@ -29,7 +29,7 @@ Key files and current state:
   - Image pinned to a digest (current):
     - `ghcr.io/frostr-org/igloo-server:umbrel-dev@sha256:537a21c960402f12e2157432ca91573d6155a1c17ef88a4a07e42bd839867d2f`
   - `APP_DATA_DIR` is mounted to `/app/data`.
-  - `ALLOWED_ORIGINS` default includes `@self` plus `umbrel.local` variants.
+  - `ALLOWED_ORIGINS` default includes `@self` plus `umbrel.local` variants (notably for browser WebSocket Origin checks).
   - App proxy is defined in `umbrel-app.yml` via an `app_proxy` block that points to the Igloo service/port. There is no `PROXY_AUTH_WHITELIST` env.
 
 ## Umbrel Image Implementation
@@ -55,7 +55,7 @@ These values are set in the store compose and expected by the UI flow:
 - `TRUST_PROXY=true` for Umbrel app proxy headers.
 - `DB_PATH=/app/data/igloo.db` (database mode).
 - `HEADLESS=false` to serve UI assets.
-- `ALLOWED_ORIGINS` defaults to `@self` plus `umbrel.local` variants; `@self` auto-allows the host users connect through.
+- `ALLOWED_ORIGINS` defaults to `@self` plus `umbrel.local` variants; `@self` auto-allows the host users connect through for browser WebSocket Origin enforcement (host match, port-agnostic).
 
 ## Umbrel UI and Exports
 - First run goes straight to account creation. The first user becomes admin.

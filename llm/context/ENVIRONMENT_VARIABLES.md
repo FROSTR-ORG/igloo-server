@@ -1,5 +1,7 @@
 # Igloo Server Environment Variables Reference
 
+Last verified: 2026-02-09
+
 ## ⚠️ CRITICAL SECURITY NOTE
 
 **SESSION_SECRET must NEVER be exposed via any API endpoint**. It is strictly server-only and is explicitly excluded from:
@@ -82,11 +84,39 @@ Igloo Server operates in two distinct modes with different environment variable 
 | `NIP46_SESSION_RATE_LIMIT_MAX` | NIP-46 session create max | Headless: `30`, Database: `120` | Mode-dependent | Applies to `/api/nip46/sessions` |
 | `NIP46_SESSION_RATE_LIMIT_WINDOW` | NIP-46 session rate limit window (seconds) | Identical behavior | `3600` | Applies to `/api/nip46/sessions` |
 
+### WebSocket Upgrade Abuse Protection
+
+| Variable | Purpose | Both Modes Usage | Default | Notes | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `RATE_LIMIT_WS_UPGRADE_WINDOW` | WebSocket upgrade limiter window (seconds) | Identical behavior | Falls back to `RATE_LIMIT_WINDOW` (`900`) | Applies to `/api/events` and `/` WebSocket upgrades | `src/server.ts` |
+| `RATE_LIMIT_WS_UPGRADE_MAX` | WebSocket upgrade limiter max attempts per window | Identical behavior | `30` | Applies to `/api/events` and `/` WebSocket upgrades | `src/server.ts` |
+| `WS_MAX_CONNECTIONS_PER_IP` | Max concurrent WebSocket connections per IP | Identical behavior | `5` | Applies to `/api/events` and `/` WebSocket upgrades | `src/server.ts` |
+| `WS_MSG_RATE` | WebSocket message rate limit (tokens/sec) | Identical behavior | `20` | Burst is controlled by `WS_MSG_BURST` | `src/server.ts` |
+| `WS_MSG_BURST` | WebSocket message burst capacity (tokens) | Identical behavior | `40` (min `WS_MSG_RATE`) | Token bucket capacity | `src/server.ts` |
+
+### Update Checks
+
+| Variable | Purpose | Both Modes Usage | Default | Notes | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `UPDATE_CHECK_DISABLED` | Disable update checks | Identical behavior | `false` | When true, `GET /api/update` is disabled | `src/routes/update.ts` |
+| `MANAGED_DEPLOYMENT` | Mark deployment as managed | Identical behavior | `false` | Also treated as managed when `HEADLESS=true` or `SKIP_ADMIN_SECRET_VALIDATION=true` | `src/routes/update.ts` |
+| `UPDATE_CHECK_TIMEOUT_MS` | Timeout for upstream update check (ms) | Identical behavior | `5000` | Aborts upstream request | `src/routes/update.ts` |
+| `UPDATE_CHECK_TTL_MS` | Cache TTL for successful update checks (ms) | Identical behavior | `21600000` | 6 hours | `src/routes/update.ts` |
+| `UPDATE_CHECK_FAILURE_TTL_MS` | Cache TTL after failed update checks (ms) | Identical behavior | `900000` | 15 minutes | `src/routes/update.ts` |
+| `APP_VERSION` | Override app version reported by `/api/update` | Identical behavior | Unset | Intended for packaged builds | `src/routes/update.ts` |
+| `GITHUB_TOKEN` | Token for GitHub API requests | Identical behavior | Unset | Used to avoid rate limits when checking releases | `src/routes/update.ts` |
+
 ### CORS Security
 
-| Variable | Purpose | Both Modes Usage | Default | Security Warning |
-|----------|---------|------------------|---------|------------------|
-| `ALLOWED_ORIGINS` | CORS allowed origins (CSV) | Identical parsing | `*` | Warns in production if unset (`src/routes/utils.ts`) |
+| Variable | Purpose | Both Modes Usage | Default | Security Notes |
+|----------|---------|------------------|---------|----------------|
+| `ALLOWED_ORIGINS` | Browser origin allowlist (CSV) | Applies to HTTP CORS headers and WebSocket Origin checks | Unset | In production, leaving this unset blocks browser cross-origin HTTP (CORS) and restricts browser WebSockets to same-host; wildcard `*` is rejected for WebSocket upgrades in production (`src/routes/utils.ts`). |
+
+**Important nuance:** `ALLOWED_ORIGINS` is used by two different mechanisms with different semantics:
+- **HTTP CORS** uses exact origin matching (or `*`) and does **not** understand `@self`.
+- **WebSocket Origin checks** support a special token `@self` (host match, port-agnostic) and explicitly reject `*` in production.
+
+See “Origin Enforcement (HTTP vs WebSocket)” below for details.
 
 ### Node Restart Configuration
 
@@ -102,7 +132,26 @@ Igloo Server operates in two distinct modes with different environment variable 
 | Variable | Purpose | Both Modes Usage | Default | Range | Source |
 |----------|---------|------------------|---------|-------|--------|
 | `FROSTR_SIGN_TIMEOUT` | Signing operation timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/routes/utils.ts`, `src/node/manager.ts` |
+| `SIGN_TIMEOUT_MS` | Legacy alias for signing timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/routes/utils.ts` |
 | `CONNECTIVITY_PING_TIMEOUT_MS` | Keepalive ping timeout (ms) | Identical behavior | `10000` | 1000ms - 120000ms | `src/node/manager.ts` |
+| `PING_TIMEOUT_MS` | Legacy alias for keepalive ping timeout (ms) | Identical behavior | `10000` | 1000ms - 120000ms | `src/node/manager.ts` |
+| `PUBLISH_EVENT_TIMEOUT_MS` | Relay publish receipt timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/node/manager.ts` |
+| `RELAY_PUBLISH_TIMEOUT` | Legacy alias for relay publish receipt timeout (ms) | Identical behavior | `30000` | 1000ms - 120000ms | `src/node/manager.ts` |
+| `SELF_ECHO_TIMEOUT_MS` | Startup echo timeout (ms) | Identical behavior | `10000` | 1000ms - 60000ms | `src/node/manager.ts` |
+| `ECHO_TIMEOUT_MS` | Legacy alias for startup echo timeout (ms) | Identical behavior | `10000` | 1000ms - 60000ms | `src/node/manager.ts` |
+
+### Relay Probing & Startup Performance
+
+| Variable | Purpose | Both Modes Usage | Default | Notes | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `SKIP_RELAY_PROBE` | Skip relay probing during node creation | Identical behavior | `false` | Faster startup; uses relays without testing support | `src/const.ts` |
+| `DEFER_RELAY_PROBE` | Defer relay probing to background | Identical behavior | `false` | Ignored when `SKIP_RELAY_PROBE=true` | `src/const.ts`, `src/node/manager.ts` |
+| `SKIP_STARTUP_ECHO` | Skip headless startup echo broadcasts | Identical behavior | `false` | Perf option for cold start | `src/const.ts` |
+| `INITIAL_CONNECTIVITY_DELAY` | Delay before initial connectivity check (ms) | Identical behavior | `5000` | Used during node creation; invalid values fall back to default | `src/node/manager.ts` |
+| `MAX_PEER_STATUS_ENTRIES` | Bound peer status memory (FIFO eviction) | Identical behavior | `1000` | Prevents unbounded growth in long-running servers | `src/const.ts` |
+| `NODE_ALLOW_BENIGN_PUBLISH_SWALLOW` | Swallow benign relay publish errors | Identical behavior | `true` | Alias: `RELAY_ALLOW_BENIGN_SWALLOW` | `src/node/manager.ts` |
+| `RELAY_ALLOW_BENIGN_SWALLOW` | Legacy alias for benign publish swallow | Identical behavior | `true` | Prefer `NODE_ALLOW_BENIGN_PUBLISH_SWALLOW` | `src/node/manager.ts` |
+| `NODE_PUBLISH_METRICS` | Enable relay publish failure metrics | Identical behavior | `true` (DB mode), `false` (headless) | Set to `false` to disable; defaults off in headless mode | `src/node/manager.ts` |
 
 ### Error Circuit Breaker
 
@@ -118,7 +167,17 @@ Igloo Server operates in two distinct modes with different environment variable 
 |----------|---------|------------------|---------|--------|
 | `TRUST_PROXY` | Trust proxy headers for client IP | Identical behavior | `false` | `src/routes/utils.ts` |
 
-When `TRUST_PROXY=true`, the server trusts these headers (in order): `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`. Required for accurate rate limiting behind reverse proxies.
+When `TRUST_PROXY=true`, the server trusts these headers (in order): `X-Forwarded-For`, `X-Real-IP`, `CF-Connecting-IP`. This is required for accurate rate limiting behind reverse proxies.
+
+`TRUST_PROXY=true` also affects WebSocket Origin enforcement: the server will prefer `X-Forwarded-Host` (when present) over `Host` when evaluating “same-host” and `@self` Origin matches for browser WebSockets (`src/routes/utils.ts`).
+
+### Onboarding Hardening (Database Mode Only)
+
+| Variable | Purpose | Both Modes Usage | Default | Notes | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `FINGERPRINT_SECRET` | Secret salt for stable per-client identifiers | DB mode only | Unset | Improves stability across restarts; leave unset to use best-effort fallback | `src/routes/onboarding.ts` |
+| `CLIENT_ID_TTL_MS` | TTL for client-id cache entries (ms) | DB mode only | `86400000` | Clamped to 10m..7d | `src/routes/onboarding.ts` |
+| `LOG_FINGERPRINT_FALLBACK` | Log fingerprint fallback details | DB mode only | `false` | Use only for troubleshooting | `src/routes/onboarding.ts` |
 
 ### System Environment
 
@@ -131,6 +190,14 @@ When `TRUST_PROXY=true`, the server trusts these headers (in order): `X-Forwarde
 | Variable | Purpose | Headless Mode | Database Mode | Usage |
 |----------|---------|---------------|---------------|--------|
 | `CREDENTIALS_SAVED_AT` | Timestamp marker | Set when env creds detected | Set when DB creds saved | Tracks credential freshness |
+
+### Managed Installs & CI (Advanced)
+
+| Variable | Purpose | Both Modes Usage | Default | Notes | Source |
+|----------|---------|------------------|---------|-------|--------|
+| `SKIP_ADMIN_SECRET_VALIDATION` | Skip onboarding "enter admin secret" step | DB mode only | `false` | Umbrel-style managed installs only; requires `ADMIN_SECRET` to be set out-of-band | `src/const.ts`, `src/routes/onboarding.ts` |
+| `AUTO_ADMIN_SECRET` | Auto-generate ephemeral `ADMIN_SECRET` | DB mode only | `false` | Also enabled when `CI=true` or `NODE_ENV=test`; non-production only | `src/const.ts` |
+| `CI` | Signals CI environment | DB mode only | Unset | When `CI=true`, enables `AUTO_ADMIN_SECRET` behavior | `src/const.ts` |
 
 ## Critical Security & Functional Differences
 
@@ -339,15 +406,54 @@ Notes:
 - On Windows, chmod and directory fsync are best-effort; warnings are logged.
 - In production, a missing/invalid secret that cannot be generated will terminate the process.
 
-### 3. CORS Security Warnings
+### 3. Origin Enforcement (HTTP vs WebSocket)
 
-Production security warning (`src/routes/utils.ts`):
+Igloo Server enforces browser-origin policies in two layers:
+- **HTTP CORS headers**: controls whether browsers allow JavaScript to read HTTP responses cross-origin.
+- **WebSocket Origin checks**: controls whether browser WebSocket handshakes are accepted based on the `Origin` header.
+
+These layers intentionally behave differently to avoid accidental production exposure while still supporting “same host” LAN/IP/onion access patterns.
+
+### HTTP CORS behavior (`getSecureCorsHeaders`, `src/routes/utils.ts`)
+- If `ALLOWED_ORIGINS` is **unset**:
+  - In **development** (`NODE_ENV` is not `production`): responds with `Access-Control-Allow-Origin: *`.
+  - In **production**: does **not** set `Access-Control-Allow-Origin` (so browsers block cross-origin reads).
+- If `ALLOWED_ORIGINS` is **set** (comma-separated):
+  - If it contains `*`: responds with `Access-Control-Allow-Origin: *`.
+  - Else, if the request’s `Origin` exactly matches one of the configured origins: reflects that origin and sets `Vary: Origin`.
+  - Otherwise: no CORS header is set (browser blocks).
+
+Notes:
+- Origins must be exact strings like `https://example.com` (include scheme, and include `:port` when non-default).
+- `@self` is **not** interpreted for HTTP CORS.
+
+### WebSocket Origin behavior (`isWebSocketOriginAllowed`, `src/routes/utils.ts`)
+- If there is **no** `Origin` header: allowed (common for non-browser clients).
+- If `ALLOWED_ORIGINS` is **unset/empty**:
+  - In **development**: allowed.
+  - In **production**: allowed only when `Origin` hostname matches the request hostname (“same-host”); otherwise rejected.
+- If `ALLOWED_ORIGINS` is **set**:
+  - Special token `@self` allows any `Origin` whose hostname matches the request hostname (ports may differ).
+  - In **production**, `*` is explicitly rejected for WebSocket upgrades.
+  - Otherwise, the `Origin` must match one of the configured allowed origins exactly.
+
+### Practical guidance
+- If your UI and API are served from the same public origin via a reverse proxy (recommended), you typically do not need cross-origin HTTP CORS, but you should still set `ALLOWED_ORIGINS` in production to avoid repeated security errors and to make intent explicit.
+- If your UI is on one origin and the API/WS is on another (different host or port), you must set `ALLOWED_ORIGINS` to include the UI origin(s). For browser WebSockets with a host mismatch, either list the exact origins or include `@self` when you want “whatever host the user connected through” semantics.
+
+### Production messaging (`src/routes/utils.ts`)
+When `ALLOWED_ORIGINS` is unset in production, the server logs a security error and intentionally omits CORS headers so browsers will block cross-origin reads.
+
+#### Historical note
+
+The behavior below is the current, correct production posture. Older documentation that implied “wildcard CORS in production when unset” is outdated and should not be relied on.
+
+Current production behavior (`src/routes/utils.ts`):
 ```typescript
-if (!allowedOriginsEnv) {
-  headers['Access-Control-Allow-Origin'] = '*';
-  if (process.env.NODE_ENV === 'production') {
-    console.warn('SECURITY WARNING: ALLOWED_ORIGINS not configured in production. Using wildcard (*) for CORS.');
-  }
+if (!allowedOriginsEnv && process.env.NODE_ENV === 'production') {
+  // SECURITY: Block browser cross-origin reads in production unless explicitly configured.
+  // Intentionally do not set Access-Control-Allow-Origin.
+  console.error('SECURITY ERROR: ALLOWED_ORIGINS must be configured in production. CORS requests will be blocked.');
 }
 ```
 

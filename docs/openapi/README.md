@@ -34,6 +34,9 @@ This writes the required files to `static/docs/`.
 
 ## Using the API Documentation
 
+Mode and auth nuance:
+- Some endpoints are only mounted in Database mode or Headless mode. See `docs/AUTH_MATRIX.md` for the authoritative matrix.
+
 ### Authentication for API Documentation
 
 - **Development**: No authentication required for easy testing
@@ -82,7 +85,7 @@ The OpenAPI specification includes (major surfaces):
 - ✅ Error response formats
 - ✅ Comprehensive examples
 
-> Note: Some supportive endpoints (e.g., onboarding `/api/onboarding/*`, admin `whoami`/`users`, and user storage `/api/user/*`) are available in the server but not yet modeled in the OpenAPI. Use the README “API Reference” and the UI for details. These may be added to the spec in a future update.
+> Note: Some supportive endpoints are implemented but intentionally not modeled in OpenAPI yet (or are difficult to model faithfully), such as the Swagger UI asset routes under `/api/docs/assets/*`, the docs UI HTML at `/api/docs`, update checks at `/api/update`, and several operational/utility endpoints. When in doubt, treat `src/routes/*.ts` and `src/server.ts` as runtime truth.
 
 ## Validation
 

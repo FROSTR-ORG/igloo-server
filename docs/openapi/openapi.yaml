@@ -27,14 +27,19 @@ info:
 
     ## Rate Limiting
 
-    API requests are rate limited per IP address. Default limits:
-    - 100 requests per 15-minute window
-    - Rate limit headers included in responses
+    API requests are rate limited per IP address.
+
+    Defaults are mode-dependent:
+    - Headless mode (`HEADLESS=true`): 300 requests per 15-minute window
+    - Database mode (`HEADLESS=false`): 600 requests per 15-minute window
+
+    Tune `RATE_LIMIT_WINDOW` and `RATE_LIMIT_MAX` explicitly for production.
+    Most endpoints return `429` with `Retry-After` when rate limited (some endpoints may include additional `X-RateLimit-*` headers).
 
     ## CORS
 
     Cross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.
-  version: 0.1.7
+  version: 1.1.1
   contact:
     name: FROSTR Organization
     url: https://github.com/FROSTR-ORG/igloo-server
@@ -101,6 +106,73 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
+
+  /api/events:
+    get:
+      operationId: eventsWebSocket
+      summary: WebSocket event stream
+      description: |
+        Real-time server event stream using a WebSocket upgrade.
+
+        This endpoint only upgrades when the request includes `Upgrade: websocket`.
+
+        Authentication:
+        - If `AUTH_ENABLED=true`, the upgrade is authorized using the same auth methods as HTTP requests (API key, Bearer, Basic, or session).
+        - For non-browser clients, credentials may be provided via `Sec-WebSocket-Protocol` hints (first offered protocol is echoed back):
+          - `apikey.<TOKEN>` or `api-key.<TOKEN>` maps to `X-API-Key: <TOKEN>`
+          - `bearer.<TOKEN>` maps to `Authorization: Bearer <TOKEN>`
+          - `session.<ID>` maps to `X-Session-ID: <ID>`
+        - Legacy query params `apiKey` and `sessionId` are supported for compatibility but are discouraged.
+
+        Security:
+        - Origin checks apply to browser WebSocket upgrades (configure `ALLOWED_ORIGINS`; wildcard `*` is rejected in production).
+        - Upgrades are rate limited (see `RATE_LIMIT_WS_UPGRADE_*`) and connections are capped per IP (`WS_MAX_CONNECTIONS_PER_IP`).
+
+        Message format:
+        - The stream emits JSON objects shaped like `{ type, message, data?, timestamp, id }`.
+      tags:
+        - Events
+      responses:
+        '200':
+          description: |
+            WebSocket event stream (documentation-only). In practice, successful upgrades return `101 Switching Protocols`.
+        '101':
+          description: Switching Protocols (WebSocket upgrade accepted)
+        '400':
+          description: WebSocket upgrade failed (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: WebSocket upgrade failed
+        '401':
+          description: Unauthorized (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: Unauthorized
+        '403':
+          description: Forbidden (origin rejected; plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: Forbidden
+        '429':
+          description: Too many WebSocket attempts or too many concurrent connections (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: Too many WebSocket attempts
+        '503':
+          description: Service temporarily unavailable (plain text)
+          content:
+            text/plain:
+              schema:
+                type: string
+              example: Service temporarily unavailable
 
   /api/auth/status:
     get:
