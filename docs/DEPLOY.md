@@ -2,6 +2,8 @@
 
 This page collects detailed deploy steps and reverse‑proxy examples that were trimmed from README for brevity.
 
+Configuration reference: `docs/CONFIG.md` (env vars, CORS vs WS Origin semantics, operational tuning).
+
 ## Umbrel (App Store, 1.1.0+)
 
 Use the packaged Umbrel app if you prefer a one-click install on your node. The bundle runs **Database mode** by default and persists `/app/data` on Umbrel’s volume.
@@ -20,13 +22,15 @@ Use the packaged Umbrel app if you prefer a one-click install on your node. The 
 
 You can skip cloning and building; pull the published image from GHCR.
 
+If you do build locally, the repo uses a standard `Dockerfile` at the repo root.
+
 1) Create a Droplet (Ubuntu 22.04+; 2GB RAM recommended) and install Docker + Compose:
 ```bash
 curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
 sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 ```
-2) Pull and run (pin a release tag for reproducibility, e.g., `1.4.2` or `umbrel-1.4.2`):
+2) Pull and run (pin a release tag for reproducibility, e.g., `1.1.1` or `umbrel-1.1.1`):
 ```bash
 docker pull ghcr.io/frostr-org/igloo-server:latest
 docker run -d --name igloo-server -p 8002:8002 \
@@ -53,6 +57,8 @@ services:
     restart: unless-stopped
 ```
 Start with `docker compose up -d` after creating and editing `.env` (copy from `.env.example`).
+
+Note: `env_file: .env` injects values only at container start. If you also bind-mount `./.env:/app/.env` to persist `/api/env` writes, ensure `./.env` exists as a file first (`cp env.example .env` or `touch .env`) or Docker may create a directory at `./.env/`.
 
 4) Firewall (UFW):
 ```bash

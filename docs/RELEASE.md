@@ -5,10 +5,10 @@ Quick reference for releasing Igloo Server.
 ## 🚀 Quick Release (Recommended)
 
 ```bash
-# For PR #11 (major new features)
+# For new features (minor)
 bun run release:minor
 
-# For bug fixes  
+# For bug fixes (patch)
 bun run release:patch
 
 # For breaking changes
@@ -34,10 +34,10 @@ bun run docs:validate
 
 ### 2. Create Release PR  
 ```bash
-git checkout -b release/prepare-v0.2.0
-git push origin release/prepare-v0.2.0
+git checkout -b release/prepare-v1.1.1
+git push origin release/prepare-v1.1.1
 ```
-Create PR: `release/prepare-v0.2.0` → `master`
+Create PR: `release/prepare-v1.1.1` → `master`
 
 ### 3. Merge & Release
 - Merge PR to `master`
@@ -58,9 +58,9 @@ GitHub Actions automatically detects version type from commit messages:
 
 | Commit Message | Version Bump | Example |
 |----------------|--------------|---------|
-| `feat:` | Minor | 0.1.7 → 0.2.0 |
-| `fix:` | Patch | 0.1.7 → 0.1.8 |
-| `BREAKING CHANGE:` | Major | 0.1.7 → 1.0.0 |
+| `feat:` | Minor | 1.1.1 → 1.2.0 |
+| `fix:` | Patch | 1.1.1 → 1.1.2 |
+| `BREAKING CHANGE:` | Major | 1.1.1 → 2.0.0 |
 
 ## 🚨 Emergency Releases
 

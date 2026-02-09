@@ -22,6 +22,9 @@ Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` 
 ## Documentation
 - [docs/DEPLOY.md](docs/DEPLOY.md) — Umbrel, Docker/Compose, and cloud deployment steps
 - [docs/SECURITY.md](docs/SECURITY.md) — hardening, CSP, headers, and rate limiting guidance
+- [docs/CONFIG.md](docs/CONFIG.md) — environment variables and operational tuning (CORS vs WS Origin, timeouts, restart/circuit knobs)
+- [docs/AUTH_MATRIX.md](docs/AUTH_MATRIX.md) — which endpoints exist in which mode + what bypasses the global auth gate
+- [docs/PEER_POLICIES.md](docs/PEER_POLICIES.md) — peer policy schema, precedence, and persistence
 - [docs/RELEASE.md](docs/RELEASE.md) — release workflow, automation, and emergency fixes
 - [docs/openapi/openapi.yaml](docs/openapi/openapi.yaml) — OpenAPI spec (served at `/api/docs`)
 
@@ -53,7 +56,7 @@ bun run start
 
 ### Pick a Mode
 - Database (recommended): multi‑user, AES‑encrypted creds, admin onboarding via `ADMIN_SECRET`, SQLite at `./data/igloo.db` (override with `DB_PATH`).
-- Headless: env‑only config, API‑first, UI disabled. Supports `PEER_POLICIES` blocks and API key auth.
+- Headless: env‑only config, API‑first, UI disabled. Supports `PEER_POLICIES` blocks (see `docs/PEER_POLICIES.md`) and API key auth.
 
 ### Deployment Options
 
@@ -81,7 +84,7 @@ Reverse proxy (nginx) and cloud steps are in docs/DEPLOY.md.
 
 ### Production Checklist
 - `NODE_ENV=production`, persist `/app/data`, set strong `ADMIN_SECRET` (keep set after onboarding).
-- Explicit `ALLOWED_ORIGINS` (supports `@self` for “whatever host the user connects through”; host match, port-agnostic), `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
+- Explicit `ALLOWED_ORIGINS` (WebSocket Origin checks support `@self` for “whatever host the user connects through”; host match, port-agnostic), `TRUST_PROXY=true` behind a proxy; forward WS upgrade headers.
 - Auth on (`AUTH_ENABLED=true`), rate limit on (`RATE_LIMIT_ENABLED=true`); optional `SESSION_SECRET` (auto‑gen if absent).
 - Timeouts: tune `FROSTR_SIGN_TIMEOUT` or `SIGN_TIMEOUT_MS` (1000–120000ms).
 

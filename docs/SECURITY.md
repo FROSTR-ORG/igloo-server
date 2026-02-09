@@ -2,6 +2,8 @@
 
 This guide covers security best practices for deploying and configuring your igloo-server, which handles sensitive FROSTR credentials and signing operations.
 
+For a complete environment-variable reference (including CORS vs WebSocket Origin behavior), see `docs/CONFIG.md`.
+
 ## 🎯 Operation Modes
 
 Igloo Server supports two operation modes with different security models:
@@ -17,7 +19,7 @@ Igloo Server supports two operation modes with different security models:
 - **Direct credential storage** in environment
 - **Traditional deployment** for backward compatibility
 - **No database required**
-- **Peer policies**: only explicit blocks are honored via `PEER_POLICIES` or `data/peer-policies.json`
+- **Peer policies**: directional blocks can be supplied via `PEER_POLICIES` or persisted in `data/peer-policies.json` (see `docs/PEER_POLICIES.md`)
 - **API key**: set via the `API_KEY` environment variable; only one value is supported and rotation requires updating the env var and restarting the server
 
 ### Security Comparison Table
@@ -213,6 +215,12 @@ RATE_LIMIT_ENABLED=true
 ## 🛡️ Rate Limiting
 
 Configure rate limiting to prevent abuse:
+
+Defaults (if unset):
+- Headless mode (`HEADLESS=true`): `RATE_LIMIT_MAX=300` per `RATE_LIMIT_WINDOW=900` seconds
+- Database mode (`HEADLESS=false`): `RATE_LIMIT_MAX=600` per `RATE_LIMIT_WINDOW=900` seconds
+
+For internet-exposed deployments you should set these explicitly. The example below is a conservative starting point:
 
 ```bash
 RATE_LIMIT_ENABLED=true
@@ -421,7 +429,7 @@ RATE_LIMIT_MAX=50      # Strict limiting
 NODE_ENV=production
 ```
 
-### Headless Mode Deployments (Legacy)
+### Headless Mode Deployments (Compatibility)
 
 #### 1. Single-User Setup (Personal)
 ```bash
@@ -664,4 +672,4 @@ for i in {1..10}; do curl http://localhost:8002/api/status; done
 4. **Directional Peer Policies** (optional):
    - Defaults allow both inbound and outbound traffic.
    - To deny a direction, supply `allowSend:false` and/or `allowReceive:false` in `PEER_POLICIES`.
-   - The server mirrors saved overrides into `data/peer-policies.json` so they persist between restarts.
+   - The server persists and mirrors saved overrides into `data/peer-policies.json` so they persist between restarts (see `docs/PEER_POLICIES.md`).

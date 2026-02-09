@@ -1,36 +1,53 @@
 services:
-
   igloo-server:
-    build          : ./
-    env_file       : .env
-    image          : igloo-server
+    build:
+      context: ./
+      dockerfile: Dockerfile
+
+    # NOTE: `env_file: .env` injects values only at container start. If the app writes to `/app/.env`
+    # (via `/api/env`), those changes will not affect the running container's environment until restart.
+    # Also ensure `./.env` exists as a FILE before starting; otherwise Docker may create a directory at
+    # `./.env` when processing the bind-mount below, which will break both `env_file` and app reads.
+    env_file: .env
+
+    image: igloo-server
     environment:
       - HOST_NAME=0.0.0.0
       - HOST_PORT=8002
       - NODE_ENV=production
       # Explicit DB path inside the container; lives under /app/data
       - DB_PATH=/app/data/igloo.db
-    container_name : igloo-server
-    platform       : linux/x86_64
-    hostname       : igloo-server
-    restart        : unless-stopped
-    init           : true
-    tty            : true
+
+    container_name: igloo-server
+    platform: linux/x86_64
+    hostname: igloo-server
+    restart: unless-stopped
+    init: true
+    tty: true
+
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 --spider http://localhost:8002/api/status || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
     networks:
       - infranet
+
     ports:
       - "8002:8002"
+
     volumes:
       - ./src:/app/src:rw
+      # Mount .env so `/api/env` writes persist back to the host file.
+      # Guard: create it first (`cp env.example .env` or `touch .env`) to avoid Docker creating `./.env/` as a directory.
+      # Reminder: changes written here won't affect the running container's env until restart (see env_file note above).
+      - ./.env:/app/.env:rw
       # Persist database and session secrets between container recreations
       - ./data:/app/data:rw
 
 networks:
   infranet:
     driver: bridge
+

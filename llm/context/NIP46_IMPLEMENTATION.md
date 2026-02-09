@@ -12,6 +12,10 @@ Igloo Server implements NIP-46 (Nostr Connect) as a remote signer that allows No
 - **Database**: SQLite tables store sessions, policies, requests, and transport keys
 - **Frontend UI**: React components for session management, request approval, and relay configuration
 
+**Availability**
+- NIP-46 routes are enabled only in **Database Mode**. Headless mode returns 404 for `/api/nip46/*`.
+- Requests require an authenticated **DB user** (numeric user id). Env-auth users (API key/Basic) cannot access NIP-46.
+
 ## 2. Architecture
 
 ### Dual-Key Model
@@ -57,6 +61,8 @@ CREATE TABLE nip46_sessions (
   UNIQUE(user_id, client_pubkey)
 );
 ```
+Notes:
+- `revoked` remains in the schema for compatibility, but revoked sessions are deleted and excluded from listings.
 
 ### nip46_requests
 
@@ -151,25 +157,25 @@ Base path: `/api/nip46/`
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/sessions` | List active/pending sessions |
-| `POST` | `/sessions` | Create/update session manually |
+| `GET` | `/sessions` | List active/pending sessions (`?history=true` adds recent grants) |
+| `POST` | `/sessions` | Create/update session manually (rate-limited) |
 | `PUT` | `/sessions/:pubkey/policy` | Update session permissions |
-| `PUT` | `/sessions/:pubkey/status` | Change session status |
+| `PUT` | `/sessions/:pubkey/status` | Change session status (`revoked` deletes) |
 | `DELETE` | `/sessions/:pubkey` | Delete session |
 
 ### Requests
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/requests` | List requests (filter by status) |
-| `POST` | `/requests` | Approve/deny/complete request |
-| `DELETE` | `/requests` | Delete request |
+| `GET` | `/requests` | List requests (`?status=pending,approved&limit=100`, max 500) |
+| `POST` | `/requests` | Update request status (`action=approve|deny|fail|complete`); optional policy patch |
+| `DELETE` | `/requests` | Delete request (body includes `id`) |
 
 ### History
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/history` | Sessions with recent activity stats |
+| `GET` | `/history` | Sessions with recent grant history (`recent_kinds`, `recent_methods`) |
 
 ## 5. Request Processing Flow
 
@@ -178,7 +184,7 @@ Base path: `/api/nip46/`
 1. User scans/pastes `nostrconnect://pubkey?relay=...&secret=...` URI
 2. Frontend calls `POST /api/nip46/connect` with the URI
 3. Server decodes invite, extracts client pubkey, relays, requested permissions
-4. Server creates session with status `pending` or `active`
+4. Server creates a session with status `pending` (marked `active` on connect or activity)
 5. Server subscribes to client's relays via `SignerAgent`
 6. Server sends connect acknowledgment back to client
 
@@ -222,7 +228,8 @@ interface Nip46Policy {
 
 ### Default Policy
 
-New sessions start with these defaults:
+- **Stored session policy** is empty unless provided (via `perms` in the connect URI or `/api/nip46/sessions`). Empty policy means **no auto-approval**.
+- **SignerAgent base policy** (for the transport layer) is initialized as:
 
 ```typescript
 {
@@ -247,6 +254,8 @@ A request is auto-approved when:
 
 ### Policy from Connect URI
 
+The server prefers an explicit `invite.policy` (from the decoded connect string). If none is provided, it parses the `perms` query string.
+
 The `nostrconnect://` URI can include a `perms` parameter:
 
 ```
@@ -254,9 +263,9 @@ nostrconnect://pubkey?relay=wss://...&perms=sign_event:1,sign_event:4,nip44_encr
 ```
 
 This is parsed into policy:
-- `sign_event:1` → `kinds["1"] = true`
-- `sign_event:4` → `kinds["4"] = true`
-- `nip44_encrypt` → `methods["nip44_encrypt"] = true`
+- `sign_event:1` -> `kinds["1"] = true`
+- `sign_event:4` -> `kinds["4"] = true`
+- `nip44_encrypt` -> `methods["nip44_encrypt"] = true`
 
 ## 7. Service Lifecycle
 
@@ -273,7 +282,7 @@ initNip46Service({
 
 ### Startup
 
-1. Service waits for active user (`setActiveUser(userId)`)
+1. Service waits for active user (`setActiveUser(userId)`), typically set when a DB user loads credentials or calls NIP-46 endpoints
 2. Loads or generates transport key from database
 3. Loads relay list (default: `['wss://relay.primal.net']`)
 4. Creates `SimpleSigner` with transport key
@@ -357,8 +366,8 @@ await nip46Service.stop()
 - **Threshold signing**: Identity operations use FROSTR threshold signatures; full private key never exists
 - **Policy enforcement**: All requests go through policy check before execution
 - **Request queue**: Requests not auto-approved require manual UI approval
-- **Session revocation**: Revoked sessions are deleted from database
-- **Rate limiting**: Session creation limited to 120/hour (30 in headless mode)
+- **Session revocation**: Revoked sessions are deleted from database (status not persisted)
+- **Rate limiting**: Session creation limited by `NIP46_SESSION_RATE_LIMIT_MAX`/`NIP46_SESSION_RATE_LIMIT_WINDOW` (defaults: 120 per 3600s)
 - **Data size limits**: JSON fields limited to 50KB to prevent DoS
 
 ## 11. Configuration
@@ -368,6 +377,8 @@ await nip46Service.stop()
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `FROSTR_SIGN_TIMEOUT` | `30000` | Timeout for signing operations (ms) |
+| `NIP46_SESSION_RATE_LIMIT_MAX` | `120` | Max session creates per window |
+| `NIP46_SESSION_RATE_LIMIT_WINDOW` | `3600` | Rate limit window in seconds |
 
 ### Default Relay
 
@@ -384,11 +395,11 @@ Each user can configure up to 32 relays.
 
 | Function | Location | Purpose |
 |----------|----------|---------|
-| `Nip46Service` | `src/nip46/service.ts:175` | Main service class |
-| `handleSocketRequest` | `src/nip46/service.ts:433` | Process incoming requests |
-| `processApprovedRequest` | `src/nip46/service.ts:618` | Execute approved requests |
-| `handleSignEvent` | `src/nip46/service.ts:826` | Sign event via FROSTR |
-| `shouldAutoApprove` | `src/nip46/service.ts:772` | Policy check logic |
-| `upsertSession` | `src/db/nip46.ts:399` | Create/update session |
-| `createNip46Request` | `src/db/nip46.ts:306` | Queue new request |
+| `Nip46Service` | `src/nip46/service.ts` | Main service class |
+| `handleSocketRequest` | `src/nip46/service.ts` | Process incoming requests |
+| `processApprovedRequest` | `src/nip46/service.ts` | Execute approved requests |
+| `handleSignEvent` | `src/nip46/service.ts` | Sign event via FROSTR |
+| `shouldAutoApprove` | `src/nip46/service.ts` | Policy check logic |
+| `upsertSession` | `src/db/nip46.ts` | Create/update session |
+| `createNip46Request` | `src/db/nip46.ts` | Queue new request |
 | `deriveSharedSecret` | `src/routes/crypto-utils.ts` | ECDH for NIP-44 |
