@@ -5,7 +5,7 @@ import type { RouteContext, RequestAuth } from './types.js'
 function parseSeq(value: string | null): number | undefined {
   if (!value) return undefined
   const n = Number.parseInt(value, 10)
-  if (!Number.isFinite(n) || n < 0) return undefined
+  if (!Number.isFinite(n) || n <= 0) return undefined
   return n
 }
 
