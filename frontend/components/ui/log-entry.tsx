@@ -76,15 +76,18 @@ This is likely a complex object from the Bifrost node containing circular refere
 
 export const LogEntry = memo(({ log }: LogEntryProps) => {
   const [isMessageExpanded, setIsMessageExpanded] = React.useState(false);
-  const [resolvedData, setResolvedData] = React.useState<any>(log.data ?? log.dataPreview);
+  const [resolvedData, setResolvedData] = React.useState<any>(log.data ?? log.dataPreview ?? null);
   const [isLoadingData, setIsLoadingData] = React.useState(false);
-  const [hasFetchedFull, setHasFetchedFull] = React.useState(false);
+  const [hasFetchedFull, setHasFetchedFull] = React.useState(!!log.data);
+  const [fetchError, setFetchError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (!hasFetchedFull) {
-      setResolvedData(log.data ?? log.dataPreview);
-    }
-  }, [log.data, log.dataPreview, hasFetchedFull]);
+    // New log: reset derived state. Preview does not count as "full payload fetched".
+    setResolvedData(log.data ?? log.dataPreview ?? null);
+    setHasFetchedFull(!!log.data);
+    setFetchError(null);
+    setIsLoadingData(false);
+  }, [log.id, log.data, log.dataPreview, log.dataHash]);
 
   const hasData = !!(resolvedData && (typeof resolvedData !== 'object' || Object.keys(resolvedData).length > 0)) || !!log.dataHash;
 
@@ -96,11 +99,13 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
 
   React.useEffect(() => {
     if (!isMessageExpanded) return;
-    if (resolvedData !== undefined && resolvedData !== null) return;
+    if (hasFetchedFull) return;
+    if (fetchError) return; // Don't auto-retry while expanded; user can collapse + re-expand.
     const hash = typeof log.dataHash === 'string' ? log.dataHash : null;
     if (!hash || !/^[a-f0-9]{64}$/.test(hash)) return;
 
     let cancelled = false;
+    setFetchError(null);
     setIsLoadingData(true);
     fetch(`/api/event-log/blob/${hash}`)
       .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch')))
@@ -113,8 +118,8 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
       })
       .catch(() => {
         if (cancelled) return;
-        // Keep UI usable even if blob fetch fails.
-        setResolvedData({ _error: 'failed_to_load_payload', hash });
+        // Keep UI usable even if blob fetch fails; preserve preview (if any) and surface a retry hint.
+        setFetchError('failed_to_load_payload');
       })
       .finally(() => {
         if (cancelled) return;
@@ -122,7 +127,16 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
       });
 
     return () => { cancelled = true; };
-  }, [isMessageExpanded, resolvedData, log.dataHash]);
+  }, [isMessageExpanded, hasFetchedFull, fetchError, log.dataHash]);
+
+  React.useEffect(() => {
+    // Allow retries: if expansion is collapsed after a fetch error, reset error/loading state.
+    if (isMessageExpanded) return;
+    if (!fetchError) return;
+    setFetchError(null);
+    setIsLoadingData(false);
+    setResolvedData(log.data ?? log.dataPreview ?? null);
+  }, [isMessageExpanded, fetchError, log.data, log.dataPreview]);
 
   const signatureSummary = React.useMemo(() => {
     const data = resolvedData;
@@ -140,8 +154,14 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
   const formattedData = React.useMemo(() => {
     if (!hasData) return null;
     if (isLoadingData) return 'Loading…';
+    if (fetchError) {
+      const preview = resolvedData !== undefined && resolvedData !== null
+        ? `\n\nPreview:\n${formatLogData(resolvedData)}`
+        : '';
+      return `Failed to load full payload. Collapse and re-expand to retry.${preview}`;
+    }
     return formatLogData(resolvedData);
-  }, [resolvedData, hasData, isLoadingData]);
+  }, [resolvedData, hasData, isLoadingData, fetchError]);
 
   return (
     <div className="mb-2 last:mb-0 bg-gray-800/40 p-2 rounded hover:bg-gray-800/50 transition-colors">
