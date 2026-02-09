@@ -378,33 +378,137 @@ const parseRestartConfig = () => {
 SESSION_SECRET auto-generation (`src/routes/auth.ts`):
 ```typescript
 function loadOrGenerateSessionSecret(): string | null {
-  if (!existsSync(SESSION_SECRET_DIR)) {
-    mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
+  try {
+    // Ensure data directory exists with strict permissions
+    if (!existsSync(SESSION_SECRET_DIR)) {
+      mkdirSync(SESSION_SECRET_DIR, { recursive: true, mode: 0o700 });
+    }
+    // Enforce strict permissions on the directory (0700)
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      // On Windows, chmod may be a no-op or limited; proceed best-effort
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
+
+    // Check if secret already exists
+    if (existsSync(SESSION_SECRET_FILE)) {
+      const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
+      // Validate format: must be exactly 64 hex characters (32 bytes)
+      if (/^[0-9a-f]{64}$/i.test(secret)) {
+        console.log('🔑 SESSION_SECRET loaded from secure storage');
+        return secret;
+      }
+      console.warn('⚠️  Existing SESSION_SECRET is invalid format, generating new one');
+    }
+
+    // Generate new secret (32 bytes = 64 hex characters)
+    const newSecret = randomBytes(32).toString('hex');
+
+    // Atomically write the new secret with unique temp file
+    const tempFileName = `.session-secret.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
+    const tempFilePath = path.join(SESSION_SECRET_DIR, tempFileName);
+    let tempFileHandle: number | undefined;
+    let dirHandle: number | undefined;
+
+    try {
+      // Open temp file with exclusive flag to prevent races
+      tempFileHandle = openSync(tempFilePath, 'wx', 0o600);
+      // Write the secret to the temp file
+      writeSync(tempFileHandle, newSecret, 0, 'utf8');
+
+      // Open directory handle for fsync
+      try {
+        dirHandle = openSync(SESSION_SECRET_DIR, 'r');
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        // Windows doesn't support opening directories for fsync
+        console.warn('⚠️  Windows platform detected: Directory fsync not available. Session secret may be lost in case of system crash before filesystem cache flush.');
+        dirHandle = undefined;
+      }
+
+      // First, ensure the temp file is on disk
+      fsyncSync(tempFileHandle);
+
+      // Atomically rename the temp file to the final destination
+      renameSync(tempFilePath, SESSION_SECRET_FILE);
+
+      // Enforce strict permissions on the final secret file (0600)
+      try {
+        chmodSync(SESSION_SECRET_FILE, 0o600);
+      } catch (e) {
+        if (process.platform !== 'win32') {
+          throw e;
+        }
+        console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+      }
+
+      // Finally, fsync the directory to durably record the rename (best-effort on Windows)
+      if (dirHandle !== undefined) {
+        try {
+          fsyncSync(dirHandle);
+        } catch (e) {
+          if (process.platform !== 'win32') {
+            throw e;
+          }
+          // Windows fsync on directory handle may fail even after successful open
+          console.warn('⚠️  Windows platform: Directory fsync failed. Session secret rename may not be durable until filesystem cache flush.');
+        }
+      }
+
+    } catch (error) {
+      console.error('Failed to write session secret atomically:', error);
+      // Clean up the temporary file if it exists
+      if (existsSync(tempFilePath)) {
+        try {
+          unlinkSync(tempFilePath);
+        } catch (cleanupError) {
+          console.error('Failed to clean up temporary session secret file:', cleanupError);
+        }
+      }
+      throw error; // Re-throw the original error
+    } finally {
+      if (tempFileHandle !== undefined) closeSync(tempFileHandle);
+      if (dirHandle !== undefined) closeSync(dirHandle);
+    }
+
+    // Final assurance of correct permissions after write/rename
+    try {
+      chmodSync(SESSION_SECRET_DIR, 0o700);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0700 on session secret directory.');
+    }
+    try {
+      chmodSync(SESSION_SECRET_FILE, 0o600);
+    } catch (e) {
+      if (process.platform !== 'win32') {
+        throw e;
+      }
+      console.warn('⚠️  Windows platform: Unable to enforce 0600 on session secret file.');
+    }
+
+    console.log('✨ SESSION_SECRET auto-generated and saved to secure storage');
+    console.log('   Sessions will now persist across server restarts');
+
+    return newSecret;
+  } catch (error) {
+    console.error('Failed to load/generate SESSION_SECRET:', error);
+    return null;
   }
-  chmodSync(SESSION_SECRET_DIR, 0o700);
-
-  if (existsSync(SESSION_SECRET_FILE)) {
-    const secret = readFileSync(SESSION_SECRET_FILE, 'utf-8').trim();
-    if (/^[0-9a-f]{64}$/i.test(secret)) return secret;
-  }
-
-  const newSecret = randomBytes(32).toString('hex');
-  const tempFileName = `.session-secret.tmp.${process.pid}.${randomBytes(8).toString('hex')}`;
-  const tempFilePath = path.join(SESSION_SECRET_DIR, tempFileName);
-
-  const fd = openSync(tempFilePath, 'wx', 0o600);
-  writeSync(fd, newSecret, 0, 'utf8');
-  fsyncSync(fd);
-  renameSync(tempFilePath, SESSION_SECRET_FILE);
-  chmodSync(SESSION_SECRET_FILE, 0o600);
-
-  process.env.SESSION_SECRET = newSecret;
-  return newSecret;
 }
 ```
 Notes:
 - On Windows, chmod and directory fsync are best-effort; warnings are logged.
 - In production, a missing/invalid secret that cannot be generated will terminate the process.
+- `loadOrGenerateSessionSecret()` does not mutate `process.env.SESSION_SECRET` directly; `validateSessionSecret()` sets `process.env.SESSION_SECRET = generatedSecret` only after successful load/generation.
 
 ### 3. Origin Enforcement (HTTP vs WebSocket)
 

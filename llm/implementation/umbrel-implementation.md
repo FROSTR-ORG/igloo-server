@@ -13,7 +13,6 @@ This document captures the working, released Umbrel packaging for Igloo Server. 
 - The Umbrel dev workflow `.github/workflows/umbrel-dev.yml` builds and smoke-tests a local image only; it does not push.
 
 ## Umbrel Community Store Repo (Igloo Server Store)
-Local path: `/Users/plebdev/Desktop/code/igloo-server-store`
 Upstream repo: `https://github.com/frostr-org/igloo-server-store`
 
 Key files and current state:

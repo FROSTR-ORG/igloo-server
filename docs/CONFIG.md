@@ -77,6 +77,8 @@ Related docs:
 Important persistence/precedence detail:
 - For keys managed by `/api/env`, Igloo reads from a local `.env` file (relative to the server working directory) and treats it as higher precedence than process environment variables for those keys.
 - If you deploy with Docker Compose `env_file: .env`, note that this sets container environment variables but does not mount the file into the container. In headless deployments, UI/API changes that write `.env` will not persist across container recreation unless you also mount a volume for the `.env` file (or you manage configuration exclusively via container environment variables and avoid writing via `/api/env`).
+- If you bind-mount `./.env:/app/.env` to persist `/api/env` writes, ensure `./.env` exists as a file before starting the container (for example `cp env.example .env` or `touch .env`). If it is missing, Docker may create `./.env/` as a directory at mount time, which will break both `env_file: .env` and the app's `.env` reads/writes.
+- `env_file: .env` is only read at container start. Changes written to the mounted `/app/.env` by the app will not affect the running container's environment until you restart the container.
 
 ## Operational Tuning Knobs (Most Commonly Missed)
 
@@ -123,4 +125,6 @@ Performance toggles (advanced):
 
 In both cases, Igloo stores:
 - SQLite at `<DB_PATH>/igloo.db` when `DB_PATH` is a directory (or uses the file path directly when it looks like a file)
-- Session secret at the inferred directory `/.session-secret`
+- Session secret in the `DB_PATH` directory as `.session-secret`:
+  - If `DB_PATH` is a directory: `<DB_PATH>/.session-secret`
+  - If `DB_PATH` is a file path: the directory containing `DB_PATH` plus `/.session-secret` (for example, `/var/lib/igloo/.session-secret` when `DB_PATH=/var/lib/igloo/igloo.db`)

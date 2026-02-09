@@ -62,7 +62,7 @@ The repo uses a standard `Dockerfile` at the repo root:
 docker build -t igloo-server .
 ```
 
-If you use `compose.yml`, note it uses `env_file: .env` to inject environment variables but does not mount that file into the container. For headless deployments that write config via `/api/env`, mount `.env` as a volume if you expect it to persist (see `docs/CONFIG.md`).
+If you use `compose.yml`, note it uses `env_file: .env` to inject environment variables and also mounts `.env` as a read-write volume (via `env_file: .env` plus a volume mount). For headless deployments that write config via `/api/env`, the `.env` file will persist if mounted as a volume (see `docs/CONFIG.md`).
 
 ## Coding Standards
 

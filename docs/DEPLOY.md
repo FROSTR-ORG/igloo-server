@@ -58,6 +58,8 @@ services:
 ```
 Start with `docker compose up -d` after creating and editing `.env` (copy from `.env.example`).
 
+Note: `env_file: .env` injects values only at container start. If you also bind-mount `./.env:/app/.env` to persist `/api/env` writes, ensure `./.env` exists as a file first (`cp env.example .env` or `touch .env`) or Docker may create a directory at `./.env/`.
+
 4) Firewall (UFW):
 ```bash
 sudo ufw allow 80 443 22

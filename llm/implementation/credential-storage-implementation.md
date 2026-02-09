@@ -34,8 +34,14 @@ Defined in `src/config/crypto.ts`:
 
 ## Key Derivation
 - For password-based operations, `deriveKey(password, user.salt)` uses PBKDF2 and returns 32 bytes.
-- The derived key is hex-encoded and used directly as the AES-256-GCM key.
-- Derived keys can also be passed directly as 32-byte binary or 64-char hex for session-based flows.
+- The derived key is a 32-byte binary value. When it is represented as hex (64 chars), that is only for transient in-memory session storage or ephemeral transfer (e.g., session objects, network transport)—not for database persistence.
+- The encryption layer uses a 64-char hex *string* as its input format, but it decodes it back to the original 32-byte key before use:
+  - `keyHex` (64 chars) -> `Buffer.from(keyHex, 'hex')` (32 bytes) -> `createCipheriv('aes-256-gcm', keyBytes, iv)`
+  **Derived keys are never written to the database.** In this document, "storage" of derived keys means only in-memory session storage or ephemeral transport mechanisms.
+- Session flows may supply derived keys as either:
+  - raw 32-byte binary (`Uint8Array` / `ArrayBuffer`), or
+  - 64-char hex string
+  In both cases, the implementation normalizes to the same 32-byte key bytes before passing it to AES-256-GCM.
 
 ## Ciphertext Format
 - AES-256-GCM encrypts with a random 12-byte IV per operation.
