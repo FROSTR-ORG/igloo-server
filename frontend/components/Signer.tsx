@@ -73,9 +73,8 @@ const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
     type: log.type,
     message: log.message,
     data: log.data,
-    // Pass through persistence hints when present.
-    dataHash: (log as any).dataHash,
-    dataPreview: (log as any).dataPreview
+    dataHash: log.dataHash,
+    dataPreview: log.dataPreview
   };
 };
 
