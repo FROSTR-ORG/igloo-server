@@ -580,7 +580,11 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
         return merged;
       });
       const seqs = chronological.map(e => parseSeq(e.id)).filter((n): n is number => n !== null);
-      const minSeq = seqs.length ? Math.min(...seqs) : oldestSeq;
+      if (seqs.length === 0) {
+        setHasMoreHistory(false);
+        return;
+      }
+      const minSeq = Math.min(...seqs);
       setOldestSeq(minSeq);
       setHasMoreHistory(typeof nextBeforeSeq === 'number' ? nextBeforeSeq > 0 : chronological.length === 200);
     } finally {

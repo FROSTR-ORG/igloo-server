@@ -173,6 +173,21 @@ export function ensureUiEventLogSchema(dbConn: Database): void {
   dbConn.exec('CREATE INDEX IF NOT EXISTS idx_ui_event_log_entries_seq ON ui_event_log_entries(seq DESC)')
 }
 
+type EventLogEntryRow = {
+  seq: number
+  created_at: string
+  created_at_ms: number | string
+  type: string
+  message: string
+  data_hash: string | null
+  data_preview: string | null
+  data_bytes: number | null
+}
+
+type EventLogExportRow = EventLogEntryRow & {
+  data_json: string | null
+}
+
 export function createUiEventLogStore(dbConn: Database) {
   ensureUiEventLogSchema(dbConn)
 
@@ -270,7 +285,7 @@ export function createUiEventLogStore(dbConn: Database) {
       const types = opts?.types?.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim()) ?? []
 
       const clauses: string[] = []
-      const params: any[] = []
+      const params: (number | string)[] = []
 
       if (typeof beforeSeq === 'number' && Number.isFinite(beforeSeq) && beforeSeq > 0) {
         clauses.push('seq < ?')
@@ -285,7 +300,7 @@ export function createUiEventLogStore(dbConn: Database) {
 
       const whereSql = clauses.length ? `WHERE ${clauses.join(' AND ')}` : ''
       const stmt = dbConn.prepare(selectEntriesBase(whereSql))
-      const rows = stmt.all(...params, limit) as any[]
+      const rows = stmt.all(...params, limit) as EventLogEntryRow[]
 
       const entries: UiEventLogListItem[] = rows.map(r => {
         const createdAtMs = typeof r.created_at_ms === 'number' ? r.created_at_ms : Number(r.created_at_ms)
@@ -336,7 +351,7 @@ export function createUiEventLogStore(dbConn: Database) {
       const types = opts?.types?.filter(t => typeof t === 'string' && t.trim().length > 0).map(t => t.trim()) ?? []
 
       const clauses: string[] = ['e.seq > ?']
-      const params: any[] = [afterSeq]
+      const params: (number | string)[] = [afterSeq]
 
       if (untilSeq) {
         clauses.push('e.seq <= ?')
@@ -365,7 +380,7 @@ export function createUiEventLogStore(dbConn: Database) {
         ORDER BY e.seq ASC
         LIMIT ?
       `)
-      const raw = stmt.all(...params, limit) as any[]
+      const raw = stmt.all(...params, limit) as EventLogExportRow[]
       const rows: UiEventLogExportRow[] = raw.map(r => {
         let parsed: unknown | null = null
         if (typeof r.data_json === 'string' && r.data_json.length > 0) {

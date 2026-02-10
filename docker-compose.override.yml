@@ -1,0 +1,12 @@
+# Local development override: bind-mounts ./src for live-reload.
+# Only load this when developing locally. Production should use compose.yml alone
+# (e.g. docker compose -f compose.yml up) so the image's built-in /app/src is used.
+#
+# Usage: docker compose up   (merges this file automatically)
+# Production: docker compose -f compose.yml up
+
+services:
+  igloo-server:
+    volumes:
+      - ./src:/app/src:rw  # Dev only: bypasses image, live-reload; do not use in production
+      - ./data:/app/data:rw

@@ -5,6 +5,14 @@
 ### Added
 
 * Update check banner for non-managed installs, backed by `/api/update`.
+* WebSocket events endpoint (`/api/events`) for real-time logs and status streaming.
+* New documentation: CONFIG.md, AUTH_MATRIX.md, PEER_POLICIES.md.
+
+### Changed
+
+* Relay probe optimizations: `SKIP_RELAY_PROBE` and `DEFER_RELAY_PROBE` env vars for background verification.
+* Docker Compose improvements: dev-only bind-mount via override, native arch (ARM/x86) support.
+* Headless-mode session optimizations.
 
 ### Notes
 

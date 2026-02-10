@@ -37,9 +37,9 @@ interface UpdateResponse {
   error?: string;
 }
 
-const UPDATE_CHECK_TIMEOUT_MS = parseInt(process.env['UPDATE_CHECK_TIMEOUT_MS'] ?? '5000', 10);
-const UPDATE_CHECK_TTL_MS = parseInt(process.env['UPDATE_CHECK_TTL_MS'] ?? '21600000', 10); // 6 hours
-const UPDATE_CHECK_FAILURE_TTL_MS = parseInt(process.env['UPDATE_CHECK_FAILURE_TTL_MS'] ?? '900000', 10); // 15 minutes
+const UPDATE_CHECK_TIMEOUT_MS = parseInt(process.env['UPDATE_CHECK_TIMEOUT_MS'] ?? '5000', 10) || 5000;
+const UPDATE_CHECK_TTL_MS = parseInt(process.env['UPDATE_CHECK_TTL_MS'] ?? '21600000', 10) || 21_600_000; // 6 hours
+const UPDATE_CHECK_FAILURE_TTL_MS = parseInt(process.env['UPDATE_CHECK_FAILURE_TTL_MS'] ?? '900000', 10) || 900_000; // 15 minutes
 
 const GITHUB_OWNER = 'FROSTR-ORG';
 const GITHUB_REPO = 'igloo-server';
@@ -82,7 +82,9 @@ function parseVersion(raw: string, allowPrerelease: boolean): ParsedVersion | nu
   const withoutPrefix = trimmed.startsWith('v') || trimmed.startsWith('V')
     ? trimmed.slice(1)
     : trimmed;
-  const [core, prerelease] = withoutPrefix.split('-', 2);
+  const dashIdx = withoutPrefix.indexOf('-');
+  const core = dashIdx === -1 ? withoutPrefix : withoutPrefix.slice(0, dashIdx);
+  const prerelease = dashIdx === -1 ? undefined : withoutPrefix.slice(dashIdx + 1);
   const parts = core.split('.');
   if (parts.length < 3) return null;
   if (parts.some(p => p === '' || !/^\d+$/.test(p))) return null;
