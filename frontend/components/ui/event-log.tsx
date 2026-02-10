@@ -3,7 +3,7 @@ import { IconButton } from "./icon-button";
 import { StatusIndicator } from "./status-indicator";
 import { Badge } from "./badge";
 import { Button } from "./button";
-import { Trash2, ChevronDown, ChevronUp, Filter, X } from "lucide-react";
+import { Trash2, ChevronDown, ChevronUp, Filter, X, Download } from "lucide-react";
 import { cn } from "../../lib/utils";
 import { LogEntry, type LogEntryData } from "./log-entry";
 
@@ -11,18 +11,28 @@ interface EventLogProps {
   logs: LogEntryData[];
   isSignerRunning?: boolean;
   onClearLogs: () => void;
+  onDownload?: () => void;
+  downloading?: boolean;
   title?: string;
   hideHeader?: boolean;
   autoExpandTypes?: string[];
+  onLoadOlder?: () => void;
+  hasMore?: boolean;
+  loadingOlder?: boolean;
 }
 
 export const EventLog = memo(({
   logs,
   isSignerRunning = false,
   onClearLogs,
+  onDownload,
+  downloading = false,
   title = "Event Log",
   hideHeader = false,
-  autoExpandTypes = []
+  autoExpandTypes = [],
+  onLoadOlder,
+  hasMore = false,
+  loadingOlder = false
 }: EventLogProps) => {
   const logEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -131,6 +141,20 @@ export const EventLog = memo(({
       <span className="text-xs text-gray-500 italic">
         {isExpanded ? "Click to collapse" : "Click to expand"}
       </span>
+      {onDownload ? (
+        <IconButton
+          variant="default"
+          size="sm"
+          icon={<Download className="h-4 w-4" />}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDownload();
+          }}
+          tooltip={downloading ? "Downloading…" : "Download logs"}
+          disabled={downloading}
+          className="transition-all duration-200 hover:bg-gray-600/30"
+        />
+      ) : null}
       <IconButton
         variant="default"
         size="sm"
@@ -257,6 +281,23 @@ export const EventLog = memo(({
           </div>
         </div>
       )}
+
+      {isExpanded && onLoadOlder ? (
+        <div className="mt-2 flex items-center gap-2">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onLoadOlder}
+            disabled={!hasMore || loadingOlder}
+            className="h-7 px-2 text-xs"
+          >
+            {loadingOlder ? 'Loading…' : hasMore ? 'Load older' : 'No more history'}
+          </Button>
+          <span className="text-[11px] text-gray-500">
+            History is persisted server-side in DB mode. Clearing only resets the current view.
+          </span>
+        </div>
+      ) : null}
       
       <div 
         className={cn(

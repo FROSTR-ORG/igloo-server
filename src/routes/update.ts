@@ -85,6 +85,7 @@ function parseVersion(raw: string, allowPrerelease: boolean): ParsedVersion | nu
   const [core, prerelease] = withoutPrefix.split('-', 2);
   const parts = core.split('.');
   if (parts.length < 3) return null;
+  if (parts.some(p => p === '' || !/^\d+$/.test(p))) return null;
 
   const major = Number(parts[0]);
   const minor = Number(parts[1]);

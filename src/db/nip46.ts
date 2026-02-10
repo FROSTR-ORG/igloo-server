@@ -338,21 +338,35 @@ export function getNip46RequestById(id: string): Nip46RequestRecord | null {
 
 export function listNip46Requests(
   userId: number | bigint,
-  opts?: { status?: Nip46RequestStatus[]; limit?: number }
+  opts?: {
+    status?: Nip46RequestStatus[]
+    limit?: number
+    before?: { createdAt: string; id: string }
+  }
 ): Nip46RequestRecord[] {
   const statuses = opts?.status && opts.status.length ? opts.status : null
   const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500)
+  const clauses: string[] = ['user_id = ?']
+  const params: any[] = [userId]
+
   if (statuses) {
     const placeholders = statuses.map(() => '?').join(',')
-    const stmt = db.prepare(
-      `SELECT * FROM nip46_requests WHERE user_id = ? AND status IN (${placeholders}) ORDER BY created_at DESC LIMIT ?`
-    )
-    return stmt.all(userId, ...statuses, limit) as Nip46RequestRecord[]
+    clauses.push(`status IN (${placeholders})`)
+    params.push(...statuses)
   }
+
+  const before = opts?.before
+  if (before && typeof before.createdAt === 'string' && typeof before.id === 'string' && before.createdAt.trim() && before.id.trim()) {
+    // Stable cursor using (created_at, id) tuple for deterministic pagination.
+    clauses.push('(created_at < ? OR (created_at = ? AND id < ?))')
+    params.push(before.createdAt, before.createdAt, before.id)
+  }
+
+  const whereSql = `WHERE ${clauses.join(' AND ')}`
   const stmt = db.prepare(
-    'SELECT * FROM nip46_requests WHERE user_id = ? ORDER BY created_at DESC LIMIT ?'
+    `SELECT * FROM nip46_requests ${whereSql} ORDER BY created_at DESC, id DESC LIMIT ?`
   )
-  return stmt.all(userId, limit) as Nip46RequestRecord[]
+  return stmt.all(...params, limit) as Nip46RequestRecord[]
 }
 
 export function updateNip46RequestStatus(

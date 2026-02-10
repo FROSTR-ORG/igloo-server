@@ -9,6 +9,11 @@ export interface LogEntryData {
   message: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   data?: any;
+  // When persisted entries are listed without payloads, the UI can lazy-load by hash.
+  dataHash?: string | null;
+  // Optional small preview (may be truncated); used for quick inspection without fetching.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  dataPreview?: any;
   id: string;
 }
 
@@ -71,7 +76,20 @@ This is likely a complex object from the Bifrost node containing circular refere
 
 export const LogEntry = memo(({ log }: LogEntryProps) => {
   const [isMessageExpanded, setIsMessageExpanded] = React.useState(false);
-  const hasData = log.data && Object.keys(log.data).length > 0;
+  const [resolvedData, setResolvedData] = React.useState<any>(log.data ?? log.dataPreview ?? null);
+  const [isLoadingData, setIsLoadingData] = React.useState(false);
+  const [hasFetchedFull, setHasFetchedFull] = React.useState(!!log.data);
+  const [fetchError, setFetchError] = React.useState<string | null>(null);
+
+  React.useEffect(() => {
+    // New log: reset derived state. Preview does not count as "full payload fetched".
+    setResolvedData(log.data ?? log.dataPreview ?? null);
+    setHasFetchedFull(!!log.data);
+    setFetchError(null);
+    setIsLoadingData(false);
+  }, [log.id, log.data, log.dataPreview, log.dataHash]);
+
+  const hasData = !!(resolvedData && (typeof resolvedData !== 'object' || Object.keys(resolvedData).length > 0)) || !!log.dataHash;
 
   const handleClick = useCallback(() => {
     if (hasData) {
@@ -79,22 +97,71 @@ export const LogEntry = memo(({ log }: LogEntryProps) => {
     }
   }, [hasData]);
 
+  React.useEffect(() => {
+    if (!isMessageExpanded) return;
+    if (hasFetchedFull) return;
+    if (fetchError) return; // Don't auto-retry while expanded; user can collapse + re-expand.
+    const hash = typeof log.dataHash === 'string' ? log.dataHash : null;
+    if (!hash || !/^[a-f0-9]{64}$/.test(hash)) return;
+
+    let cancelled = false;
+    setFetchError(null);
+    setIsLoadingData(true);
+    fetch(`/api/event-log/blob/${hash}`)
+      .then(res => res.ok ? res.json() : Promise.reject(new Error('Failed to fetch')))
+      .then(payload => {
+        if (cancelled) return;
+        if (payload && typeof payload === 'object' && 'data' in payload) {
+          setResolvedData((payload as any).data);
+          setHasFetchedFull(true);
+        }
+      })
+      .catch(() => {
+        if (cancelled) return;
+        // Keep UI usable even if blob fetch fails; preserve preview (if any) and surface a retry hint.
+        setFetchError('failed_to_load_payload');
+      })
+      .finally(() => {
+        if (cancelled) return;
+        setIsLoadingData(false);
+      });
+
+    return () => { cancelled = true; };
+  }, [isMessageExpanded, hasFetchedFull, fetchError, log.dataHash]);
+
+  React.useEffect(() => {
+    // Allow retries: if expansion is collapsed after a fetch error, reset error/loading state.
+    if (isMessageExpanded) return;
+    if (!fetchError) return;
+    setFetchError(null);
+    setIsLoadingData(false);
+    setResolvedData(log.data ?? log.dataPreview ?? null);
+  }, [isMessageExpanded, fetchError, log.data, log.dataPreview]);
+
   const signatureSummary = React.useMemo(() => {
-    if (log.type !== 'sign' || !log.data) return null;
-    const session = typeof log.data.session === 'string' ? log.data.session : null;
-    const eventId = typeof log.data.eventId === 'string' ? log.data.eventId : null;
-    const kind = typeof log.data.kind === 'number' ? log.data.kind : null;
+    const data = resolvedData;
+    if (log.type !== 'sign' || !data) return null;
+    const session = typeof data.session === 'string' ? data.session : null;
+    const eventId = typeof data.eventId === 'string' ? data.eventId : null;
+    const kind = typeof data.kind === 'number' ? data.kind : null;
     const parts: string[] = [];
     if (session) parts.push(`session ${truncateMiddle(session)}`);
     if (kind != null) parts.push(`kind ${kind}`);
     if (eventId) parts.push(`event ${truncateMiddle(eventId)}`);
     return parts.length ? parts.join(' · ') : null;
-  }, [log]);
+  }, [log.type, resolvedData]);
 
   const formattedData = React.useMemo(() => {
     if (!hasData) return null;
-    return formatLogData(log.data);
-  }, [log.data, hasData]);
+    if (isLoadingData) return 'Loading…';
+    if (fetchError) {
+      const preview = resolvedData !== undefined && resolvedData !== null
+        ? `\n\nPreview:\n${formatLogData(resolvedData)}`
+        : '';
+      return `Failed to load full payload. Collapse and re-expand to retry.${preview}`;
+    }
+    return formatLogData(resolvedData);
+  }, [resolvedData, hasData, isLoadingData, fetchError]);
 
   return (
     <div className="mb-2 last:mb-0 bg-gray-800/40 p-2 rounded hover:bg-gray-800/50 transition-colors">

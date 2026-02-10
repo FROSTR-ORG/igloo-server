@@ -44,11 +44,10 @@ const pulseStyle = `
 `;
 
 const DEFAULT_RELAY = "wss://relay.primal.net";
-const LOG_STORAGE_KEY = "igloo:event-log";
-const MAX_LOG_ENTRIES = 500;
+// UI event log history is persisted server-side in DB mode.
+// Keep a bounded in-memory buffer to prevent runaway memory usage; older entries remain queryable.
+const MAX_EVENT_LOG_IN_MEMORY = 10000;
 const AUTO_EXPAND_EVENT_TYPES: string[] = ['sign'];
-
-const canUseSessionStorage = () => typeof window !== "undefined" && typeof window.sessionStorage !== "undefined";
 
 const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
   if (!entry || typeof entry !== "object") return null;
@@ -73,48 +72,15 @@ const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
     timestamp,
     type: log.type,
     message: log.message,
-    data: log.data
+    data: log.data,
+    dataHash: log.dataHash,
+    dataPreview: log.dataPreview
   };
 };
 
-const readStoredLogs = (): LogEntryData[] => {
-  if (!canUseSessionStorage()) return [];
-
-  try {
-    const raw = window.sessionStorage.getItem(LOG_STORAGE_KEY);
-    if (!raw) return [];
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-
-    return parsed
-      .map(sanitizeLogEntry)
-      .filter((entry): entry is LogEntryData => entry !== null)
-      .slice(-MAX_LOG_ENTRIES);
-  } catch (error) {
-    console.warn("Failed to parse stored event logs:", error);
-    return [];
-  }
-};
-
-const writeStoredLogs = (entries: LogEntryData[]) => {
-  if (!canUseSessionStorage()) return;
-
-  if (entries.length === 0) {
-    window.sessionStorage.removeItem(LOG_STORAGE_KEY);
-    return;
-  }
-
-  try {
-    window.sessionStorage.setItem(LOG_STORAGE_KEY, JSON.stringify(entries));
-  } catch (error) {
-    console.warn("Failed to persist event logs:", error);
-  }
-};
-
-const clearStoredLogs = () => {
-  if (!canUseSessionStorage()) return;
-  window.sessionStorage.removeItem(LOG_STORAGE_KEY);
+const parseSeq = (id: string): number | null => {
+  const n = Number.parseInt(id, 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
 };
 
 // Reusable deep validation helpers to avoid duplication
@@ -210,11 +176,17 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     share: false
   });
   const [credentialSaveError, setCredentialSaveError] = useState<string | null>(null);
-  const [logs, setLogs] = useState<LogEntryData[]>(() => readStoredLogs());
+  const [logs, setLogs] = useState<LogEntryData[]>([]);
+  const [oldestSeq, setOldestSeq] = useState<number | null>(null);
+  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [downloadingLogs, setDownloadingLogs] = useState(false);
   const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
 
   // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
+  const authHeadersRef = useRef(authHeaders);
+  useEffect(() => { authHeadersRef.current = authHeaders; }, [authHeaders]);
 
   // Expose methods to parent components through ref
   useImperativeHandle(ref, () => ({
@@ -416,11 +388,12 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
          const params = new URLSearchParams();
          
          // Check if we have auth headers and convert them to URL params
-         if (authHeaders['X-API-Key']) {
-           params.set('apiKey', authHeaders['X-API-Key']);
-         } else if (authHeaders['X-Session-ID']) {
-           params.set('sessionId', authHeaders['X-Session-ID']);
-         } else if (authHeaders['Authorization'] && authHeaders['Authorization'].startsWith('Basic ')) {
+         const currentAuth = authHeadersRef.current;
+         if (currentAuth['X-API-Key']) {
+           params.set('apiKey', currentAuth['X-API-Key']);
+         } else if (currentAuth['X-Session-ID']) {
+           params.set('sessionId', currentAuth['X-Session-ID']);
+         } else if (currentAuth['Authorization'] && currentAuth['Authorization'].startsWith('Basic ')) {
            // For basic auth, we'll rely on cookies or handle it server-side
            // The server should accept the connection if the user is already authenticated
          }
@@ -478,8 +451,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               }
 
               const updated = [...prev, nextLog];
-              if (updated.length > MAX_LOG_ENTRIES) {
-                return updated.slice(updated.length - MAX_LOG_ENTRIES);
+              if (updated.length > MAX_EVENT_LOG_IN_MEMORY) {
+                return updated.slice(updated.length - MAX_EVENT_LOG_IN_MEMORY);
               }
               return updated;
             });
@@ -544,6 +517,104 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       }
     };
   }, []);
+
+  // Load initial persisted history (DB mode). The realtime WebSocket continues to append new events.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res = await fetch('/api/event-log?limit=200', { headers: authHeaders });
+        if (!res.ok) {
+          if (res.status === 401) {
+            try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
+          }
+          return;
+        }
+        const payload = await res.json();
+        const entries: unknown = (payload as any)?.entries;
+        const nextBeforeSeq: unknown = (payload as any)?.nextBeforeSeq;
+        if (!Array.isArray(entries)) return;
+        const sanitized = entries.map(sanitizeLogEntry).filter((e): e is LogEntryData => e !== null);
+        const chronological = [...sanitized].reverse();
+        if (cancelled) return;
+        setLogs(prev => {
+          if (prev.length === 0) return chronological;
+          const existing = new Set(prev.map(e => e.id));
+          const merged = [...chronological.filter(e => !existing.has(e.id)), ...prev];
+          return merged;
+        });
+        const seqs = chronological.map(e => parseSeq(e.id)).filter((n): n is number => n !== null);
+        const minSeq = seqs.length ? Math.min(...seqs) : null;
+        setOldestSeq(minSeq);
+        setHasMoreHistory(typeof nextBeforeSeq === 'number' ? nextBeforeSeq > 0 : chronological.length === 200);
+      } catch {
+        // Ignore history load errors; realtime stream still works.
+      }
+    };
+    if (!isHeadlessMode) {
+      void load();
+    }
+    return () => { cancelled = true; };
+  }, [authHeaders, isHeadlessMode]);
+
+  const handleLoadOlder = useCallback(async () => {
+    if (!oldestSeq || loadingOlder) return;
+    setLoadingOlder(true);
+    try {
+      const res = await fetch(`/api/event-log?limit=200&beforeSeq=${oldestSeq}`, { headers: authHeaders });
+      if (!res.ok) {
+        if (res.status === 401) {
+          try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
+        }
+        return;
+      }
+      const payload = await res.json();
+      const entries: unknown = (payload as any)?.entries;
+      const nextBeforeSeq: unknown = (payload as any)?.nextBeforeSeq;
+      if (!Array.isArray(entries)) return;
+      const sanitized = entries.map(sanitizeLogEntry).filter((e): e is LogEntryData => e !== null);
+      const chronological = [...sanitized].reverse();
+      setLogs(prev => {
+        const existing = new Set(prev.map(e => e.id));
+        const merged = [...chronological.filter(e => !existing.has(e.id)), ...prev];
+        return merged;
+      });
+      const seqs = chronological.map(e => parseSeq(e.id)).filter((n): n is number => n !== null);
+      const minSeq = seqs.length ? Math.min(...seqs) : oldestSeq;
+      setOldestSeq(minSeq);
+      setHasMoreHistory(typeof nextBeforeSeq === 'number' ? nextBeforeSeq > 0 : chronological.length === 200);
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [oldestSeq, loadingOlder, authHeaders]);
+
+  const handleDownloadLogs = useCallback(async () => {
+    if (downloadingLogs) return;
+    setDownloadingLogs(true);
+    try {
+      const res = await fetch('/api/event-log/export', { headers: authHeaders });
+      if (!res.ok) {
+        if (res.status === 401) {
+          try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
+        }
+        throw new Error('Failed to export logs');
+      }
+      const blob = await res.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+      a.href = url;
+      a.download = `igloo-event-log-${stamp}.ndjson`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => window.URL.revokeObjectURL(url), 500);
+    } catch (error) {
+      console.warn('Log export failed', error);
+    } finally {
+      setDownloadingLogs(false);
+    }
+  }, [authHeaders, downloadingLogs]);
 
   // Add effect to cleanup on unmount
   useEffect(() => {
@@ -929,14 +1000,11 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     // Signer is managed by the server - no manual stop needed
   };
 
-  // Persist logs in session storage while component stays mounted
-  useEffect(() => {
-    writeStoredLogs(logs);
-  }, [logs]);
-
   const handleClearLogs = useCallback(() => {
-    clearStoredLogs();
+    // Audit log is persisted server-side; clearing only resets the current view.
     setLogs([]);
+    setOldestSeq(null);
+    setHasMoreHistory(false);
   }, []);
 
   // Show loading state while fetching environment variables
@@ -1254,6 +1322,11 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           isSignerRunning={isSignerRunning}
           onClearLogs={handleClearLogs}
           autoExpandTypes={AUTO_EXPAND_EVENT_TYPES}
+          onLoadOlder={handleLoadOlder}
+          hasMore={hasMoreHistory}
+          loadingOlder={loadingOlder}
+          onDownload={handleDownloadLogs}
+          downloading={downloadingLogs}
         />
       </div>
     </div>

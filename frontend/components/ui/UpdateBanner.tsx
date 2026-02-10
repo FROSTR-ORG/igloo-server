@@ -10,7 +10,7 @@ interface UpdateBannerProps {
 }
 
 export const UpdateBanner: React.FC<UpdateBannerProps> = ({ info, className }) => {
-  if (!info || !info.enabled || !info.updateAvailable || !info.latestVersion) {
+  if (!info || !info.enabled || !info.updateAvailable || !info.currentVersion || !info.latestVersion) {
     return null;
   }
 

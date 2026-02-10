@@ -90,11 +90,15 @@ const EVENT_MAPPINGS = {
   '/sign/rej': { type: 'sign', message: 'Signature request rejected' },
   '/sign/ret': { type: 'sign', message: 'Signature shares aggregated' },
   '/sign/err': { type: 'sign', message: 'Signature share aggregation failed' },
+  '/sign/sender/req': { type: 'sign', message: 'Signature request sent' },
+  '/sign/sender/res': { type: 'sign', message: 'Signature responses received' },
   '/ecdh/req': { type: 'ecdh', message: 'ECDH request received' },
   '/ecdh/res': { type: 'ecdh', message: 'ECDH response sent' },
   '/ecdh/rej': { type: 'ecdh', message: 'ECDH request rejected' },
   '/ecdh/ret': { type: 'ecdh', message: 'ECDH shares aggregated' },
   '/ecdh/err': { type: 'ecdh', message: 'ECDH share aggregation failed' },
+  '/ecdh/sender/req': { type: 'ecdh', message: 'ECDH request sent' },
+  '/ecdh/sender/res': { type: 'ecdh', message: 'ECDH responses received' },
   '/ping/req': { type: 'bifrost', message: 'Ping request' },
   '/ping/res': { type: 'bifrost', message: 'Ping response' },
 } as const;
@@ -1314,7 +1318,13 @@ export function createBroadcastEvent(eventStreams: Set<ServerWebSocket<EventStre
 }
 
 // Helper function to create a server log broadcaster
-export function createAddServerLog(broadcastEvent: ReturnType<typeof createBroadcastEvent>) {
+export function createAddServerLog(
+  broadcastEvent: ReturnType<typeof createBroadcastEvent>,
+  opts?: {
+    // Optional DB-mode persistence hook. Return a stable monotonic seq ID when persisted.
+    persist?: (entry: { type: string; message: string; data?: any; timestamp: string; id: string }) => number | null
+  }
+) {
   return function addServerLog(type: string, message: string, data?: any) {
     // Suppress noisy low‑value entries from the public event stream and console
     // - Signature aggregation events are very frequent and leak long IDs into UI
@@ -1325,20 +1335,34 @@ export function createAddServerLog(broadcastEvent: ReturnType<typeof createBroad
     ) {
       return; // do not log or broadcast
     }
-    const timestamp = new Date().toLocaleTimeString();
-    const logEntry = {
+    // Use ISO timestamp so browsers can localize display consistently.
+    const timestamp = new Date().toISOString();
+    const logEntry: { type: string; message: string; data?: any; timestamp: string; id: string; seq?: number } = {
       type,
       message,
       data,
       timestamp,
       id: Math.random().toString(36).substring(2, 11)
     };
+
+    // Persist first (when enabled) so the WS stream can carry a stable monotonic ID.
+    try {
+      const seq = opts?.persist?.(logEntry)
+      if (typeof seq === 'number' && Number.isFinite(seq) && seq > 0) {
+        logEntry.seq = seq
+        logEntry.id = String(seq)
+      }
+    } catch {
+      // Persistence is non-critical; fall back to ephemeral IDs.
+    }
     
     // Log to console for server logs
     if (data !== undefined && data !== null && data !== '') {
-      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`, data);
+      const consoleTs = new Date().toLocaleTimeString();
+      console.log(`[${consoleTs}] ${type.toUpperCase()}: ${message}`, data);
     } else {
-      console.log(`[${timestamp}] ${type.toUpperCase()}: ${message}`);
+      const consoleTs = new Date().toLocaleTimeString();
+      console.log(`[${consoleTs}] ${type.toUpperCase()}: ${message}`);
     }
     
     // Broadcast to connected clients
@@ -1473,9 +1497,24 @@ export function setupNodeEventListeners(
         const messageData = msg as { tag: unknown; [key: string]: unknown };
         const tag = messageData.tag;
 
-        if (typeof tag === 'string') {
-          // Handle peer status updates for ping messages
-          if (tag === '/ping/req' || tag === '/ping/res') {
+          if (typeof tag === 'string') {
+            // Avoid double-logging for tags that also emit dedicated events with different signatures.
+            // These are logged by their dedicated handlers below.
+            if (
+              tag === '/sign/sender/rej' ||
+              tag === '/sign/sender/ret' ||
+              tag === '/sign/sender/err' ||
+              tag === '/sign/handler/rej' ||
+              tag === '/ecdh/sender/rej' ||
+              tag === '/ecdh/sender/ret' ||
+              tag === '/ecdh/sender/err' ||
+              tag === '/ecdh/handler/rej'
+            ) {
+              return
+            }
+
+            // Handle peer status updates for ping messages
+            if (tag === '/ping/req' || tag === '/ping/res') {
             // Extract pubkey from env.pubkey (Nostr event structure)
             let fromPubkey: string | undefined = undefined;
             
@@ -1646,28 +1685,8 @@ export function setupNodeEventListeners(
     node.on('/sign/sender/err', signSenderErrHandler);
     node.on('/sign/handler/rej', signHandlerRejHandler);
 
-    // Legacy direct event listeners for backward compatibility - only for events NOT handled by message handler
-    const legacyEvents = [
-      // Only include events that aren't already handled by EVENT_MAPPINGS via message handler
-      { event: '/ecdh/sender/req', type: 'ecdh', message: 'ECDH request sent' },
-      { event: '/ecdh/sender/res', type: 'ecdh', message: 'ECDH responses received' },
-      { event: '/sign/sender/req', type: 'sign', message: 'Signature request sent' },
-      { event: '/sign/sender/res', type: 'sign', message: 'Signature responses received' },
-      // Note: Removed /ecdh/handler/req, /ecdh/handler/res, /sign/handler/req, /sign/handler/res 
-      // because they're already handled by the message handler via EVENT_MAPPINGS
-    ];
-
-    legacyEvents.forEach(({ event, type, message }) => {
-      try {
-        const handler = (msg: unknown) => {
-          updateNodeActivity(addServerLog);
-          addServerLog(type, message, msg);
-        };
-        (node as any).on(event, handler);
-      } catch (e) {
-        // Silently ignore if event doesn't exist
-      }
-    });
+    // Legacy direct event listeners removed.
+    // Sender req/res tags are mapped in EVENT_MAPPINGS so they are logged via the message handler.
   } catch (e) {
     addServerLog('bifrost', 'Error setting up some legacy event listeners', e);
   }

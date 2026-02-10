@@ -215,7 +215,12 @@ const restartState = { blockedByCredentials: false };
 
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
-const addServerLog = createAddServerLog(broadcastEvent);
+let persistUiEventLogEntry: ((entry: { type: string; message: string; data?: any; timestamp: string; id: string }) => number | null) | null = null
+const addServerLog = createAddServerLog(broadcastEvent, {
+  persist: (entry) => {
+    try { return persistUiEventLogEntry?.(entry) ?? null } catch { return null }
+  }
+});
 // NIP-46 service only needed in database mode (perf optimization 3.3)
 if (!CONST.HEADLESS) {
   initNip46Service({
@@ -358,6 +363,21 @@ async function initializeDatabase(): Promise<void> {
   } catch (e: any) {
     // Log but don't fail - NIP-46 is not critical for startup
     console.error('⚠️  Failed to initialize NIP-46 database:', e?.message || e);
+  }
+
+  // Enable UI event log persistence in DB mode (non-critical; failures are tolerated).
+  try {
+    const uiLog = await import('./db/ui-event-log.js')
+    persistUiEventLogEntry = (entry) => {
+      try {
+        const result = uiLog.appendUiEventLogEntry(entry as any)
+        return result?.seq ?? null
+      } catch {
+        return null
+      }
+    }
+  } catch (e: any) {
+    console.error('⚠️  Failed to enable UI event log persistence:', e?.message || e)
   }
 
   // Initialize persistent rate limiter with database connection
