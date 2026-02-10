@@ -14,6 +14,7 @@ Looking to deploy quickly? Start with the one-click options in `docs/DEPLOY.md` 
 ## Features
 - Always‑on signer built on igloo‑core with multi‑relay support
 - Web UI (React + Tailwind) for setup, monitoring, recovery
+- Persisted UI event log (DB mode) with pagination and NDJSON export download
 - REST + WebSocket APIs with API‑key, Basic, or session auth
 - Health monitor + auto‑restart on repeated failures
 - Works as a single node or part of a k‑of‑n signer group

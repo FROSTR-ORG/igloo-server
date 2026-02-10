@@ -3,7 +3,8 @@ import { IconButton } from "./icon-button";
 import { StatusIndicator } from "./status-indicator";
 import { Badge } from "./badge";
 import { Button } from "./button";
-import { Trash2, ChevronDown, ChevronUp, Filter, X, Download } from "lucide-react";
+import { Trash2, ChevronDown, ChevronUp, Filter, X, Download, HelpCircle } from "lucide-react";
+import { Tooltip } from "./tooltip";
 import { cn } from "../../lib/utils";
 import { LogEntry, type LogEntryData } from "./log-entry";
 
@@ -215,6 +216,16 @@ export const EventLog = memo(({
                 {activeFilters.size} filter{activeFilters.size !== 1 ? 's' : ''}
               </Badge>
             )}
+            <div onClick={e => e.stopPropagation()}>
+              <Tooltip
+                position="right"
+                width="w-64"
+                trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+                content={
+                  <p>Logs are persisted server-side in DB mode. Use the filter to narrow by event type. Clearing resets your current view — new events will continue to appear in real time.</p>
+                }
+              />
+            </div>
           </div>
           <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
             {actions}
@@ -293,9 +304,6 @@ export const EventLog = memo(({
           >
             {loadingOlder ? 'Loading…' : hasMore ? 'Load older' : 'No more history'}
           </Button>
-          <span className="text-[11px] text-gray-500">
-            History is persisted server-side in DB mode. Clearing only resets the current view.
-          </span>
         </div>
       ) : null}
       

@@ -81,4 +81,47 @@ describe('ui-event-log store', () => {
     expect(typeof data2.originalSha256).toBe('string')
     expect(typeof data2.preview).toBe('string')
   })
+
+  test('prunes entries older than a retention cutoff and deletes orphan blobs', () => {
+    const mem = new Database(':memory:')
+    ensureUiEventLogSchema(mem)
+    const store = createUiEventLogStore(mem)
+
+    const insert = mem.prepare(`
+      INSERT INTO ui_event_log_entries (
+        created_at_ms, type, message, data_hash, data_preview, data_bytes, source_id
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+
+    const now = Date.now()
+    const oldMs = now - 10 * 86400000
+    const keepMs = now - 1 * 86400000
+
+    // Old entry with a blob.
+    const blobJson = JSON.stringify({ ok: true })
+    const blobHash = 'a'.repeat(64)
+    mem.prepare('INSERT INTO ui_event_log_blobs (hash, json, byte_length) VALUES (?, ?, ?)').run(blobHash, blobJson, blobJson.length)
+    insert.run(oldMs, 'info', 'old', blobHash, blobJson, blobJson.length, null)
+
+    // Newer entry with the same blob (should keep blob after pruning).
+    insert.run(keepMs, 'info', 'new', blobHash, blobJson, blobJson.length, null)
+
+    // Orphan blob (should be removed by prune).
+    const orphanHash = 'b'.repeat(64)
+    mem.prepare('INSERT INTO ui_event_log_blobs (hash, json, byte_length) VALUES (?, ?, ?)').run(orphanHash, blobJson, blobJson.length)
+
+    const beforeEntries = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_entries').get() as { c: number }
+    const beforeBlobs = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_blobs').get() as { c: number }
+    expect(beforeEntries.c).toBe(2)
+    expect(beforeBlobs.c).toBe(2)
+
+    const result = store.prune({ retentionDays: 2 })
+    expect(result).toBeTruthy()
+    expect((result as any).deletedEntries).toBe(1)
+
+    const afterEntries = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_entries').get() as { c: number }
+    const afterBlobs = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_blobs').get() as { c: number }
+    expect(afterEntries.c).toBe(1)
+    expect(afterBlobs.c).toBe(1)
+  })
 })

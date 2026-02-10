@@ -377,6 +377,28 @@ async function initializeDatabase(): Promise<void> {
         return null
       }
     }
+
+    // Optional retention: prune old persisted UI event log entries on an interval.
+    const rawRetentionDays = process.env.UI_EVENT_LOG_RETENTION_DAYS
+    const retentionDays = rawRetentionDays ? Number.parseInt(rawRetentionDays, 10) : NaN
+    if (Number.isFinite(retentionDays) && retentionDays > 0) {
+      const runPrune = () => {
+        try {
+          const result = uiLog.pruneUiEventLog?.({ retentionDays })
+          if (result && process.env.NODE_ENV !== 'production') {
+            console.log(`[ui-event-log] pruned ${result.deletedEntries} entries and ${result.deletedBlobs} blobs (retentionDays=${retentionDays})`)
+          }
+        } catch (e) {
+          if (process.env.NODE_ENV !== 'production') {
+            console.warn('[ui-event-log] prune failed:', e instanceof Error ? e.message : String(e))
+          }
+        }
+      }
+
+      runPrune()
+      const interval = setInterval(runPrune, 6 * 60 * 60 * 1000)
+      ;(interval as any).unref?.()
+    }
   } catch (e: any) {
     console.error('⚠️  Failed to enable UI event log persistence:', e?.message || e)
   }

@@ -21,6 +21,7 @@ Definitions:
 | `/api/onboarding/*` | First-run onboarding | Yes | No | Yes | Only mounted in DB mode. Intended to be unauthenticated; protected by rate limiting and `ADMIN_SECRET` (unless `SKIP_ADMIN_SECRET_VALIDATION=true`). |
 | `/api/docs/*` | Swagger UI + raw spec | Yes | Yes | Special | Not behind the global gate, but in `NODE_ENV=production` with `AUTH_ENABLED=true` the docs require auth. |
 | `/api/events` (WebSocket) | Server event stream | Yes | Yes | No | WebSocket upgrade is authorized like normal API requests when `AUTH_ENABLED=true`. Origin checks apply for browsers (see `docs/CONFIG.md`). |
+| `/api/event-log*` | Persisted UI event log (history, blobs, export) | Yes | No | No | DB mode only. `GET /api/event-log` is paginated; `GET /api/event-log/export` downloads NDJSON; `GET /api/event-log/blob/<hash>` fetches full payload by hash. |
 | `/api/env`, `/api/env/delete` | Read/write env-backed config | Yes | Yes | No | DB mode: reads require a valid session when `AUTH_ENABLED=true`; writes require admin (`ADMIN_SECRET` or admin role). Headless: reads and writes require API key or Basic Auth even if `AUTH_ENABLED=false`. |
 | `/api/env/shares` | Headless share metadata/upload | No | Yes | No | Intentionally headless-only; returns 404 in DB mode. |
 | `/api/env/admin-secret` | Reveal `ADMIN_SECRET` (guarded) | Yes | No | No | DB mode only; requires an admin session and explicit confirmation in body. |

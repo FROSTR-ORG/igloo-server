@@ -38,6 +38,12 @@ export type UiEventLogExportRow = {
   data: unknown | null
 }
 
+export type UiEventLogPruneResult = {
+  cutoffMs: number
+  deletedEntries: number
+  deletedBlobs: number
+}
+
 function safeJsonStringify(value: unknown): string | null {
   if (value === undefined) return null
   try {
@@ -220,6 +226,15 @@ export function createUiEventLogStore(dbConn: Database) {
 
   const selectBlob = dbConn.prepare('SELECT json, byte_length FROM ui_event_log_blobs WHERE hash = ?')
 
+  const deleteOldEntries = dbConn.prepare('DELETE FROM ui_event_log_entries WHERE created_at_ms < ?')
+  const deleteOrphanBlobs = dbConn.prepare(`
+    DELETE FROM ui_event_log_blobs
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ui_event_log_entries e
+      WHERE e.data_hash = ui_event_log_blobs.hash
+    )
+  `)
+
   return {
     append(entry: UiEventLogStreamEntry): { seq: number; dataHash: string | null } {
       const nowMs = Date.now()
@@ -400,6 +415,26 @@ export function createUiEventLogStore(dbConn: Database) {
       const nextAfterSeq = rows.length === limit ? rows[rows.length - 1].seq : null
       return { rows, nextAfterSeq }
     }
+
+    ,
+
+    prune(opts?: { retentionDays?: number }): UiEventLogPruneResult | null {
+      const retentionDays = opts?.retentionDays
+      if (typeof retentionDays !== 'number' || !Number.isFinite(retentionDays) || retentionDays <= 0) return null
+
+      // Keep rows newer than cutoff.
+      const cutoffMs = Date.now() - Math.floor(retentionDays * 86400000)
+      if (!Number.isFinite(cutoffMs) || cutoffMs <= 0) return null
+
+      // Delete in two phases: entries first (to avoid FK issues), then orphan blobs.
+      const r1 = deleteOldEntries.run(cutoffMs)
+      const r2 = deleteOrphanBlobs.run()
+      return {
+        cutoffMs,
+        deletedEntries: Number(r1.changes) || 0,
+        deletedBlobs: Number(r2.changes) || 0,
+      }
+    }
   }
 }
 
@@ -409,3 +444,4 @@ export const appendUiEventLogEntry = defaultStore.append
 export const listUiEventLogEntries = defaultStore.list
 export const getUiEventLogBlob = defaultStore.getBlob
 export const exportUiEventLogChunk = defaultStore.exportChunk
+export const pruneUiEventLog = defaultStore.prune
