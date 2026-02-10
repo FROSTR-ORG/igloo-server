@@ -14,11 +14,11 @@ This document captures how Igloo Server stores, encrypts, and retrieves user cre
 ## Data Model
 - Credentials are stored in SQLite in the `users` table.
 - Encrypted fields:
-- `group_cred_encrypted` and `share_cred_encrypted` store ciphertext (AES-256-GCM, base64).
+  - `group_cred_encrypted` and `share_cred_encrypted` store ciphertext (AES-256-GCM, base64).
 - Plaintext fields:
-- `relays` and `group_name` are stored as plain JSON/string (not encrypted).
-- `salt` is stored in plaintext and used only for PBKDF2 key derivation.
-- `password_hash` stores an Argon2id hash with embedded salt for authentication.
+  - `relays` and `group_name` are stored as plain JSON/string (not encrypted).
+  - `salt` is stored in plaintext and used only for PBKDF2 key derivation.
+  - `password_hash` stores an Argon2id hash with embedded salt for authentication.
 
 ## Crypto Configuration
 Defined in `src/config/crypto.ts`:

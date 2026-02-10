@@ -13,6 +13,7 @@ import type {
   NodeCredentialSnapshot
 } from './routes/index.js';
 import { assertNoSessionSecretExposure, isWebSocketOriginAllowed, getTrustedClientIp } from './routes/utils.js';
+import type { UiEventLogStreamEntry } from './db/ui-event-log.js';
 import {
   createBroadcastEvent,
   createAddServerLog,
@@ -215,7 +216,7 @@ const restartState = { blockedByCredentials: false };
 
 // Create event management functions
 const broadcastEvent = createBroadcastEvent(eventStreams);
-let persistUiEventLogEntry: ((entry: { type: string; message: string; data?: any; timestamp: string; id: string }) => number | null) | null = null
+let persistUiEventLogEntry: ((entry: UiEventLogStreamEntry) => number | null) | null = null
 const addServerLog = createAddServerLog(broadcastEvent, {
   persist: (entry) => {
     try { return persistUiEventLogEntry?.(entry) ?? null } catch { return null }
@@ -370,7 +371,7 @@ async function initializeDatabase(): Promise<void> {
     const uiLog = await import('./db/ui-event-log.js')
     persistUiEventLogEntry = (entry) => {
       try {
-        const result = uiLog.appendUiEventLogEntry(entry as any)
+        const result = uiLog.appendUiEventLogEntry(entry)
         return result?.seq ?? null
       } catch {
         return null

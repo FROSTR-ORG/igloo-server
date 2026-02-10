@@ -20,7 +20,7 @@ Key files and current state:
   - Store id: `igloo`
   - Store name: `Igloo Server Store`
 - `igloo-server/umbrel-app.yml`
-  - `version: 1.1.0`
+  - `version: 1.1.1`
   - `port: 8002`, `tor: true`
   - Assets are remote URLs (icon + gallery screenshots).
   - Description calls out database mode defaults and admin secret auto-provisioning.

@@ -1322,10 +1322,10 @@ export function createAddServerLog(
   broadcastEvent: ReturnType<typeof createBroadcastEvent>,
   opts?: {
     // Optional DB-mode persistence hook. Return a stable monotonic seq ID when persisted.
-    persist?: (entry: { type: string; message: string; data?: any; timestamp: string; id: string }) => number | null
+    persist?: (entry: { type: string; message: string; data?: unknown; timestamp: string; id: string }) => number | null
   }
 ) {
-  return function addServerLog(type: string, message: string, data?: any) {
+  return function addServerLog(type: string, message: string, data?: unknown) {
     // Suppress noisy low‑value entries from the public event stream and console
     // - Signature aggregation events are very frequent and leak long IDs into UI
     //   Keep them out of the event log while preserving other SIGN entries.
@@ -1337,7 +1337,7 @@ export function createAddServerLog(
     }
     // Use ISO timestamp so browsers can localize display consistently.
     const timestamp = new Date().toISOString();
-    const logEntry: { type: string; message: string; data?: any; timestamp: string; id: string; seq?: number } = {
+    const logEntry: { type: string; message: string; data?: unknown; timestamp: string; id: string; seq?: number } = {
       type,
       message,
       data,
