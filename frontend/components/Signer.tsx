@@ -518,44 +518,43 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     };
   }, []);
 
+  // Loads the first page of persisted history from the server.
+  const loadInitialHistory = useCallback(async () => {
+    try {
+      const res = await fetch('/api/event-log?limit=200', { headers: authHeaders });
+      if (!res.ok) {
+        if (res.status === 401) {
+          try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
+        }
+        return;
+      }
+      const payload = await res.json();
+      const entries: unknown = (payload as any)?.entries;
+      const nextBeforeSeq: unknown = (payload as any)?.nextBeforeSeq;
+      if (!Array.isArray(entries)) return;
+      const sanitized = entries.map(sanitizeLogEntry).filter((e): e is LogEntryData => e !== null);
+      const chronological = [...sanitized].reverse();
+      setLogs(prev => {
+        if (prev.length === 0) return chronological;
+        const existing = new Set(prev.map(e => e.id));
+        const merged = [...chronological.filter(e => !existing.has(e.id)), ...prev];
+        return merged;
+      });
+      const seqs = chronological.map(e => parseSeq(e.id)).filter((n): n is number => n !== null);
+      const minSeq = seqs.length ? Math.min(...seqs) : null;
+      setOldestSeq(minSeq);
+      setHasMoreHistory(typeof nextBeforeSeq === 'number' ? nextBeforeSeq > 0 : chronological.length === 200);
+    } catch {
+      // Ignore history load errors; realtime stream still works.
+    }
+  }, [authHeaders]);
+
   // Load initial persisted history (DB mode). The realtime WebSocket continues to append new events.
   useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const res = await fetch('/api/event-log?limit=200', { headers: authHeaders });
-        if (!res.ok) {
-          if (res.status === 401) {
-            try { window.dispatchEvent(new CustomEvent('authExpired')); } catch {}
-          }
-          return;
-        }
-        const payload = await res.json();
-        const entries: unknown = (payload as any)?.entries;
-        const nextBeforeSeq: unknown = (payload as any)?.nextBeforeSeq;
-        if (!Array.isArray(entries)) return;
-        const sanitized = entries.map(sanitizeLogEntry).filter((e): e is LogEntryData => e !== null);
-        const chronological = [...sanitized].reverse();
-        if (cancelled) return;
-        setLogs(prev => {
-          if (prev.length === 0) return chronological;
-          const existing = new Set(prev.map(e => e.id));
-          const merged = [...chronological.filter(e => !existing.has(e.id)), ...prev];
-          return merged;
-        });
-        const seqs = chronological.map(e => parseSeq(e.id)).filter((n): n is number => n !== null);
-        const minSeq = seqs.length ? Math.min(...seqs) : null;
-        setOldestSeq(minSeq);
-        setHasMoreHistory(typeof nextBeforeSeq === 'number' ? nextBeforeSeq > 0 : chronological.length === 200);
-      } catch {
-        // Ignore history load errors; realtime stream still works.
-      }
-    };
     if (!isHeadlessMode) {
-      void load();
+      void loadInitialHistory();
     }
-    return () => { cancelled = true; };
-  }, [authHeaders, isHeadlessMode]);
+  }, [loadInitialHistory, isHeadlessMode]);
 
   const handleLoadOlder = useCallback(async () => {
     if (!oldestSeq || loadingOlder) return;
@@ -1009,7 +1008,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     setLogs([]);
     setOldestSeq(null);
     setHasMoreHistory(false);
-  }, []);
+    // Re-load the first page so oldestSeq is repopulated and "load older" works again.
+    void loadInitialHistory();
+  }, [loadInitialHistory]);
 
   // Show loading state while fetching environment variables
   if (isLoading) {
