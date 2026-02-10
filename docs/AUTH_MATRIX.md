@@ -12,7 +12,7 @@ Definitions:
 ## Endpoint Matrix
 
 | Endpoint(s) | Purpose | DB mode | Headless mode | Bypasses global auth gate when `AUTH_ENABLED=true` | Notes |
-|---|---:|:---:|:---:|:---:|---|
+|---|---|:---:|:---:|:---:|---|
 | `/api/status` | Health/status | Yes | Yes | Yes | Public health checks; if auth headers are present the server will attempt auth and include extra details. |
 | `/api/update` | Update check | Yes | Yes | Yes | Update checks are disabled for managed deployments (e.g., `HEADLESS=true` or `SKIP_ADMIN_SECRET_VALIDATION=true`) and when `UPDATE_CHECK_DISABLED=true`. |
 | `/api/auth/status` | Auth capabilities | Yes | Yes | Yes | Returns configured auth methods and mode signals. |

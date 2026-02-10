@@ -668,8 +668,4 @@ for i in {1..10}; do curl http://localhost:8002/api/status; done
 - [ ] Test HTTPS works in production
 - [ ] Test CORS headers are appropriate
 
-**Remember**: Security is a process, not a destination. Regularly review and update your security configuration. 
-4. **Directional Peer Policies** (optional):
-   - Defaults allow both inbound and outbound traffic.
-   - To deny a direction, supply `allowSend:false` and/or `allowReceive:false` in `PEER_POLICIES`.
-   - The server persists and mirrors saved overrides into `data/peer-policies.json` so they persist between restarts (see `docs/PEER_POLICIES.md`).
+**Remember**: Security is a process, not a destination. Regularly review and update your security configuration.

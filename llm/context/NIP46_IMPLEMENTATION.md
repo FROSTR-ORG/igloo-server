@@ -168,7 +168,7 @@ Base path: `/api/nip46/`
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/requests` | List requests (`?status=pending,approved&limit=100`, max 500) |
-| `POST` | `/requests` | Update request status (`action=approve|deny|fail|complete`); optional policy patch |
+| `POST` | `/requests` | Update request status (`action=approve\|deny\|fail\|complete`); optional policy patch |
 | `DELETE` | `/requests` | Delete request (body includes `id`) |
 
 ### History
@@ -258,7 +258,7 @@ The server prefers an explicit `invite.policy` (from the decoded connect string)
 
 The `nostrconnect://` URI can include a `perms` parameter:
 
-```
+```text
 nostrconnect://pubkey?relay=wss://...&perms=sign_event:1,sign_event:4,nip44_encrypt
 ```
 
