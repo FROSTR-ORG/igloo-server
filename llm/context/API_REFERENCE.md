@@ -111,6 +111,11 @@ NIP-46 extended API (DB only)
 - `GET /api/nip46/requests`, `POST /api/nip46/requests`, `DELETE /api/nip46/requests` (request queue).
 - `POST /api/nip46/connect` (process `nostrconnect://` URI).
 
+Event log (DB only)
+- `GET /api/event-log?limit=200&beforeSeq=<seq>&types=<type>` (list persisted entries with optional cursor and type filtering).
+- `GET /api/event-log/blob/<hash>` (retrieve a large payload by content hash).
+- `GET /api/event-log/export?sinceSeq=<seq>&untilSeq=<seq>&types=<type>` (export entries as NDJSON).
+
 Non-API WebSocket
 - `GET /` with `Upgrade: websocket` is the internal relay WebSocket; origin and rate limits apply.
 
