@@ -614,6 +614,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       setTimeout(() => window.URL.revokeObjectURL(url), 500);
     } catch (error) {
       console.warn('Log export failed', error);
+      window.alert('Log export failed');
     } finally {
       setDownloadingLogs(false);
     }
