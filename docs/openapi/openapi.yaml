@@ -174,6 +174,142 @@ paths:
                 type: string
               example: Service temporarily unavailable
 
+  /api/event-log:
+    get:
+      operationId: listUiEventLog
+      summary: List persisted UI event log entries
+      description: |
+        Lists entries from the persisted UI event log (database mode only).
+
+        Notes:
+        - Results are returned in reverse chronological order (`seq` descending).
+        - Use `beforeSeq` to paginate older entries.
+        - Use `types` (comma-separated) to filter by event type.
+      tags:
+        - Event Log
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+            default: 200
+          description: Maximum number of entries to return (clamped to 1..500).
+        - name: beforeSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Return entries with `seq < beforeSeq` (pagination cursor).
+        - name: types
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated list of event types to include (e.g., `sign,error`).
+      responses:
+        '200':
+          description: Event log entries
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UiEventLogListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/event-log/blob/{hash}:
+    get:
+      operationId: getUiEventLogBlob
+      summary: Fetch a persisted UI event log payload by hash
+      description: |
+        Fetches the full JSON payload for a persisted UI event log entry by content hash (database mode only).
+
+        The UI typically loads this lazily when a log entry is expanded.
+      tags:
+        - Event Log
+      parameters:
+        - name: hash
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[0-9a-f]{64}$'
+          description: SHA-256 hex hash of the persisted payload.
+      responses:
+        '200':
+          description: Event log payload
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UiEventLogBlobResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /api/event-log/export:
+    get:
+      operationId: exportUiEventLog
+      summary: Export persisted UI event log as NDJSON
+      description: |
+        Exports the persisted UI event log as newline-delimited JSON (NDJSON), one entry per line (database mode only).
+
+        Query options:
+        - `sinceSeq` (default 1): include entries with `seq >= sinceSeq`.
+        - `untilSeq`: include entries with `seq <= untilSeq`.
+        - `types`: comma-separated list of event types to include.
+      tags:
+        - Event Log
+      parameters:
+        - name: sinceSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Lowest `seq` to include (inclusive).
+        - name: untilSeq
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+          description: Highest `seq` to include (inclusive).
+        - name: types
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated list of event types to include (e.g., `sign,error`).
+      responses:
+        '200':
+          description: |
+            NDJSON export stream. Each line is a JSON object:
+            `{ seq, timestamp, type, message, dataHash, dataBytes, data? }`
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+              example: |
+                {"seq":1,"timestamp":"2026-02-10T12:00:00.000Z","type":"system","message":"Server started"}
+                {"seq":2,"timestamp":"2026-02-10T12:00:01.000Z","type":"sign","message":"Sign request received","dataHash":"...","dataBytes":1234,"data":{"kind":1}}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
   /api/auth/status:
     get:
       operationId: getAuthStatus
@@ -2002,6 +2138,89 @@ components:
       required:
         - error
 
+    JsonValue:
+      description: Any JSON value.
+
+    UiEventLogEntry:
+      type: object
+      properties:
+        seq:
+          type: integer
+          description: Monotonic sequence number (primary identifier).
+        createdAt:
+          type: string
+          format: date-time
+          description: ISO timestamp for the entry (derived from `createdAtMs`).
+        createdAtMs:
+          type: integer
+          description: Milliseconds since epoch when the entry was persisted.
+        type:
+          type: string
+          description: Log entry type/category.
+        message:
+          type: string
+          description: Human-readable summary message.
+        timestamp:
+          type: string
+          format: date-time
+          description: ISO timestamp (alias of `createdAt`, used by the UI).
+        id:
+          type: string
+          description: Stringified `seq` (used by the UI as a stable id).
+        dataHash:
+          type: ["string", "null"]
+          pattern: '^[0-9a-f]{64}$'
+          description: Content hash of the persisted payload (if present).
+        dataPreview:
+          $ref: '#/components/schemas/JsonValue'
+          description: Small preview of the persisted payload (may be truncated).
+        dataBytes:
+          type: ["integer", "null"]
+          description: Size in bytes of the original serialized payload (if present).
+      required:
+        - seq
+        - createdAt
+        - createdAtMs
+        - type
+        - message
+        - timestamp
+        - id
+        - dataHash
+        - dataPreview
+        - dataBytes
+
+    UiEventLogListResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: '#/components/schemas/UiEventLogEntry'
+        nextBeforeSeq:
+          type: ["integer", "null"]
+          description: Cursor for the next page (use as `beforeSeq`), or null if no more entries.
+      required:
+        - entries
+        - nextBeforeSeq
+
+    UiEventLogBlobResponse:
+      type: object
+      properties:
+        hash:
+          type: string
+          pattern: '^[0-9a-f]{64}$'
+          description: Content hash of the persisted payload.
+        data:
+          $ref: '#/components/schemas/JsonValue'
+          description: Full persisted payload.
+        byteLength:
+          type: integer
+          description: Byte length of the stored JSON blob.
+      required:
+        - hash
+        - data
+        - byteLength
+
     SignRequest:
       type: object
       oneOf:
@@ -2500,3 +2719,5 @@ tags:
     description: Authenticated user endpoints (database mode)
   - name: Onboarding
     description: First-run onboarding and admin validation (database mode)
+  - name: Event Log
+    description: Persisted UI event log endpoints (database mode only)

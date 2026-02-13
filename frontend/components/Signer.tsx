@@ -1005,10 +1005,11 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
 
   const handleClearLogs = useCallback(() => {
     // Audit log is persisted server-side; clearing only resets the current view.
+    // New real-time events will continue streaming in via WebSocket.
+    // Reload the first page so oldestSeq is repopulated and "load older" works again.
     setLogs([]);
     setOldestSeq(null);
     setHasMoreHistory(false);
-    // Re-load the first page so oldestSeq is repopulated and "load older" works again.
     void loadInitialHistory();
   }, [loadInitialHistory]);
 

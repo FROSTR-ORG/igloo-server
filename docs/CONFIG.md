@@ -117,6 +117,21 @@ Performance toggles (advanced):
 - `SKIP_STARTUP_ECHO` (skips headless startup echo broadcasts)
 - `MAX_PEER_STATUS_ENTRIES` (bounds peer status memory)
 
+## UI Event Log (DB Mode Only)
+
+In database mode (`HEADLESS=false`), the UI "Event Log" is persisted server-side in SQLite (within the same `igloo.db` under your `DB_PATH`).
+
+For details on retention, de-duplication, and disk usage, see `docs/EVENT_LOG.md`.
+
+API surfaces (DB mode only):
+- `GET /api/event-log` paginates recent history (use `beforeSeq` to page older entries, and `types` to filter).
+- `GET /api/event-log/blob/<hash>` fetches the full JSON payload for a log entry by content hash (the UI loads this lazily on expand).
+- `GET /api/event-log/export` downloads the full log stream as NDJSON (one entry per line).
+
+Growth control:
+- `UI_EVENT_LOG_INCLUDE_PINGS=false` (default) suppresses `/ping/*` request/response entries from the persisted UI event log to avoid runaway growth on long-running deployments. Enable only when debugging ping behavior.
+- `UI_EVENT_LOG_RETENTION_DAYS`: optional; when set to a positive integer, Igloo will periodically prune persisted UI event log entries older than N days (and delete unreferenced payload blobs).
+
 ## DB_PATH Semantics
 
 `DB_PATH` can be either:

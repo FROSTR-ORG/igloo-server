@@ -77,6 +77,15 @@ const SELF_ECHO_TIMEOUT_MS = (() => {
   return 10000;
 })();
 
+// By default, suppress extremely high-volume ping request/response entries from the UI event log.
+// Ping traffic is still used for peer status tracking and connectivity monitoring.
+const UI_EVENT_LOG_INCLUDE_PINGS = (() => {
+  const raw = process.env.UI_EVENT_LOG_INCLUDE_PINGS;
+  if (!raw) return false;
+  const normalized = raw.trim().toLowerCase();
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on';
+})();
+
 // WebSocket ready state constants
 const READY_STATE_OPEN = 1;
 
@@ -1572,7 +1581,11 @@ export function setupNodeEventListeners(
                 timestamp: new Date().toLocaleTimeString(),
                 id: Math.random().toString(36).substring(2, 11)
               });
-              
+            }
+
+            // Suppress ping logs by default to avoid runaway log growth over long-running deployments.
+            if (!UI_EVENT_LOG_INCLUDE_PINGS) {
+              return
             }
           }
 
@@ -1607,6 +1620,7 @@ export function setupNodeEventListeners(
           } else if (tag.startsWith('/ecdh/')) {
             addServerLog('ecdh', `ECDH event: ${tag}`, msg);
           } else if (tag.startsWith('/ping/')) {
+            if (!UI_EVENT_LOG_INCLUDE_PINGS) return
             const selfPing = isSelfPing(messageData, groupCred, shareCred);
             if (!selfPing) {
               addServerLog('bifrost', `Ping event: ${tag}`, msg);

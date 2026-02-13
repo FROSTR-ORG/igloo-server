@@ -7,5 +7,6 @@
 - **Peer Policies** — `docs/PEER_POLICIES.md`: schema, precedence, and persistence for directional peer policies.
 - **Release** — `docs/RELEASE.md`: how we cut tags, build images (incl. Umbrel), and emergency fixes.
 - **API** — `docs/openapi/README.md`: OpenAPI 3.1 source, `/api/docs` usage, lint/bundle commands.
+- **UI Event Log** — `docs/EVENT_LOG.md`: DB-mode UI event log persistence, export, and storage optimizations.
 
 If you just want to run Igloo, open `docs/DEPLOY.md` and follow the Umbrel quick path.

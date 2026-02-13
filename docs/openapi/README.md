@@ -74,6 +74,7 @@ The OpenAPI specification includes (major surfaces):
 - ✅ Key recovery (`/api/recover/*`)
 - ✅ Share management (`/api/env/shares`)
 - ✅ Real-time events (WebSocket stream at `/api/events`)
+- ✅ Persisted UI event log (DB mode) (`/api/event-log*`)
 - ✅ Signing and encryption
   - `/api/sign` (threshold Schnorr signing)
   - `/api/nip44/{encrypt|decrypt}` (ECDH + NIP‑44)
