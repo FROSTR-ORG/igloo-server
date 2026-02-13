@@ -81,6 +81,10 @@
     {
       "name": "Onboarding",
       "description": "First-run onboarding and admin validation (database mode)"
+    },
+    {
+      "name": "Event Log",
+      "description": "Persisted UI event log endpoints (database mode only)"
     }
   ],
   "paths": {

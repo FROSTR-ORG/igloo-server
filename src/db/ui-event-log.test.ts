@@ -116,8 +116,8 @@ describe('ui-event-log store', () => {
     expect(beforeBlobs.c).toBe(2)
 
     const result = store.prune({ retentionDays: 2 })
-    expect(result).toBeTruthy()
-    expect((result as any).deletedEntries).toBe(1)
+    if (!result) throw new Error('expected prune to return a result')
+    expect(result.deletedEntries).toBe(1)
 
     const afterEntries = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_entries').get() as { c: number }
     const afterBlobs = mem.prepare('SELECT COUNT(*) as c FROM ui_event_log_blobs').get() as { c: number }
