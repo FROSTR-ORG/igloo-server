@@ -4,18 +4,44 @@
  */
 
 import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import type { FullConfig } from '@playwright/test';
+
+function findLatestStateFile(): string | null {
+  const tmpRoot = os.tmpdir();
+  let latestFile: string | null = null;
+  let latestMtime = 0;
+
+  for (const entry of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('igloo-smoke-test')) continue;
+    const candidate = path.join(tmpRoot, entry.name, 'state.json');
+    if (!fs.existsSync(candidate)) continue;
+    const mtime = fs.statSync(candidate).mtimeMs;
+    if (mtime > latestMtime) {
+      latestMtime = mtime;
+      latestFile = candidate;
+    }
+  }
+
+  return latestFile;
+}
 
 export default async function globalTeardown(_config: FullConfig): Promise<void> {
   const stateFile = process.env.SMOKE_STATE_FILE;
-  if (!stateFile || !fs.existsSync(stateFile)) {
+  const resolvedStateFile =
+    stateFile && fs.existsSync(stateFile)
+      ? stateFile
+      : findLatestStateFile();
+
+  if (!resolvedStateFile || !fs.existsSync(resolvedStateFile)) {
     console.warn('[teardown] No state file found – nothing to clean up.');
     return;
   }
 
   let state: { serverPid?: number; cosignerPid?: number; tmpDir?: string };
   try {
-    state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    state = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8'));
   } catch {
     console.warn('[teardown] Could not parse state file.');
     return;
@@ -37,10 +63,11 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
   // Brief pause to let processes flush logs
   await new Promise(r => setTimeout(r, 500));
 
-  if (state.tmpDir) {
+  const tmpDir = state.tmpDir || path.dirname(resolvedStateFile);
+  if (tmpDir) {
     try {
-      fs.rmSync(state.tmpDir, { recursive: true, force: true });
-      console.log('[teardown] Removed temp dir', state.tmpDir);
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+      console.log('[teardown] Removed temp dir', tmpDir);
     } catch (err) {
       console.warn('[teardown] Could not remove temp dir:', err);
     }

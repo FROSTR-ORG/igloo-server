@@ -65,20 +65,20 @@ test.describe('Auth – /api/auth', () => {
     await api.dispose();
   });
 
-  test('GET /api/status – valid API key (X-API-Key) returns 200', async () => {
+  test('GET /api/event-log – valid API key (X-API-Key) returns 200', async () => {
     test.skip(!apiKey, 'No API key available');
     const api = await request.newContext({ baseURL: baseUrl });
-    const res = await api.get('/api/status', {
+    const res = await api.get('/api/event-log', {
       headers: { 'X-API-Key': apiKey! },
     });
     expect(res.status()).toBe(200);
     await api.dispose();
   });
 
-  test('GET /api/status – valid API key (Bearer) returns 200', async () => {
+  test('GET /api/event-log – valid API key (Bearer) returns 200', async () => {
     test.skip(!apiKey, 'No API key available');
     const api = await request.newContext({ baseURL: baseUrl });
-    const res = await api.get('/api/status', {
+    const res = await api.get('/api/event-log', {
       headers: { Authorization: `Bearer ${apiKey!}` },
     });
     expect(res.status()).toBe(200);

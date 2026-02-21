@@ -51,8 +51,8 @@ test.describe('Admin – API keys', () => {
     });
     const { apiKey } = await createRes.json();
 
-    // Use key to hit a protected route
-    const authRes = await api.get('/api/status', {
+    // Use key to hit an auth-protected route (status is intentionally public).
+    const authRes = await api.get('/api/event-log', {
       headers: { 'X-API-Key': apiKey.token },
     });
     expect(authRes.status()).toBe(200);

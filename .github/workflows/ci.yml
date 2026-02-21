@@ -25,8 +25,8 @@ jobs:
     - name: Type check
       run: bun run tsc --noEmit
 
-    - name: Run backend tests
-      run: bun run test:unit
+    - name: Run route tests
+      run: bun test tests/routes
 
     - name: Build frontend
       run: bun run build
