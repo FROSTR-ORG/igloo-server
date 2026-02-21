@@ -611,10 +611,11 @@ const PeerList: React.FC<PeerListProps> = ({
             <ChevronDown className="h-4 w-4 text-blue-400 flex-shrink-0" />
           }
           <span className="text-blue-200 text-sm font-medium select-none">Peer List</span>
-          <div onClick={e => e.stopPropagation()}>
+          <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
             <Tooltip
               position="right"
               width="w-64"
+              focusable
               trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
               content={
                 <p>Shows the signing peers in your FROSTR group with online/offline status and ping latency. Use the refresh button to ping all peers and update their status.</p>

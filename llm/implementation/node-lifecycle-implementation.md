@@ -61,7 +61,7 @@ DB user updates (`/api/user/credentials`):
 - The node client request timeout is adjusted to `getOpTimeoutMs()` (bounded) when possible.
 - The node is wrapped in an instrumented proxy to track publish metrics and optionally swallow benign publish errors.
 - `NODE_PUBLISH_METRICS=false` disables instrumentation.
-- `NODE_ALLOW_BENIGN_PUBLISH_SWALLOW=false` (or `RELAY_ALLOW_BENIGN_SWALLOW`) forces publish errors to surface.
+- `NODE_ALLOW_BENIGN_PUBLISH_SWALLOW` is authoritative; `RELAY_ALLOW_BENIGN_SWALLOW` is a backward-compatibility fallback consulted only when `NODE_ALLOW_BENIGN_PUBLISH_SWALLOW` is unset. Setting either to `false` forces publish errors to surface.
 - Initial connectivity check runs after optional `INITIAL_CONNECTIVITY_DELAY` to avoid startup races.
 
 ## Monitoring and Recovery

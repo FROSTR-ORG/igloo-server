@@ -283,6 +283,20 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               }
             }
 
+            if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED) {
+              const groupValidation = validateGroup(body.GROUP_CRED);
+              if (!groupValidation.isValid) {
+                return Response.json({ success: false, error: 'Invalid GROUP_CRED' }, { status: 400, headers });
+              }
+            }
+
+            if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED) {
+              const shareValidation = validateShare(body.SHARE_CRED);
+              if (!shareValidation.isValid) {
+                return Response.json({ success: false, error: 'Invalid SHARE_CRED' }, { status: 400, headers });
+              }
+            }
+
             // DB mode privilege gate for env writes (no legacy fallback):
             // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
             // - allow when the authenticated DB user has role=admin.

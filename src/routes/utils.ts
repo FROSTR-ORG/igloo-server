@@ -60,11 +60,13 @@ export function getValidRelays(
     }
     
     // Validate each relay URL and exclude localhost to avoid conflicts
+    const allowLocalhost = process.env['ALLOW_LOCALHOST_RELAY'] === 'true';
     const validRelays = relayList.filter(relay => {
       try {
         const url = new URL(relay);
         // Exclude localhost relays to avoid conflicts with our server
-        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        // (unless explicitly allowed, e.g. for testing)
+        if (!allowLocalhost && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
           console.warn(`Excluding localhost relay to avoid conflicts: ${relay}`);
           return false;
         }
@@ -96,7 +98,7 @@ export function getValidRelays(
 }
 
 // Helper functions for .env file management
-const ENV_FILE_PATH = '.env';
+const ENV_FILE_PATH = process.env.ENV_FILE_PATH?.trim() || '.env';
 
 // Security: Whitelist of allowed environment variable keys (for write/validation)
 // IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only

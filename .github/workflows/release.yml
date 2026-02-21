@@ -73,6 +73,12 @@ jobs:
         echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
         echo "version_number=${NEW_VERSION#v}" >> $GITHUB_OUTPUT
 
+    - name: Type check
+      run: bun run typecheck
+
+    - name: Run backend tests
+      run: bun run test:unit
+
     - name: Build application
       run: bun run build
 

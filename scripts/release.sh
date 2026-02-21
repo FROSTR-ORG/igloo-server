@@ -28,8 +28,12 @@ echo "📥 Pulling latest changes..."
 git pull origin dev
 
 # Run tests and build
-echo "🔨 Building project..."
+echo "🧪 Running type checks and backend tests..."
 bun install
+bun run typecheck
+bun run test:unit
+
+echo "🔨 Building project..."
 bun run build
 
 echo "✅ Testing server startup..."

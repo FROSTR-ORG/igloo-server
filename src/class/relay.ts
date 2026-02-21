@@ -152,6 +152,12 @@ class RelaySession {
 
       switch (verb) {
         case 'REQ':
+          // Normalize nostr-tools 2.x format where filters are wrapped in an extra array:
+          // New format: ["REQ", "sub_id", [{filter1}, {filter2}]]
+          // NIP-01 format: ["REQ", "sub_id", {filter1}, {filter2}]
+          if (payload.length === 2 && Array.isArray(payload[1])) {
+            payload = [payload[0], ...payload[1]]
+          }
           const [ id, ...filters ] = sub_schema.parse(payload)
           return this._onreq(id, filters)
         case 'EVENT':
@@ -185,7 +191,8 @@ class RelaySession {
     this.log.debug('event:', event)
 
     if (!Nostr.verify_event(event)) {
-      this.log.debug('event failed validation:', event)
+      this.log.info('event failed validation (id=' + event.id.slice(0, 8) + ' kind=' + event.kind + ')')
+      this.log.debug('event details:', event)
       this.send([ 'OK', event.id, false, 'event failed validation' ])
       return
     }
@@ -210,7 +217,7 @@ class RelaySession {
     this.log.client('received subscription request:', sub_id)
     this.log.debug('filters:', filters)
     // Add the subscription to our set.
-    this.addSub(sub_id, filters)
+    this.addSub(sub_id, ...filters)
     // For each filter:
     for (const filter of filters) {
       // Set the limit count, if any.
@@ -254,7 +261,7 @@ class RelaySession {
   }
 
   remSub (subId : string) {
-    this.relay.subs.delete(subId)
+    this.relay.subs.delete(`${this.sid}/${subId}`)
     this._subs.delete(subId)
   }
 

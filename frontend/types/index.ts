@@ -124,6 +124,7 @@ export interface UpdateInfo {
   updateAvailable: boolean;
   releaseUrl?: string;
   checkedAt?: string;
+  source?: 'github-release' | 'github-tags';
   error?: string;
 }
 
