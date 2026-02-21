@@ -73,13 +73,9 @@ for i in {1..5}; do
     fi
 done
 
-if [ "$SERVER_HEALTHY" = false ]; then
-    echo "❌ Server failed to respond after 5 attempts"
-fi
-
 # Cleanup will be handled by trap, just check if we should fail
 if [ "$SERVER_HEALTHY" = false ]; then
-    echo "❌ Server startup test failed - cannot proceed with release"
+    echo "❌ Server failed to respond after 5 attempts - cannot proceed with release"
     exit 1
 fi
 

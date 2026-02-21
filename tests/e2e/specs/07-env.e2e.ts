@@ -74,6 +74,20 @@ test.describe('Env / credentials – /api/env', () => {
     await api.dispose();
   });
 
+  test('POST /api/env – empty RELAYS returns 400', async () => {
+    const api = await request.newContext({ baseURL: baseUrl });
+    const res = await api.post('/api/env', {
+      headers: { 'X-Session-ID': sessionId },
+      data: {
+        GROUP_CRED: state.groupCredential,
+        SHARE_CRED: state.shareCredentials[0],
+        RELAYS: [],
+      },
+    });
+    expect(res.status()).toBe(400);
+    await api.dispose();
+  });
+
   test('POST /api/env without auth returns 401', async () => {
     const api = await request.newContext({ baseURL: baseUrl });
     const res = await api.post('/api/env', {

@@ -6,6 +6,7 @@
  */
 
 import { test, expect } from '@playwright/test';
+import { loginAs } from '../helpers.js';
 import { loadState } from '../state.js';
 
 const state = loadState();
@@ -16,7 +17,7 @@ test.describe('UI – Login page', () => {
     await page.goto(baseUrl);
     // The SPA should show either the login form or onboarding
     // Since onboarding is complete, we expect the login form
-    await expect(page).toHaveURL(baseUrl + '/');
+    await expect(page).toHaveURL(new URL('/', baseUrl).toString());
     // Login form has username + password inputs
     await expect(page.locator('input[type="text"], input[id*="user"], input[name*="user"]').first()).toBeVisible({
       timeout: 10_000,
@@ -26,17 +27,7 @@ test.describe('UI – Login page', () => {
 
   test('login form accepts credentials and navigates to dashboard', async ({ page }) => {
     await page.goto(baseUrl);
-
-    // Fill in the login form
-    const usernameField = page.locator('input[type="text"], input[id*="user"], input[name*="user"]').first();
-    const passwordField = page.locator('input[type="password"]').first();
-
-    await usernameField.fill(adminUsername);
-    await passwordField.fill(adminPassword);
-
-    // Submit (button with type=submit or labeled "Login"/"Sign in")
-    const submitBtn = page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")').first();
-    await submitBtn.click();
+    await loginAs(page, adminUsername, adminPassword);
 
     // After login we should see the main app tabs
     await expect(page.locator('[role="tab"], .tab, button:has-text("Signer"), button:has-text("Configure")').first()).toBeVisible({
@@ -49,16 +40,7 @@ test.describe('UI – Authenticated app', () => {
   // Log in once per test block using page fixtures (each test gets a fresh page)
   test.beforeEach(async ({ page }) => {
     await page.goto(baseUrl);
-
-    const usernameField = page.locator('input[type="text"], input[id*="user"], input[name*="user"]').first();
-    const passwordField = page.locator('input[type="password"]').first();
-    await usernameField.fill(adminUsername);
-    await passwordField.fill(adminPassword);
-    const submitBtn = page.locator('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")').first();
-    await submitBtn.click();
-
-    // Wait for the app to load
-    await page.waitForLoadState('networkidle');
+    await loginAs(page, adminUsername, adminPassword);
   });
 
   test('Signer tab is visible and shows node status indicator', async ({ page }) => {

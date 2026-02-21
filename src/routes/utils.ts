@@ -32,6 +32,11 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
   return hex.toLowerCase();
 }
 
+function isLoopbackRelayHost(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[(.*)\]$/, '$1');
+  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+}
+
 // Helper function to get valid relay URLs
 export function getValidRelays(
   envRelays?: string,
@@ -66,7 +71,7 @@ export function getValidRelays(
         const url = new URL(relay);
         // Exclude localhost relays to avoid conflicts with our server
         // (unless explicitly allowed, e.g. for testing)
-        if (!allowLocalhost && (url.hostname === 'localhost' || url.hostname === '127.0.0.1')) {
+        if (!allowLocalhost && isLoopbackRelayHost(url.hostname)) {
           console.warn(`Excluding localhost relay to avoid conflicts: ${relay}`);
           return false;
         }
@@ -797,14 +802,16 @@ export function validateRelayUrls(relays: any): { valid: boolean; urls?: string[
 export function normalizeRelayListForEcho(relays: any): string[] | undefined {
   const validation = validateRelayUrls(relays);
   if (!validation.valid || !validation.urls || validation.urls.length === 0) return undefined;
+  const allowLocalhost = process.env['ALLOW_LOCALHOST_RELAY'] === 'true';
   const filtered = validation.urls
     .map((r) => r.trim())
     .filter((r) => r.length > 0)
     .filter((r) => {
       try {
         const u = new URL(r);
-        return (u.protocol === 'ws:' || u.protocol === 'wss:') &&
-               u.hostname !== 'localhost' && u.hostname !== '127.0.0.1' && u.hostname !== '::1';
+        if (u.protocol !== 'ws:' && u.protocol !== 'wss:') return false;
+        if (!allowLocalhost && isLoopbackRelayHost(u.hostname)) return false;
+        return true;
       } catch {
         return false;
       }

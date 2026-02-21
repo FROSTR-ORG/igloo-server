@@ -137,4 +137,14 @@ test.describe('NIP-04 – /api/nip04', () => {
     expect(res.status()).toBe(400);
     await api.dispose();
   });
+
+  test('missing content returns 400', async () => {
+    const api = await request.newContext({ baseURL: baseUrl });
+    const res = await api.post('/api/nip04/encrypt', {
+      headers: { 'X-Session-ID': sessionId },
+      data: { peer_pubkey: groupPubkeyHex },
+    });
+    expect(res.status()).toBe(400);
+    await api.dispose();
+  });
 });

@@ -38,6 +38,7 @@ test.describe('Status – /api/status', () => {
     const res = await api.get('/api/status', {
       headers: { 'X-Session-ID': sessionId },
     });
+    expect(res.status()).toBe(200);
     const body = await res.json();
     expect(body.health).toHaveProperty('isConnected');
     expect(typeof body.health.isConnected).toBe('boolean');

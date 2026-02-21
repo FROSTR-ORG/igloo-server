@@ -66,8 +66,21 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
   const tmpDir = state.tmpDir || path.dirname(resolvedStateFile);
   if (tmpDir) {
     try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-      console.log('[teardown] Removed temp dir', tmpDir);
+      const resolvedTmp = path.resolve(tmpDir);
+      const tempRoot = path.resolve(os.tmpdir());
+      const relToTempRoot = path.relative(tempRoot, resolvedTmp);
+      const isInsideTemp =
+        relToTempRoot.length > 0 &&
+        relToTempRoot !== '.' &&
+        !relToTempRoot.startsWith('..') &&
+        !path.isAbsolute(relToTempRoot);
+
+      if (!isInsideTemp) {
+        console.warn('[teardown] Skipping temp dir removal outside os.tmpdir():', resolvedTmp);
+      } else {
+        fs.rmSync(resolvedTmp, { recursive: true, force: true });
+        console.log('[teardown] Removed temp dir', resolvedTmp);
+      }
     } catch (err) {
       console.warn('[teardown] Could not remove temp dir:', err);
     }

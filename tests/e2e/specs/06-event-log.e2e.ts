@@ -34,6 +34,7 @@ test.describe('Event log – /api/event-log', () => {
     const res = await api.get('/api/event-log', {
       headers: { 'X-Session-ID': sessionId },
     });
+    expect(res.status()).toBe(200);
     const body = await res.json();
 
     // If there are entries from sign tests, validate their shape

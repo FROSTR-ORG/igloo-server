@@ -31,13 +31,11 @@ const DB_PATH = path.join(TMP_DIR, 'db');
 const SERVER_LOG = path.join(TMP_DIR, 'server.log');
 const COSIGNER_LOG = path.join(TMP_DIR, 'cosigner.log');
 
-// A fixed, deterministic 32-byte secp256k1 private key (well below curve order)
-const TEST_NSEC_HEX = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
-
-// Meets igloo-server password rules: upper + lower + digit + special(@), no sequences
-const ADMIN_SECRET = 'SmokeTestAdmin1';
-const ADMIN_USERNAME = 'testadmin';
-const ADMIN_PASSWORD = 'T3stPass@9';
+// Defaults are safe for local CI, but callers should override via environment variables.
+const TEST_NSEC_HEX = process.env.TEST_NSEC_HEX ?? 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+const ADMIN_SECRET = process.env.ADMIN_SECRET ?? 'SmokeTestAdmin1';
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? 'testadmin';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'T3stPass@9';
 
 type SetupState = {
   port: number;
@@ -77,6 +75,8 @@ function terminateProcess(proc: ChildProcess | null, label: string) {
   }
 }
 
+// Port probing is inherently TOCTOU: we can only test availability now, not reserve it
+// forever. For CI smoke tests this low-probability race is acceptable.
 function canBindPort(port: number, host: string): Promise<boolean> {
   return new Promise(resolve => {
     const srv = net.createServer();
@@ -87,6 +87,8 @@ function canBindPort(port: number, host: string): Promise<boolean> {
   });
 }
 
+// Reserve an ephemeral port by binding to :0 and immediately closing; another process
+// could still claim it before spawn, but this is sufficient for smoke test setup.
 function reserveRandomPort(host: string): Promise<number> {
   return new Promise((resolve, reject) => {
     const srv = net.createServer();
@@ -99,12 +101,14 @@ function reserveRandomPort(host: string): Promise<number> {
   });
 }
 
+// Prefer the requested port, but fall back when busy. This does not eliminate the
+// bind race between probing and process startup.
 async function resolvePort(host: string, preferredPort: number): Promise<number> {
   if (await canBindPort(preferredPort, host)) {
     return preferredPort;
   }
   const fallbackPort = await reserveRandomPort(host);
-  console.warn(`[setup] Port ${preferredPort} in use, falling back to ${fallbackPort}`);
+  console.warn(`[setup] Port ${preferredPort} in use, falling back to ${fallbackPort} (probe-close race still applies)`);
   return fallbackPort;
 }
 
@@ -115,11 +119,18 @@ async function pollUntil(
   label = 'condition',
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
+  let consecutiveFailures = 0;
   while (Date.now() < deadline) {
     try {
       if (await fn()) return;
-    } catch {
-      // ignore and keep polling
+      consecutiveFailures = 0;
+    } catch (error) {
+      consecutiveFailures += 1;
+      const nearingDeadline = Date.now() + intervalMs >= deadline;
+      if (consecutiveFailures === 3 || nearingDeadline) {
+        const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+        console.warn(`[setup] pollUntil(${label}) transient failure x${consecutiveFailures}: ${detail}`);
+      }
     }
     await sleep(intervalMs);
   }
@@ -145,15 +156,19 @@ function spawnDetached(
   logFile: string,
 ): ChildProcess {
   const out = fs.openSync(logFile, 'a');
-  const proc = spawn(cmd, args, {
-    env: { ...process.env, ...env },
-    detached: false,
-    stdio: ['ignore', out, out],
-  });
-  proc.on('error', err => {
-    fs.appendFileSync(logFile, `\n[spawn error] ${err.message}\n`);
-  });
-  return proc;
+  try {
+    const proc = spawn(cmd, args, {
+      env: { ...process.env, ...env },
+      detached: false,
+      stdio: ['ignore', out, out],
+    });
+    proc.on('error', err => {
+      fs.appendFileSync(logFile, `\n[spawn error] ${err.message}\n`);
+    });
+    return proc;
+  } finally {
+    fs.closeSync(out);
+  }
 }
 
 export default async function globalSetup(_config: FullConfig): Promise<void> {
@@ -305,6 +320,12 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     const TEST_MSG = 'a'.repeat(64);
     let signOk = false;
     for (let attempt = 1; attempt <= 5; attempt++) {
+      if (cosignerProcess && cosignerProcess.exitCode !== null) {
+        const cosLog = fs.existsSync(COSIGNER_LOG) ? fs.readFileSync(COSIGNER_LOG, 'utf8') : '(empty)';
+        throw new Error(
+          `Co-signer exited early with code ${cosignerProcess.exitCode} before signing was ready.\nCo-signer log:\n${cosLog}`
+        );
+      }
       await sleep(3000);
       const sr = await api.post('/api/sign', {
         headers: { 'X-Session-ID': sessionId },

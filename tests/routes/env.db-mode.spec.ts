@@ -104,7 +104,6 @@ describe('DB-mode /api/env behavior', () => {
 
     const out = runRouteScript(script);
     expect(out.hasStamp).toBeTrue();
-    // Status may be 200 on success or 500 if restart failed; accept either
-    expect([200, 500]).toContain(out.status);
+    expect(out.status).toBe(200);
   }, { timeout: 10000 });
 });

@@ -64,6 +64,7 @@ data/.session-secret
 test-*.sh
 debug-*.js
 verify-*.md
+test-results/
 .DS_Store
 
 # LLM files

@@ -14,7 +14,7 @@ if (!groupCred || !shareCred || !relayUrl) {
 const {
   createBifrostNode,
   connectNode,
-} = await import('../../node_modules/@frostr/igloo-core/dist/index.js');
+} = await import('@frostr/igloo-core');
 
 let node;
 try {
@@ -44,7 +44,8 @@ try {
   console.log('[cosigner] Connecting to relay:', relayUrl);
   await connectNode(node);
   console.log('[cosigner] Connected. Pubkey:', node.pubkey);
-  console.log('[cosigner] Filter:', JSON.stringify(node.client?._filter ?? node.client?.filter ?? '?'));
+  // `_filter` is a private fallback for older client internals.
+  console.log('[cosigner] Filter:', JSON.stringify(node.client?.filter ?? node.client?._filter ?? '?'));
 
 } catch (err) {
   console.error('[cosigner] Failed to start:', err.message ?? err);

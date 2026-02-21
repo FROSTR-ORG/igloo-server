@@ -32,11 +32,11 @@ npx playwright show-report
 Prerequisites:
 - `bun run build` must have been run at least once so `static/app.js` exists (the UI tests load the SPA).
 - `@playwright/test` and Chromium browser installed (`npx playwright install chromium`).
-- No other process listening on port 18002.
+- Keep port 18002 free when possible. `tests/e2e/global-setup.ts` calls `resolvePort()` and will usually fall back to a random free port if 18002 is busy, but hard-coded references can still break if the preferred port is unavailable.
 
 ## File Structure
 
-```
+```text
 tests/e2e/
 ├── global-setup.ts      # Starts server + co-signer, completes onboarding, writes state.json
 ├── global-teardown.ts   # SIGTERMs both processes, deletes temp dir
@@ -90,7 +90,7 @@ The server is spawned via `spawnDetached('bun', ['run', 'src/server.ts'], env, l
 
 ### 3. Complete onboarding
 
-```
+```text
 POST /api/onboarding/validate-admin   (Bearer ADMIN_SECRET)
 POST /api/onboarding/setup            (creates admin user with username + password)
 POST /api/auth/login                  → sessionId
@@ -98,7 +98,7 @@ POST /api/auth/login                  → sessionId
 
 ### 4. Set FROSTR credentials
 
-```
+```text
 POST /api/user/credentials  { group_cred, share_cred: shareCredentials[0], relays: ['ws://127.0.0.1:18002'] }
 ```
 
@@ -331,7 +331,7 @@ Without this fix, the server's relay would reject all subscriptions from the bif
 
 Each run creates a fresh temp directory at `$TMPDIR/igloo-smoke-test/` (deleted by teardown):
 
-```
+```text
 igloo-smoke-test/
 ├── db/          # SQLite database files (igloo.db, .session-secret)
 ├── state.json   # Shared test state (pids, session, credentials, etc.)

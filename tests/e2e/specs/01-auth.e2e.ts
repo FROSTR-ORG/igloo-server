@@ -100,6 +100,7 @@ test.describe('Auth – /api/auth', () => {
     const loginRes = await api.post('/api/auth/login', {
       data: { username: adminUsername, password: adminPassword },
     });
+    expect(loginRes.status()).toBe(200);
     const { sessionId: tempSession } = await loginRes.json();
 
     const logoutRes = await api.post('/api/auth/logout', {

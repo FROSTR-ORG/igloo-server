@@ -276,6 +276,21 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const env = await readEnvFile();
             const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
 
+            // DB mode privilege gate for env writes (no legacy fallback):
+            // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
+            // - allow when the authenticated DB user has role=admin.
+            // validateAdminSecret() returns false when the header is missing; there is no bypass.
+            const authHeader = req.headers.get('Authorization');
+            const bearerToken = authHeader && /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '') : undefined;
+            const adminSecret = req.headers.get('X-Admin-Secret') ?? bearerToken;
+            const isAdminSecret = await validateAdminSecret(adminSecret ?? undefined);
+            if (!isAdminSecret && !isRoleAdmin) {
+              return Response.json(
+                { error: 'Admin privileges required for environment modifications' },
+                { status: 403, headers }
+              );
+            }
+
             if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
               const relayValidation = validateRelayUrls(body.RELAYS);
               if (!relayValidation.valid) {
@@ -283,31 +298,18 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               }
             }
 
-            if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED) {
+            if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED !== undefined) {
               const groupValidation = validateGroup(body.GROUP_CRED);
               if (!groupValidation.isValid) {
                 return Response.json({ success: false, error: 'Invalid GROUP_CRED' }, { status: 400, headers });
               }
             }
 
-            if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED) {
+            if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED !== undefined) {
               const shareValidation = validateShare(body.SHARE_CRED);
               if (!shareValidation.isValid) {
                 return Response.json({ success: false, error: 'Invalid SHARE_CRED' }, { status: 400, headers });
               }
-            }
-
-            // DB mode privilege gate for env writes (no legacy fallback):
-            // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
-            // - allow when the authenticated DB user has role=admin.
-            // validateAdminSecret() returns false when the header is missing; there is no bypass.
-            const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-            const isAdminSecret = await validateAdminSecret(adminSecret);
-            if (!isAdminSecret && !isRoleAdmin) {
-              return Response.json(
-                { error: 'Admin privileges required for environment modifications' },
-                { status: 403, headers }
-              );
             }
 
             for (const key of validKeys) {
@@ -361,6 +363,20 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const relayValidation = validateRelayUrls(body.RELAYS);
             if (!relayValidation.valid) {
               return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
+            }
+          }
+
+          if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED !== undefined) {
+            const groupValidation = validateGroup(body.GROUP_CRED);
+            if (!groupValidation.isValid) {
+              return Response.json({ success: false, error: 'Invalid GROUP_CRED' }, { status: 400, headers });
+            }
+          }
+
+          if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED !== undefined) {
+            const shareValidation = validateShare(body.SHARE_CRED);
+            if (!shareValidation.isValid) {
+              return Response.json({ success: false, error: 'Invalid SHARE_CRED' }, { status: 400, headers });
             }
           }
 
@@ -643,9 +659,10 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             );
           }
           if (!HEADLESS) {
-            const adminSecret = req.headers.get('X-Admin-Secret') ??
-              req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
-            const isAdminSecret = await validateAdminSecret(adminSecret);
+            const authHeader = req.headers.get('Authorization');
+            const bearerToken = authHeader && /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '') : undefined;
+            const adminSecret = req.headers.get('X-Admin-Secret') ?? bearerToken;
+            const isAdminSecret = await validateAdminSecret(adminSecret ?? undefined);
             if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for deleting environment variables' },

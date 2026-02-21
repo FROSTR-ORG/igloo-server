@@ -1,4 +1,5 @@
 import fs from 'fs';
+import { z } from 'zod';
 
 export interface SmokeTestState {
   port: number;
@@ -16,6 +17,27 @@ export interface SmokeTestState {
   adminPassword: string;
   adminSecret: string;
 }
+
+/**
+ * Zod schema for SmokeTestState persisted by global-setup.
+ * Validates shape and types before returning from loadState.
+ */
+const smokeTestStateSchema = z.object({
+  port: z.number().int().positive(),
+  baseUrl: z.string().min(1, 'baseUrl must be non-empty'),
+  tmpDir: z.string(),
+  serverPid: z.number().int().nonnegative(),
+  cosignerPid: z.number().int().nonnegative(),
+  sessionId: z.string().min(1, 'sessionId must be non-empty'),
+  apiKey: z.string().nullable(),
+  apiKeyId: z.string().nullable(),
+  groupCredential: z.string(),
+  shareCredentials: z.array(z.string()),
+  groupPubkeyHex: z.string(),
+  adminUsername: z.string(),
+  adminPassword: z.string(),
+  adminSecret: z.string(),
+});
 
 const STUB: SmokeTestState = {
   port: 18002,
@@ -44,8 +66,17 @@ export function loadState(): SmokeTestState {
   const stateFile = process.env.SMOKE_STATE_FILE;
   if (!stateFile) return STUB;
   try {
-    return JSON.parse(fs.readFileSync(stateFile, 'utf8')) as SmokeTestState;
-  } catch {
-    return STUB;
+    const parsed: unknown = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
+    const result = smokeTestStateSchema.safeParse(parsed);
+    if (!result.success) {
+      const issues = result.error.issues
+        .map(i => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new Error(`validation failed: ${issues}`);
+    }
+    return result.data as SmokeTestState;
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Invalid smoke test state in ${stateFile}: ${detail}`);
   }
 }
