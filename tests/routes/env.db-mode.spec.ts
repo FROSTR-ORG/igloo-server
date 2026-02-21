@@ -77,11 +77,15 @@ describe('DB-mode /api/env behavior', () => {
         updateNode: () => {}
       };
 
+      // Generate real FROSTR credentials so validateGroup/validateShare pass
+      const { generateKeysetWithSecret } = await import(root + 'node_modules/@frostr/igloo-core/dist/index.js');
+      const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+
       const headers = new Headers({
         'Content-Type': 'application/json',
         'X-Admin-Secret': 'test-admin-secret'
       });
-      const body = { GROUP_CRED: 'group-cred-stub', SHARE_CRED: 'share-cred-stub' };
+      const body = { GROUP_CRED: groupCredential, SHARE_CRED: shareCredentials[0] };
       const req = new Request('http://localhost/api/env', { method: 'POST', headers, body: JSON.stringify(body) });
 
       const res = await handleEnvRoute(req, new URL(req.url), context, { authenticated: true, userId: 2 });
