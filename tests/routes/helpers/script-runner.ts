@@ -89,7 +89,7 @@ export function runRouteScript<T = any>(code: string, env: Record<string, string
 
     const marker = '@@RESULT@@';
     const stdout = result.stdout.toString().trim();
-    const line = [...stdout.split('\n')].reverse().find(l => l.includes(marker));
+    const line = stdout.split('\n').reverse().find(l => l.includes(marker));
     if (!line) {
       throw new Error(`route script missing result marker: ${stdout}`);
     }

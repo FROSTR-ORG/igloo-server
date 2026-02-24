@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
+const TEST_KEYSET_SECRET =
+  process.env.TEST_KEYSET_SECRET ??
+  'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
 describe('DB-mode /api/env behavior', () => {
   test('rejects non-admin session without ADMIN_SECRET (403)', () => {
     const script = `
@@ -83,7 +87,7 @@ describe('DB-mode /api/env behavior', () => {
       const requireFromRoot = createRequire(root + 'package.json');
       const iglooCorePath = requireFromRoot.resolve('@frostr/igloo-core');
       const { generateKeysetWithSecret } = await import(iglooCorePath);
-      const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
+      const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, ${JSON.stringify(TEST_KEYSET_SECRET)});
 
       const headers = new Headers({
         'Content-Type': 'application/json',

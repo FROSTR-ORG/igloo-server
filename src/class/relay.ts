@@ -155,10 +155,20 @@ class RelaySession {
           // Normalize nostr-tools 2.x format where filters are wrapped in an extra array:
           // New format: ["REQ", "sub_id", [{filter1}, {filter2}]]
           // NIP-01 format: ["REQ", "sub_id", {filter1}, {filter2}]
+          if (payload.length === 2 && Array.isArray(payload[1]) && payload[1].length === 0) {
+            this.log.info('ignoring REQ with empty filter array')
+            this.send(['NOTICE', '', 'REQ requires at least one filter'])
+            return
+          }
           if (payload.length === 2 && Array.isArray(payload[1])) {
             payload = [payload[0], ...payload[1]]
           }
           const [ id, ...filters ] = sub_schema.parse(payload)
+          if (filters.length === 0) {
+            this.log.info('ignoring REQ with no filters')
+            this.send(['NOTICE', '', 'REQ requires at least one filter'])
+            return
+          }
           return this._onreq(id, filters)
         case 'EVENT':
           const event = Nostr.parse_event(payload.at(0), this.relay.config.debug)
@@ -191,8 +201,7 @@ class RelaySession {
     this.log.debug('event:', event)
 
     if (!Nostr.verify_event(event)) {
-      this.log.info('event failed validation (id=' + event.id.slice(0, 8) + ' kind=' + event.kind + ')')
-      this.log.debug('event details:', event)
+      this.log.info(`event failed validation (id=${event.id.slice(0, 8)} kind=${event.kind})`)
       this.send([ 'OK', event.id, false, 'event failed validation' ])
       return
     }

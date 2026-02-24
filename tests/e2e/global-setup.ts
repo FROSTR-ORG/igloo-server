@@ -33,7 +33,7 @@ const SERVER_LOG = path.join(TMP_DIR, 'server.log');
 const COSIGNER_LOG = path.join(TMP_DIR, 'cosigner.log');
 
 const smokeDefaultsPath = path.resolve('tests/e2e/smoke-test-defaults.json');
-const smokeDefaultsRaw = JSON.parse(fs.readFileSync(smokeDefaultsPath, 'utf8'));
+const smokeDefaultsRaw: unknown = JSON.parse(fs.readFileSync(smokeDefaultsPath, 'utf8'));
 if (typeof smokeDefaultsRaw !== 'object' || smokeDefaultsRaw === null) {
   throw new Error(`smoke-test-defaults.json must be a JSON object, got ${typeof smokeDefaultsRaw}`);
 }

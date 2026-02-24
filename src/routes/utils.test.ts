@@ -49,6 +49,13 @@ describe('getValidRelays', () => {
       expect(getValidRelays('["ws://localhost:18002"]', { fallbackToDefault: false })).toEqual([]);
     });
   });
+
+  it('keeps localhost relay when localhost relays are explicitly allowed', () => {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+      expect(getValidRelays('["ws://127.0.0.1:18002"]', { fallbackToDefault: false }))
+        .toEqual(['ws://127.0.0.1:18002']);
+    });
+  });
 });
 
 describe('normalizeRelayListForEcho', () => {
