@@ -16,6 +16,7 @@ const EVENT_ID_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 const EVENT_ID_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 test.describe('Sign – /api/sign', () => {
+  // Explicit per-suite timeout for signing flows; global timeout is also 30_000.
   test.setTimeout(30_000);
 
   test('returns 401 without auth', async () => {

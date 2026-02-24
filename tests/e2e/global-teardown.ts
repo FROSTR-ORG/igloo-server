@@ -33,6 +33,7 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     stateFile && fs.existsSync(stateFile)
       ? stateFile
       : findLatestStateFile();
+  console.log('[teardown] Resolved state file:', resolvedStateFile ?? '(none)');
 
   if (!resolvedStateFile || !fs.existsSync(resolvedStateFile)) {
     console.warn('[teardown] No state file found – nothing to clean up.');

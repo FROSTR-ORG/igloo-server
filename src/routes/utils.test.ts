@@ -31,7 +31,20 @@ describe('getValidRelays', () => {
       else process.env.ALLOW_LOCALHOST_RELAY = previous;
     }
   });
+  
+  it('filters 127.0.0.0/8 localhost relay range when localhost relays are disallowed', () => {
+    const previous = process.env.ALLOW_LOCALHOST_RELAY;
+    process.env.ALLOW_LOCALHOST_RELAY = 'false';
+    try {
+      expect(getValidRelays('["ws://127.0.0.2:18002"]', { fallbackToDefault: false })).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
+      else process.env.ALLOW_LOCALHOST_RELAY = previous;
+    }
+  });
+});
 
+describe('normalizeRelayListForEcho', () => {
   it('keeps localhost relay in echo list when explicitly allowed', () => {
     const previous = process.env.ALLOW_LOCALHOST_RELAY;
     process.env.ALLOW_LOCALHOST_RELAY = 'true';

@@ -34,7 +34,11 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
 
 function isLoopbackRelayHost(hostname: string): boolean {
   const normalized = hostname.replace(/^\[(.*)\]$/, '$1');
-  return normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1';
+  if (normalized === 'localhost' || normalized === '::1') return true;
+  const octets = normalized.split('.');
+  if (octets.length !== 4) return false;
+  if (octets[0] !== '127') return false;
+  return octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255);
 }
 
 // Helper function to get valid relay URLs

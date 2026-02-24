@@ -16,6 +16,28 @@ const {
   connectNode,
 } = await import('@frostr/igloo-core');
 
+/**
+ * Serializes a value to JSON, replacing circular refs with "[Circular]" to avoid
+ * "Converting circular structure to JSON" TypeError from bubbling into outer catch.
+ * @param {unknown} obj - Value to serialize
+ * @returns {string} JSON string or fallback representation
+ */
+function safeStringify(obj) {
+  const seen = new WeakSet();
+  function replacer(_key, value) {
+    if (typeof value === 'object' && value !== null) {
+      if (seen.has(value)) return '[Circular]';
+      seen.add(value);
+    }
+    return value;
+  }
+  try {
+    return JSON.stringify(obj, replacer);
+  } catch (e) {
+    return '[Non-serializable]';
+  }
+}
+
 let node;
 try {
   node = createBifrostNode({
@@ -44,8 +66,17 @@ try {
   console.log('[cosigner] Connecting to relay:', relayUrl);
   await connectNode(node);
   console.log('[cosigner] Connected. Pubkey:', node.pubkey);
-  // `_filter` is a private fallback for older client internals.
-  console.log('[cosigner] Filter:', JSON.stringify(node.client?.filter ?? node.client?._filter ?? '?'));
+  const filter = node.client?.filter;
+  const privateFilter = node.client?._filter;
+  if (filter !== undefined) {
+    console.log('[cosigner] Filter (public):', safeStringify(filter));
+  } else if (privateFilter !== undefined) {
+    // TODO: Remove private fallback once @frostr/igloo-core exposes a stable public filter accessor.
+    console.warn('[cosigner] Filter fallback in use: node.client._filter (private internals)');
+    console.log('[cosigner] Filter (private fallback):', safeStringify(privateFilter));
+  } else {
+    console.warn('[cosigner] Filter unavailable on node.client (public and private fields missing)');
+  }
 
 } catch (err) {
   console.error('[cosigner] Failed to start:', err.message ?? err);

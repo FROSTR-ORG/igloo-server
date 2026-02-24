@@ -18,7 +18,6 @@ export default defineConfig({
   ],
 
   use: {
-    baseURL: 'http://localhost:18002',
     trace: 'on-first-retry',
     // Longer default for operations that wait on bifrost relay round-trips
     actionTimeout: 15_000,

@@ -26,7 +26,7 @@ jobs:
       run: bun run tsc --noEmit
 
     - name: Run route tests
-      run: bun test tests/routes
+      run: bun run test:unit
 
     - name: Build frontend
       run: bun run build

@@ -74,7 +74,7 @@ export function loadState(): SmokeTestState {
         .join('; ');
       throw new Error(`validation failed: ${issues}`);
     }
-    return result.data as SmokeTestState;
+    return result.data;
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid smoke test state in ${stateFile}: ${detail}`);

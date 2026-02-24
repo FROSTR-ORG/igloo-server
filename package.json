@@ -36,7 +36,7 @@
     "test:unit": "bun test --max-concurrency=1 src tests/routes",
     "test:e2e:smoke": "npx playwright test --project=api tests/e2e/specs/01-auth.e2e.ts tests/e2e/specs/04-sign.e2e.ts tests/e2e/specs/05-admin.e2e.ts",
     "test:e2e": "npx playwright test",
-    "test:e2e:nightly": "npx playwright test",
+    "test:e2e:nightly": "npx playwright test --project=api --project=ui --retries=2 --timeout=60000",
     "test:e2e:ui": "npx playwright test --project=ui",
     "test:e2e:api": "npx playwright test --project=api",
     "test:e2e:report": "npx playwright show-report",
@@ -62,7 +62,8 @@
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "tailwind-merge": "^3.3.1",
-    "yaml": "^2.8.1"
+    "yaml": "^2.8.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",

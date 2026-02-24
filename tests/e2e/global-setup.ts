@@ -206,10 +206,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     writeState(state);
 
     console.log('[setup] Generating FROSTR credentials...');
-    const { generateKeysetWithSecret, decodeGroup } = await import(
-      // @ts-ignore
-      '../../node_modules/@frostr/igloo-core/dist/index.js'
-    ) as {
+    const { generateKeysetWithSecret, decodeGroup } = await import('@frostr/igloo-core') as {
       generateKeysetWithSecret: (t: number, n: number, sk: string) => { groupCredential: string; shareCredentials: string[] };
       decodeGroup: (g: string) => { group_pk: string; threshold: number; commits: unknown[] };
     };

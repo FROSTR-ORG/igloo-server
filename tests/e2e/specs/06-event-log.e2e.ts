@@ -36,14 +36,12 @@ test.describe('Event log – /api/event-log', () => {
     });
     expect(res.status()).toBe(200);
     const body = await res.json();
-
-    // If there are entries from sign tests, validate their shape
-    if (body.entries.length > 0) {
-      const entry = body.entries[0];
-      expect(entry).toHaveProperty('type');
-      expect(entry).toHaveProperty('message');
-      expect(entry).toHaveProperty('timestamp');
-    }
+    expect(Array.isArray(body.entries)).toBe(true);
+    expect(body.entries.length).toBeGreaterThan(0);
+    const entry = body.entries[0];
+    expect(entry).toHaveProperty('type');
+    expect(entry).toHaveProperty('message');
+    expect(entry).toHaveProperty('timestamp');
     await api.dispose();
   });
 

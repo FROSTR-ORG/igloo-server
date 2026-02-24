@@ -49,6 +49,7 @@ test.describe('Admin – API keys', () => {
       headers: { 'X-Session-ID': sessionId },
       data: { label: 'auth-test-key' },
     });
+    expect(createRes.status()).toBe(201);
     const { apiKey } = await createRes.json();
 
     // Use key to hit an auth-protected route (status is intentionally public).

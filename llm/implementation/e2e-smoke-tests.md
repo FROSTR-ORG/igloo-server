@@ -192,8 +192,8 @@ Uses `state.groupPubkeyHex` as the peer pubkey for encryption (the server encryp
 - 400 for non-hex message
 - 400 for message shorter than 32 bytes
 - 400 for missing body
-- Signs a 32-byte hex message; response contains `sig` and `pubkey`
-- Signs a full Nostr event object (with `id`, `content`, `kind`, `created_at`, `tags`)
+- Signs a 32-byte hex message; response contains `id` and `signature`
+- Signs a full Nostr event object (with `id`, `pubkey`, `content`, `kind`, `created_at`, `tags`)
 - Signs with API key auth (`X-API-Key` header) — confirms DB-backed API keys work for signing
 - 400 for event with invalid pubkey
 

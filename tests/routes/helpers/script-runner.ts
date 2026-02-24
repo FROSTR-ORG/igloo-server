@@ -32,7 +32,12 @@ const ISOLATED_ENV_PREFIXES = [
 ];
 
 function buildScriptEnv(overrides: Record<string, string>): Record<string, string> {
-  const nextEnv: Record<string, string> = { ...process.env } as Record<string, string>;
+  const nextEnv: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (typeof value === 'string') {
+      nextEnv[key] = value;
+    }
+  }
 
   for (const key of ISOLATED_ENV_KEYS) {
     delete nextEnv[key];

@@ -597,6 +597,7 @@ const PeerList: React.FC<PeerListProps> = ({
         className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors gap-2 sm:gap-0"
         onClick={handleToggle}
         role="button"
+        aria-expanded={isExpanded}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

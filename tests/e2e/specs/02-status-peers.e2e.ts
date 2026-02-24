@@ -65,7 +65,7 @@ test.describe('Peers – /api/peers', () => {
     const body = await res.json();
     expect(body).toHaveProperty('peers');
     expect(Array.isArray(body.peers)).toBe(true);
-    // 2-of-3 keyset: 2 remote peers (self filtered out)
+    // 2-of-2 keyset: 1 remote peer (self filtered out)
     expect(body.peers.length).toBeGreaterThanOrEqual(1);
     expect(typeof body.total).toBe('number');
     expect(typeof body.online).toBe('number');
