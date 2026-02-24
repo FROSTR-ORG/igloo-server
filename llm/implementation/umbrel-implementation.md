@@ -66,7 +66,7 @@ These values are set in the store compose and expected by the UI flow:
 
 ## Operational Notes
 - Healthcheck uses `curl http://localhost:8002/api/status` with retries and start period.
-- The Umbrel store `docker-compose.yml` intentionally uses the `:umbrel-dev` tag pinned to a digest (e.g. `ghcr.io/frostr-org/igloo-server:umbrel-dev@sha256:...`). The tag stays `:umbrel-dev` on every release; only the digest is updated. This avoids Umbrel app-store tag-caching issues.
+- `igloo-server/docker-compose.yml` (Umbrel store artifact) intentionally uses the `:umbrel-dev` tag pinned to a digest (e.g. `ghcr.io/frostr-org/igloo-server:umbrel-dev@sha256:...`). The tag stays `:umbrel-dev` on every release; only the digest is updated. This avoids Umbrel app-store tag-caching issues.
 - `packages/umbrel/igloo/docker-compose.yml` is a sideload/dev bundle and also points at `:umbrel-dev` but without a pinned digest.
 
 ## Update Checklist for Future Releases

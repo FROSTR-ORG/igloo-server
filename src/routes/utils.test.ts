@@ -56,6 +56,23 @@ describe('getValidRelays', () => {
 });
 
 describe('normalizeRelayListForEcho', () => {
+  it('filters localhost relays when localhost relays are disallowed', () => {
+    const previous = process.env.ALLOW_LOCALHOST_RELAY;
+    process.env.ALLOW_LOCALHOST_RELAY = 'false';
+    try {
+      expect(
+        normalizeRelayListForEcho([
+          'ws://127.0.0.1:18002',
+          'ws://localhost:18002',
+          'wss://relay.example.com'
+        ])
+      ).toEqual(['wss://relay.example.com']);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
+      else process.env.ALLOW_LOCALHOST_RELAY = previous;
+    }
+  });
+
   it('keeps localhost relay in echo list when explicitly allowed', () => {
     const previous = process.env.ALLOW_LOCALHOST_RELAY;
     process.env.ALLOW_LOCALHOST_RELAY = 'true';

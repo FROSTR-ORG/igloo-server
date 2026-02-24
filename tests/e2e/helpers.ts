@@ -6,14 +6,11 @@ export async function loginAs(page: Page, username: string, password: string): P
     .locator('input[type="text"], input[id*="user"], input[name*="user"]')
     .first();
   const passwordField = page.locator('input[type="password"]').first();
-  const submitBtn = page
-    .locator('button[type="submit"], button:has-text("Login"), button:has-text("Sign in")')
-    .first();
+  const submitBtn = page.getByRole('button', { name: /login|sign in/i }).first();
 
   await usernameField.fill(username);
   await passwordField.fill(password);
   await submitBtn.click();
-  await page.waitForLoadState('networkidle');
   await expect(
     page.locator('[role="tab"], .tab, button:has-text("Signer"), button:has-text("Configure")').first(),
     'login failed: expected dashboard tabs after submit'

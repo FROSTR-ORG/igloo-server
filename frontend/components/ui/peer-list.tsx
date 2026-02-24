@@ -615,7 +615,15 @@ const PeerList: React.FC<PeerListProps> = ({
               position="right"
               width="w-64"
               focusable
-              trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+              trigger={(
+                <button
+                  type="button"
+                  aria-label="Peer list help"
+                  className="inline-flex items-center text-blue-400 cursor-pointer"
+                >
+                  <HelpCircle size={16} />
+                </button>
+              )}
               content={
                 <p>Shows the signing peers in your FROSTR group with online/offline status and ping latency. Use the refresh button to ping all peers and update their status.</p>
               }

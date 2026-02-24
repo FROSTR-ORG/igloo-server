@@ -1,7 +1,7 @@
 /**
  * Signing smoke tests – requires the igloo-cli co-signer launched in global setup.
  *
- * sign timeout: 15 s (FROSTR_SIGN_TIMEOUT env set in global-setup).
+ * sign timeout: 5 s (FROSTR_SIGN_TIMEOUT env set in global-setup for smoke runs).
  * Test timeout overridden to 30 s to accommodate the signing round-trip.
  */
 

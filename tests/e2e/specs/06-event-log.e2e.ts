@@ -5,8 +5,9 @@
 
 import { test, expect, request } from '@playwright/test';
 import { loadState } from '../state.js';
+import type { SmokeTestState } from '../state.js';
 
-const state = loadState();
+const state: SmokeTestState = loadState();
 const { baseUrl, sessionId } = state;
 
 test.describe('Event log – /api/event-log', () => {

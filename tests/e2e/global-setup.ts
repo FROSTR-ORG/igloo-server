@@ -211,10 +211,8 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     writeState(state);
 
     console.log('[setup] Generating FROSTR credentials...');
-    const { generateKeysetWithSecret, decodeGroup } = await import('@frostr/igloo-core') as {
-      generateKeysetWithSecret: (t: number, n: number, sk: string) => { groupCredential: string; shareCredentials: string[] };
-      decodeGroup: (g: string) => { group_pk: string; threshold: number; commits: unknown[] };
-    };
+    const iglooCore = await import('@frostr/igloo-core') as typeof import('@frostr/igloo-core');
+    const { generateKeysetWithSecret, decodeGroup } = iglooCore;
 
     const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, TEST_NSEC_HEX);
     const group = decodeGroup(groupCredential);
@@ -238,7 +236,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
         SKIP_STARTUP_ECHO: 'true',
         NODE_ENV: 'test',
         AUTH_ENABLED: 'true',
-        FROSTR_SIGN_TIMEOUT: '15000',
+        FROSTR_SIGN_TIMEOUT: '5000',
         UI_EVENT_LOG_INCLUDE_PINGS: 'false',
         UPDATE_CHECK_DISABLED: 'true',
         ALLOW_LOCALHOST_RELAY: 'true',
@@ -321,14 +319,14 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     console.log('[setup] Probing signing (waiting for co-signer to join relay)...');
     const TEST_MSG = 'a'.repeat(64);
     let signOk = false;
-    for (let attempt = 1; attempt <= 5; attempt++) {
+    for (let attempt = 1; attempt <= 4; attempt++) {
       if (cosignerProcess && cosignerProcess.exitCode !== null) {
         const cosLog = fs.existsSync(COSIGNER_LOG) ? fs.readFileSync(COSIGNER_LOG, 'utf8') : '(empty)';
         throw new Error(
           `Co-signer exited early with code ${cosignerProcess.exitCode} before signing was ready.\nCo-signer log:\n${cosLog}`
         );
       }
-      await sleep(3000);
+      await sleep(2000);
       const sr = await api.post('/api/sign', {
         headers: { 'X-Session-ID': sessionId },
         data: { message: TEST_MSG },
@@ -343,7 +341,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     }
     if (!signOk) {
       const cosLog = fs.existsSync(COSIGNER_LOG) ? fs.readFileSync(COSIGNER_LOG, 'utf8') : '(empty)';
-      throw new Error(`Co-signer did not become ready within 15 s.\nCo-signer log:\n${cosLog}`);
+      throw new Error(`Co-signer did not become ready within probe window.\nCo-signer log:\n${cosLog}`);
     }
 
     console.log('[setup] Creating test API key...');

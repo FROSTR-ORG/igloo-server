@@ -25,7 +25,7 @@ jobs:
     - name: Type check
       run: bun run tsc --noEmit
 
-    - name: Run route tests
+    - name: Run unit tests
       run: bun run test:unit
 
     - name: Build frontend
@@ -85,19 +85,25 @@ jobs:
     - name: Run security audit
       run: |
         audit_log="$(mktemp)"
+        last_exit=0
         for attempt in 1 2 3; do
           if bun audit >"$audit_log" 2>&1; then
             cat "$audit_log"
             rm -f "$audit_log"
             exit 0
-          fi
-          if [ "$attempt" -lt 3 ]; then
-            echo "bun audit failed (attempt $attempt), retrying..."
-            sleep 5
+          else
+            audit_exit=$?
+            last_exit=$audit_exit
+            last_attempt=$attempt
+            if [ "$attempt" -lt 3 ]; then
+              echo "bun audit failed (attempt $attempt), retrying..."
+              sleep 5
+            fi
           fi
         done
 
         audit_output="$(cat "$audit_log")"
+        echo "bun audit failed after ${last_attempt:-3} attempts with exit code ${last_exit}"
         if grep -Eiq 'network|registry|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT' "$audit_log"; then
           echo "bun audit failed after retries due to network/registry error: $audit_output"
         else

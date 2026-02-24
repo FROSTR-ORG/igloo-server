@@ -148,6 +148,18 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     hasValidHeadlessApiKey(r) || hasValidHeadlessBasic(r)
   );
 
+  const extractNonEmptyAdminSecret = (r: Request): string | undefined => {
+    const headerSecret = r.headers.get('X-Admin-Secret')?.trim();
+    if (headerSecret && headerSecret.length > 0) return headerSecret;
+
+    const authHeader = r.headers.get('Authorization');
+    if (!authHeader) return undefined;
+    const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!bearerMatch) return undefined;
+    const bearerToken = bearerMatch[1]?.trim();
+    return bearerToken && bearerToken.length > 0 ? bearerToken : undefined;
+  };
+
   const isHeadlessReadAuthorized = (r: Request, a?: RequestAuth | null): boolean => {
     // If global auth is enabled and a session is present, allow; otherwise require API key or Basic.
     if (AUTH_CONFIG.ENABLED && a?.authenticated) return true;
@@ -280,10 +292,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
             // - allow when the authenticated DB user has role=admin.
             // validateAdminSecret() returns false when the header is missing; there is no bypass.
-            const authHeader = req.headers.get('Authorization');
-            const bearerToken = authHeader && /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '') : undefined;
-            const adminSecret = req.headers.get('X-Admin-Secret') ?? bearerToken;
-            const isAdminSecret = await validateAdminSecret(adminSecret ?? undefined);
+            const adminSecret = extractNonEmptyAdminSecret(req);
+            const isAdminSecret = await validateAdminSecret(adminSecret);
             if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for environment modifications' },
@@ -665,10 +675,8 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             );
           }
           if (!HEADLESS) {
-            const authHeader = req.headers.get('Authorization');
-            const bearerToken = authHeader && /^Bearer\s+/i.test(authHeader) ? authHeader.replace(/^Bearer\s+/i, '') : undefined;
-            const adminSecret = req.headers.get('X-Admin-Secret') ?? bearerToken;
-            const isAdminSecret = await validateAdminSecret(adminSecret ?? undefined);
+            const adminSecret = extractNonEmptyAdminSecret(req);
+            const isAdminSecret = await validateAdminSecret(adminSecret);
             if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for deleting environment variables' },

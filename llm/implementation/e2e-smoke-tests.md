@@ -80,7 +80,7 @@ The server is spawned via `spawnDetached('bun', ['run', 'src/server.ts'], env, l
 | `RATE_LIMIT_ENABLED` | `false` | Avoid rate-limit failures in rapid-fire tests |
 | `SKIP_RELAY_PROBE` | `true` | Skip external relay verification at startup |
 | `ALLOW_LOCALHOST_RELAY` | `true` | Allow `ws://127.0.0.1:18002` as a relay URL |
-| `FROSTR_SIGN_TIMEOUT` | `15000` | Allow 15 s for threshold signing |
+| `FROSTR_SIGN_TIMEOUT` | `5000` | Cap setup/sign probe latency to 5 s per request |
 | `GROUP_CRED` | `''` | Clear any `.env` credential interference |
 | `SHARE_CRED` | `''` | Clear any `.env` credential interference |
 | `RELAYS` | `''` | Clear any `.env` relay interference |

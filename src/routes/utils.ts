@@ -816,7 +816,6 @@ export function normalizeRelayListForEcho(relays: any): string[] | undefined {
     .filter((r) => {
       try {
         const u = new URL(r);
-        if (u.protocol !== 'ws:' && u.protocol !== 'wss:') return false;
         if (!allowLocalhost && isLoopbackRelayHost(u.hostname)) return false;
         return true;
       } catch {

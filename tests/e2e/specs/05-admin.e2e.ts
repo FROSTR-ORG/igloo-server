@@ -37,35 +37,57 @@ test.describe('Admin – API keys', () => {
 
   test('POST /api/admin/api-keys creates a new key', async () => {
     await withApi(async (api) => {
-      const res = await api.post('/api/admin/api-keys', {
-        headers: { 'X-Session-ID': sessionId },
-        data: { label: 'temp-test-key' },
-      });
-      expect(res.status()).toBe(201);
-      const body = await res.json();
-      expect(body).toHaveProperty('apiKey');
-      expect(body.apiKey).toHaveProperty('token');
-      expect(typeof body.apiKey.token).toBe('string');
-      expect(body.apiKey.token.length).toBeGreaterThan(20);
-      expect(body.apiKey).toHaveProperty('id');
+      let createdKeyId: string | number | null = null;
+      try {
+        const res = await api.post('/api/admin/api-keys', {
+          headers: { 'X-Session-ID': sessionId },
+          data: { label: `temp-test-key-${Date.now()}` },
+        });
+        expect(res.status()).toBe(201);
+        const body = await res.json();
+        expect(body).toHaveProperty('apiKey');
+        expect(body.apiKey).toHaveProperty('token');
+        expect(typeof body.apiKey.token).toBe('string');
+        expect(body.apiKey.token.length).toBeGreaterThan(20);
+        expect(body.apiKey).toHaveProperty('id');
+        createdKeyId = body.apiKey.id;
+      } finally {
+        if (createdKeyId !== null) {
+          await api.post('/api/admin/api-keys/revoke', {
+            headers: { 'X-Session-ID': sessionId },
+            data: { apiKeyId: createdKeyId, reason: 'smoke-test cleanup' },
+          }).catch(() => null);
+        }
+      }
     });
   });
 
   test('new API key can authenticate', async () => {
     await withApi(async (api) => {
-      // Create key
-      const createRes = await api.post('/api/admin/api-keys', {
-        headers: { 'X-Session-ID': sessionId },
-        data: { label: 'auth-test-key' },
-      });
-      expect(createRes.status()).toBe(201);
-      const { apiKey } = await createRes.json();
+      let createdKeyId: string | number | null = null;
+      try {
+        // Create key
+        const createRes = await api.post('/api/admin/api-keys', {
+          headers: { 'X-Session-ID': sessionId },
+          data: { label: `auth-test-key-${Date.now()}` },
+        });
+        expect(createRes.status()).toBe(201);
+        const { apiKey } = await createRes.json();
+        createdKeyId = apiKey.id;
 
-      // Use key to hit an auth-protected route.
-      const authRes = await api.get('/api/event-log', {
-        headers: { 'X-API-Key': apiKey.token },
-      });
-      expect(authRes.status()).toBe(200);
+        // Use key to hit an auth-protected route.
+        const authRes = await api.get('/api/event-log', {
+          headers: { 'X-API-Key': apiKey.token },
+        });
+        expect(authRes.status()).toBe(200);
+      } finally {
+        if (createdKeyId !== null) {
+          await api.post('/api/admin/api-keys/revoke', {
+            headers: { 'X-Session-ID': sessionId },
+            data: { apiKeyId: createdKeyId, reason: 'smoke-test cleanup' },
+          }).catch(() => null);
+        }
+      }
     });
   });
 
