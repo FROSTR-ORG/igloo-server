@@ -296,6 +296,9 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               if (!relayValidation.valid) {
                 return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
               }
+              if (!relayValidation.urls || relayValidation.urls.length === 0) {
+                return Response.json({ success: false, error: 'At least one relay URL is required' }, { status: 400, headers });
+              }
             }
 
             if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED !== undefined) {
@@ -363,6 +366,9 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const relayValidation = validateRelayUrls(body.RELAYS);
             if (!relayValidation.valid) {
               return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
+            }
+            if (!relayValidation.urls || relayValidation.urls.length === 0) {
+              return Response.json({ success: false, error: 'At least one relay URL is required' }, { status: 400, headers });
             }
           }
 
