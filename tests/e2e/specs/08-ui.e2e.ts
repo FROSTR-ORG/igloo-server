@@ -8,8 +8,9 @@
 import { test, expect } from '@playwright/test';
 import { loginAs } from '../helpers.js';
 import { loadState } from '../state.js';
+import type { SmokeTestState } from '../state.js';
 
-const state = loadState();
+const state: SmokeTestState = loadState();
 const { baseUrl, adminUsername, adminPassword } = state;
 
 test.describe('UI – Login page', () => {
@@ -57,8 +58,10 @@ test.describe('UI – Authenticated app', () => {
     await configureTab.click();
     // After clicking, the configure panel content should appear
     await page.waitForLoadState('networkidle');
-    // Look for credential-related inputs or headings
-    const configContent = page.locator('input, textarea, [data-testid*="cred"]').first();
+    // Scope to likely configure containers to avoid matching unrelated page inputs.
+    const configContent = page.locator(
+      '[role="tabpanel"] input, [role="tabpanel"] textarea, [role="tabpanel"] [data-testid*="cred"], [data-testid*="config"] input, [data-testid*="config"] textarea, [id*="config"] input, [id*="config"] textarea'
+    ).first();
     await expect(configContent).toBeVisible({ timeout: 8_000 });
   });
 

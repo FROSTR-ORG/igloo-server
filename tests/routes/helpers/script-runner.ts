@@ -25,11 +25,11 @@ const ISOLATED_ENV_KEYS = [
   'AUTO_ADMIN_SECRET',
   'SKIP_ADMIN_SECRET_VALIDATION',
   'ENV_FILE_PATH',
-];
+] as const;
 
 const ISOLATED_ENV_PREFIXES = [
   'RATE_LIMIT_',
-];
+] as const;
 
 function buildScriptEnv(overrides: Record<string, string>): Record<string, string> {
   const nextEnv: Record<string, string> = {};
@@ -56,7 +56,11 @@ function buildScriptEnv(overrides: Record<string, string>): Record<string, strin
   };
 }
 
-export function runRouteScript(code: string, env: Record<string, string> = {}) {
+/**
+ * Runs route code in an isolated Bun subprocess and returns the parsed @@RESULT@@ JSON payload.
+ * Uses T=any by default so callers without an explicit type can access result properties (e.g. out.status).
+ */
+export function runRouteScript<T = any>(code: string, env: Record<string, string> = {}): T {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'igloo-route-'));
   try {
     const runner = path.join(tmpDir, 'runner.ts');
@@ -89,7 +93,14 @@ export function runRouteScript(code: string, env: Record<string, string> = {}) {
     if (!line) {
       throw new Error(`route script missing result marker: ${stdout}`);
     }
-    return JSON.parse(line.slice(line.indexOf(marker) + marker.length));
+    const rawJson = line.slice(line.indexOf(marker) + marker.length);
+    try {
+      const parsed = JSON.parse(rawJson) as unknown;
+      return parsed as T;
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(`route script returned invalid JSON marker payload: ${detail}; raw="${rawJson}"; stdout="${stdout}"`);
+    }
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });
   }

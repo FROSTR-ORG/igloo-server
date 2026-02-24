@@ -22,7 +22,7 @@ export interface SmokeTestState {
  * Zod schema for SmokeTestState persisted by global-setup.
  * Validates shape and types before returning from loadState.
  */
-const smokeTestStateSchema = z.object({
+const SMOKE_TEST_STATE_SCHEMA = z.object({
   port: z.number().int().positive(),
   baseUrl: z.string().min(1, 'baseUrl must be non-empty'),
   tmpDir: z.string(),
@@ -67,7 +67,7 @@ export function loadState(): SmokeTestState {
   if (!stateFile) return STUB;
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
-    const result = smokeTestStateSchema.safeParse(parsed);
+    const result = SMOKE_TEST_STATE_SCHEMA.safeParse(parsed);
     if (!result.success) {
       const issues = result.error.issues
         .map(i => `${i.path.join('.')}: ${i.message}`)

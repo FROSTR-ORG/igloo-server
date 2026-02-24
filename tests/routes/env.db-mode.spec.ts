@@ -77,8 +77,12 @@ describe('DB-mode /api/env behavior', () => {
         updateNode: () => {}
       };
 
-      // Generate real FROSTR credentials so validateGroup/validateShare pass
-      const { generateKeysetWithSecret } = await import(root + 'node_modules/@frostr/igloo-core/dist/index.js');
+      // Generate real FROSTR credentials so validateGroup/validateShare pass.
+      // Resolve from project root because this script runs from a temp directory.
+      const { createRequire } = await import('module');
+      const requireFromRoot = createRequire(root + 'package.json');
+      const iglooCorePath = requireFromRoot.resolve('@frostr/igloo-core');
+      const { generateKeysetWithSecret } = await import(iglooCorePath);
       const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef');
 
       const headers = new Headers({

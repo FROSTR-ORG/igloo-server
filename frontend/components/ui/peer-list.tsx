@@ -390,7 +390,7 @@ const PeerList: React.FC<PeerListProps> = ({
       window.removeEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
       window.removeEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
     };
-  }, [isSignerRunning]);
+  }, [authHeaders, isSignerRunning]);
 
   // Ping individual peer
   const handlePingPeer = useCallback(async (peerPubkey: string) => {
@@ -434,7 +434,7 @@ const PeerList: React.FC<PeerListProps> = ({
         return newSet;
       });
     }
-  }, [isSignerRunning]);
+  }, [authHeaders, isSignerRunning]);
 
   const updatePeerPolicy = useCallback(async (peer: PeerStatus, changes: { allowSend?: boolean; allowReceive?: boolean }) => {
     if (!isSignerRunning || disabled) {
@@ -525,7 +525,7 @@ const PeerList: React.FC<PeerListProps> = ({
       return;
     }
     try {
-      const response = await fetch('/api/peers/ping', {
+      await fetch('/api/peers/ping', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -534,14 +534,12 @@ const PeerList: React.FC<PeerListProps> = ({
         body: JSON.stringify({ target: 'all' })
       });
       
-      const result = await response.json();
-      
       // Refresh peer list after pinging all
       await fetchPeers();
     } catch (error) {
       console.warn('[PeerList] Ping all failed:', error);
     }
-  }, [isSignerRunning, peers.length, fetchPeers]);
+  }, [authHeaders, isSignerRunning, peers.length, fetchPeers]);
 
   // Enhanced refresh that includes pinging
   const handleRefresh = useCallback(async () => {
@@ -656,7 +654,7 @@ const PeerList: React.FC<PeerListProps> = ({
             )}
           </div>
         </div>
-        <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
+        <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} className="flex-shrink-0">
           {actions}
         </div>
       </div>
@@ -667,7 +665,9 @@ const PeerList: React.FC<PeerListProps> = ({
           "transition-all duration-300 ease-in-out overflow-hidden",
           isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
         )}
+        aria-hidden={!isExpanded}
       >
+        {isExpanded && (
         <div className="bg-gray-900/30 rounded border border-gray-800/30 p-4 space-y-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
@@ -772,10 +772,7 @@ const PeerList: React.FC<PeerListProps> = ({
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
                               <span className="whitespace-nowrap">Policy: out {outboundPolicy.statusLabel}, in {inboundPolicy.statusLabel}</span>
-                              <Badge
-                                variant={policyBadgeVariant as any}
-                                className="text-xs px-2 py-0.5 whitespace-nowrap"
-                              >
+                              <Badge variant={policyBadgeVariant} className="text-xs px-2 py-0.5 whitespace-nowrap">
                                 {policyBadgeLabel}
                               </Badge>
                             </div>
@@ -898,6 +895,7 @@ const PeerList: React.FC<PeerListProps> = ({
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

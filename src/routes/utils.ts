@@ -107,7 +107,9 @@ export function getValidRelays(
 }
 
 // Helper functions for .env file management
-const ENV_FILE_PATH = process.env.ENV_FILE_PATH?.trim() || '.env';
+function getEnvFilePath(): string {
+  return process.env.ENV_FILE_PATH?.trim() || '.env';
+}
 
 // Security: Whitelist of allowed environment variable keys (for write/validation)
 // IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
@@ -257,8 +259,9 @@ function stringifyEnvFile(env: Record<string, string>): string {
 
 export async function readEnvFile(): Promise<Record<string, string>> {
   try {
-    await fs.access(ENV_FILE_PATH);
-    const content = await fs.readFile(ENV_FILE_PATH, 'utf-8');
+    const envFilePath = getEnvFilePath();
+    await fs.access(envFilePath);
+    const content = await fs.readFile(envFilePath, 'utf-8');
     const fileEnv = parseEnvFile(content);
     
     // Merge with actual environment variables as fallback
@@ -301,7 +304,7 @@ function getEnvVarsFromProcess(): Record<string, string> {
 // Get the modification time of the environment file
 export async function getEnvFileModTime(): Promise<string | null> {
   try {
-    const stats = await fs.stat(ENV_FILE_PATH);
+    const stats = await fs.stat(getEnvFilePath());
     return stats.mtime.toISOString();
   } catch (error) {
     // File doesn't exist or error accessing it
@@ -365,7 +368,7 @@ export async function writeEnvFileWithTimestamp(env: Record<string, string>): Pr
     }
     
     const content = stringifyEnvFile(env);
-    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
+    await fs.writeFile(getEnvFilePath(), content, 'utf-8');
     return true;
   } catch (error) {
     console.error('Error writing .env file:', error);
@@ -376,7 +379,7 @@ export async function writeEnvFileWithTimestamp(env: Record<string, string>): Pr
 export async function writeEnvFile(env: Record<string, string>): Promise<boolean> {
   try {
     const content = stringifyEnvFile(env);
-    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
+    await fs.writeFile(getEnvFilePath(), content, 'utf-8');
     return true;
   } catch (error) {
     console.error('Error writing .env file:', error);

@@ -52,16 +52,16 @@ try {
   });
   node.on('closed', () => console.log('[cosigner] Node closed'));
   node.on('error', (e) => console.log('[cosigner] Error:', String(e).slice(0, 200)));
-  node.on('bounced', (...args) => console.log('[cosigner] Bounced:', JSON.stringify(args).slice(0, 200)));
+  node.on('bounced', (...args) => console.log('[cosigner] Bounced:', safeStringify(args).slice(0, 200)));
   node.on('message', (msg) => {
     console.log('[cosigner] Message tag:', msg?.tag, '| from:', msg?.env?.pubkey?.slice(0,16));
   });
   node.on('/sign/handler/req', (msg) => console.log('[cosigner] SIGN REQ received, id:', msg?.id));
   node.on('/sign/handler/res', () => console.log('[cosigner] SIGN RES sent'));
-  node.on('/sign/handler/rej', (...a) => console.log('[cosigner] SIGN REJ:', JSON.stringify(a).slice(0, 200)));
+  node.on('/sign/handler/rej', (...a) => console.log('[cosigner] SIGN REJ:', safeStringify(a).slice(0, 200)));
 
   // Also spy on the raw WebSocket to confirm relay subscription
-  node.on('subscribed', (...a) => console.log('[cosigner] Subscribed to relay, sub_id:', JSON.stringify(a).slice(0, 100)));
+  node.on('subscribed', (...a) => console.log('[cosigner] Subscribed to relay, sub_id:', safeStringify(a).slice(0, 100)));
 
   console.log('[cosigner] Connecting to relay:', relayUrl);
   await connectNode(node);

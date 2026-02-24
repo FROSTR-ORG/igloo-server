@@ -1,3 +1,4 @@
+import { expect } from '@playwright/test';
 import type { Page } from '@playwright/test';
 
 export async function loginAs(page: Page, username: string, password: string): Promise<void> {
@@ -13,4 +14,8 @@ export async function loginAs(page: Page, username: string, password: string): P
   await passwordField.fill(password);
   await submitBtn.click();
   await page.waitForLoadState('networkidle');
+  await expect(
+    page.locator('[role="tab"], .tab, button:has-text("Signer"), button:has-text("Configure")').first(),
+    'login failed: expected dashboard tabs after submit'
+  ).toBeVisible({ timeout: 10_000 });
 }

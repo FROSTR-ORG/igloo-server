@@ -270,7 +270,7 @@ Unaffected: `GET /api/sign`, `GET /api/event-log`, NIP-44/NIP-04 (which use the 
 
 For this reason:
 - The "revoked API key returns 401" test in `05-admin.e2e.ts` uses `GET /api/event-log` (not `/api/peers`) for the pre/post-revocation auth check.
-- The "new API key can authenticate" test uses `GET /api/status` (public) which trivially returns 200; this confirms the key is created but does not actually exercise DB-key auth enforcement.
+- The "new API key can authenticate" test uses `GET /api/event-log` to exercise real API-key auth enforcement on a protected endpoint.
 
 ### Event log export is NDJSON, not JSON
 

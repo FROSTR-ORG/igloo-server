@@ -20,6 +20,7 @@ import fs from 'fs';
 import net from 'net';
 import os from 'os';
 import path from 'path';
+import type { SmokeTestState } from './state.js';
 
 const REQUESTED_PORT_RAW = process.env.SMOKE_TEST_PORT ?? '18002';
 const REQUESTED_PORT = Number.parseInt(REQUESTED_PORT_RAW, 10);
@@ -31,34 +32,38 @@ const DB_PATH = path.join(TMP_DIR, 'db');
 const SERVER_LOG = path.join(TMP_DIR, 'server.log');
 const COSIGNER_LOG = path.join(TMP_DIR, 'cosigner.log');
 
-// Defaults are safe for local CI, but callers should override via environment variables.
-const TEST_NSEC_HEX = process.env.TEST_NSEC_HEX ?? 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? 'SmokeTestAdmin1';
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? 'testadmin';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? 'T3stPass@9';
-
-type SetupState = {
-  port: number;
-  baseUrl: string;
-  tmpDir: string;
-  serverPid: number;
-  cosignerPid: number;
-  sessionId: string;
-  apiKey: string | null;
-  apiKeyId: string | null;
-  groupCredential: string;
-  shareCredentials: string[];
-  groupPubkeyHex: string;
+const smokeDefaultsPath = path.resolve('tests/e2e/smoke-test-defaults.json');
+const smokeDefaultsRaw = JSON.parse(fs.readFileSync(smokeDefaultsPath, 'utf8'));
+if (typeof smokeDefaultsRaw !== 'object' || smokeDefaultsRaw === null) {
+  throw new Error(`smoke-test-defaults.json must be a JSON object, got ${typeof smokeDefaultsRaw}`);
+}
+const requiredKeys = ['testNsecHex', 'adminSecret', 'adminUsername', 'adminPassword'] as const;
+const raw = smokeDefaultsRaw as Record<string, unknown>;
+const missing = requiredKeys.filter(k => raw[k] == null || typeof raw[k] !== 'string');
+if (missing.length > 0) {
+  throw new Error(
+    `smoke-test-defaults.json is missing required string properties: ${missing.join(', ')}. ` +
+    `Expected: ${requiredKeys.join(', ')}`,
+  );
+}
+const smokeDefaults = raw as {
+  testNsecHex: string;
+  adminSecret: string;
   adminUsername: string;
   adminPassword: string;
-  adminSecret: string;
 };
+
+// Defaults come from fixture for local CI; callers can still override via environment.
+const TEST_NSEC_HEX = process.env.TEST_NSEC_HEX ?? smokeDefaults.testNsecHex;
+const ADMIN_SECRET = process.env.ADMIN_SECRET ?? smokeDefaults.adminSecret;
+const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? smokeDefaults.adminUsername;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? smokeDefaults.adminPassword;
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function writeState(state: SetupState) {
+function writeState(state: SmokeTestState) {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   process.env.SMOKE_STATE_FILE = STATE_FILE;
 }
@@ -176,7 +181,7 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   const port = await resolvePort(host, DEFAULT_PORT);
   const baseUrl = `http://${host}:${port}`;
 
-  const state: SetupState = {
+  const state: SmokeTestState = {
     port,
     baseUrl,
     tmpDir: TMP_DIR,

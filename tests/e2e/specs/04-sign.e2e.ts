@@ -7,8 +7,17 @@
 
 import { test, expect, request } from '@playwright/test';
 import { loadState } from '../state.js';
+import type { SmokeTestState } from '../state.js';
 
-const state = loadState();
+type SignEventPayload = {
+  pubkey: string;
+  kind: number;
+  created_at: number;
+  content: string;
+  tags: string[][];
+};
+
+const state: SmokeTestState = loadState();
 const { baseUrl, sessionId, groupPubkeyHex } = state;
 
 // Valid 32-byte hex event IDs for signing
@@ -78,7 +87,7 @@ test.describe('Sign – /api/sign', () => {
   test('signs a full event object and returns signature', async () => {
     const api = await request.newContext({ baseURL: baseUrl });
     // Use the group pubkey as the event author pubkey
-    const event = {
+    const event: SignEventPayload = {
       pubkey: groupPubkeyHex,
       kind: 1,
       created_at: Math.floor(Date.now() / 1000),
@@ -113,16 +122,17 @@ test.describe('Sign – /api/sign', () => {
 
   test('event with invalid pubkey returns 400', async () => {
     const api = await request.newContext({ baseURL: baseUrl });
+    const invalidEvent: SignEventPayload = {
+      pubkey: 'not-64-hex',
+      kind: 1,
+      created_at: Math.floor(Date.now() / 1000),
+      content: 'bad',
+      tags: [],
+    };
     const res = await api.post('/api/sign', {
       headers: { 'X-Session-ID': sessionId },
       data: {
-        event: {
-          pubkey: 'not-64-hex',
-          kind: 1,
-          created_at: Math.floor(Date.now() / 1000),
-          content: 'bad',
-          tags: [],
-        },
+        event: invalidEvent,
       },
     });
     expect(res.status()).toBe(400);

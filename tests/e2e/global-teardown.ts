@@ -7,21 +7,29 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import type { FullConfig } from '@playwright/test';
+import type { SmokeTestState } from './state.js';
 
 function findLatestStateFile(): string | null {
   const tmpRoot = os.tmpdir();
   let latestFile: string | null = null;
   let latestMtime = 0;
-
-  for (const entry of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
-    if (!entry.isDirectory() || !entry.name.startsWith('igloo-smoke-test')) continue;
-    const candidate = path.join(tmpRoot, entry.name, 'state.json');
-    if (!fs.existsSync(candidate)) continue;
-    const mtime = fs.statSync(candidate).mtimeMs;
-    if (mtime > latestMtime) {
-      latestMtime = mtime;
-      latestFile = candidate;
+  try {
+    for (const entry of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
+      if (!entry.isDirectory() || !entry.name.startsWith('igloo-smoke-test')) continue;
+      const candidate = path.join(tmpRoot, entry.name, 'state.json');
+      if (!fs.existsSync(candidate)) continue;
+      try {
+        const mtime = fs.statSync(candidate).mtimeMs;
+        if (mtime > latestMtime) {
+          latestMtime = mtime;
+          latestFile = candidate;
+        }
+      } catch {
+        // Ignore transient stat/read errors when scanning tmp entries.
+      }
     }
+  } catch {
+    return null;
   }
 
   return latestFile;
@@ -40,9 +48,9 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     return;
   }
 
-  let state: { serverPid?: number; cosignerPid?: number; tmpDir?: string };
+  let state: SmokeTestState;
   try {
-    state = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8'));
+    state = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8')) as SmokeTestState;
   } catch {
     console.warn('[teardown] Could not parse state file.');
     return;
@@ -65,25 +73,23 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
   await new Promise(r => setTimeout(r, 500));
 
   const tmpDir = state.tmpDir || path.dirname(resolvedStateFile);
-  if (tmpDir) {
-    try {
-      const resolvedTmp = path.resolve(tmpDir);
-      const tempRoot = path.resolve(os.tmpdir());
-      const relToTempRoot = path.relative(tempRoot, resolvedTmp);
-      const isInsideTemp =
-        relToTempRoot.length > 0 &&
-        relToTempRoot !== '.' &&
-        !relToTempRoot.startsWith('..') &&
-        !path.isAbsolute(relToTempRoot);
+  try {
+    const resolvedTmp = path.resolve(tmpDir);
+    const tempRoot = path.resolve(os.tmpdir());
+    const relToTempRoot = path.relative(tempRoot, resolvedTmp);
+    const isInsideTemp =
+      relToTempRoot.length > 0 &&
+      relToTempRoot !== '.' &&
+      !relToTempRoot.startsWith('..') &&
+      !path.isAbsolute(relToTempRoot);
 
-      if (!isInsideTemp) {
-        console.warn('[teardown] Skipping temp dir removal outside os.tmpdir():', resolvedTmp);
-      } else {
-        fs.rmSync(resolvedTmp, { recursive: true, force: true });
-        console.log('[teardown] Removed temp dir', resolvedTmp);
-      }
-    } catch (err) {
-      console.warn('[teardown] Could not remove temp dir:', err);
+    if (!isInsideTemp) {
+      console.warn('[teardown] Skipping temp dir removal outside os.tmpdir():', resolvedTmp);
+    } else {
+      fs.rmSync(resolvedTmp, { recursive: true, force: true });
+      console.log('[teardown] Removed temp dir', resolvedTmp);
     }
+  } catch (err) {
+    console.warn('[teardown] Could not remove temp dir:', err);
   }
 }

@@ -42,6 +42,17 @@ describe('getValidRelays', () => {
       else process.env.ALLOW_LOCALHOST_RELAY = previous;
     }
   });
+
+  it('filters localhost hostname relay when localhost relays are disallowed', () => {
+    const previous = process.env.ALLOW_LOCALHOST_RELAY;
+    process.env.ALLOW_LOCALHOST_RELAY = 'false';
+    try {
+      expect(getValidRelays('["ws://localhost:18002"]', { fallbackToDefault: false })).toEqual([]);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
+      else process.env.ALLOW_LOCALHOST_RELAY = previous;
+    }
+  });
 });
 
 describe('normalizeRelayListForEcho', () => {
@@ -50,6 +61,17 @@ describe('normalizeRelayListForEcho', () => {
     process.env.ALLOW_LOCALHOST_RELAY = 'true';
     try {
       expect(normalizeRelayListForEcho(['ws://127.0.0.1:18002'])).toEqual(['ws://127.0.0.1:18002']);
+    } finally {
+      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
+      else process.env.ALLOW_LOCALHOST_RELAY = previous;
+    }
+  });
+
+  it('keeps localhost hostname in echo list when explicitly allowed', () => {
+    const previous = process.env.ALLOW_LOCALHOST_RELAY;
+    process.env.ALLOW_LOCALHOST_RELAY = 'true';
+    try {
+      expect(normalizeRelayListForEcho(['ws://localhost:18002'])).toEqual(['ws://localhost:18002']);
     } finally {
       if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
       else process.env.ALLOW_LOCALHOST_RELAY = previous;

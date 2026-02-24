@@ -74,7 +74,7 @@ jobs:
         echo "version_number=${NEW_VERSION#v}" >> $GITHUB_OUTPUT
 
     - name: Type check
-      run: bun run typecheck
+      run: bun run tsc --noEmit
 
     - name: Run backend tests
       run: bun run test:unit
