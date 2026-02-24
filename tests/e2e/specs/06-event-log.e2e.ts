@@ -71,6 +71,7 @@ test.describe('Event log – /api/event-log', () => {
     const text = await res.text();
     // Each non-empty line must be valid JSON
     const lines = text.trim().split('\n').filter(Boolean);
+    expect(lines.length).toBeGreaterThan(0);
     for (const line of lines) {
       expect(() => JSON.parse(line)).not.toThrow();
     }

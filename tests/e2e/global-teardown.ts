@@ -9,6 +9,8 @@ import path from 'path';
 import type { FullConfig } from '@playwright/test';
 import type { SmokeTestState } from './state.js';
 
+const MAX_STATE_AGE_MS = 10 * 60 * 1000;
+
 function findLatestStateFile(): string | null {
   const tmpRoot = os.tmpdir();
   let latestFile: string | null = null;
@@ -45,6 +47,20 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
 
   if (!resolvedStateFile || !fs.existsSync(resolvedStateFile)) {
     console.warn('[teardown] No state file found – nothing to clean up.');
+    return;
+  }
+
+  try {
+    const ageMs = Date.now() - fs.statSync(resolvedStateFile).mtimeMs;
+    if (ageMs > MAX_STATE_AGE_MS) {
+      console.warn(
+        `[teardown] State file is stale (${Math.round(ageMs / 1000)}s old); ` +
+        'skipping process kill and temp cleanup to avoid affecting unrelated runs.'
+      );
+      return;
+    }
+  } catch (error) {
+    console.warn('[teardown] Could not stat state file; skipping cleanup for safety:', error);
     return;
   }
 

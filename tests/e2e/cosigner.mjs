@@ -79,12 +79,14 @@ try {
   }
 
 } catch (err) {
-  console.error('[cosigner] Failed to start:', err.message ?? err);
+  console.error('[cosigner] Failed to start:', err instanceof Error ? err.message : String(err));
   process.exit(2);
 }
 
 const shutdown = () => {
-  try { node?.close?.(); } catch {}
+  try { node?.close?.(); } catch (e) {
+    console.error('[cosigner] Error closing node:', e instanceof Error ? e.message : String(e));
+  }
   process.exit(0);
 };
 process.on('SIGTERM', shutdown);

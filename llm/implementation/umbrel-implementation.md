@@ -71,6 +71,6 @@ These values are set in the store compose and expected by the UI flow:
 
 ## Update Checklist for Future Releases
 1. Build and push the new Umbrel image (`:umbrel-<version>` and `:umbrel-latest`).
-2. Update the digest in `igloo-server/docker-compose.yml` (keep the `:umbrel-dev` tag; only the `@sha256:...` digest changes).
-3. Update `igloo-server/umbrel-app.yml` version and release notes.
+2. Bump the digest in `igloo-server/docker-compose.yml` (keep the `:umbrel-dev` tag; only the `@sha256:...` digest changes).
+3. Revise `igloo-server/umbrel-app.yml` version and release notes.
 4. Refresh gallery assets if the UI has changed.
