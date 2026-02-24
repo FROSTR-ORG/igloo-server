@@ -266,7 +266,7 @@ This is by design — unauthenticated health checks and monitoring probes must b
 Database-backed API keys authenticate via `authenticateDatabaseApiKey()` and return `userId: 'api-key:<prefix>'` — a string, not a numeric DB row ID. Several routes in DB mode call `getCredentials(auth)` which requires a numeric `userId` to decrypt per-user credentials from SQLite. If `userId` is not numeric, `getCredentials` returns `null` and the route responds 401.
 
 Affected routes: `GET /api/peers`, `GET /api/peers/group`, `GET /api/peers/self`.
-Unaffected: `GET /api/sign`, `GET /api/event-log`, NIP-44/NIP-04 (which use the in-memory node directly or don't need per-user credential lookup).
+Unaffected: `POST /api/sign`, `GET /api/event-log`, NIP-44/NIP-04 (which use the in-memory node directly or don't need per-user credential lookup).
 
 For this reason:
 - The "revoked API key returns 401" test in `05-admin.e2e.ts` uses `GET /api/event-log` (not `/api/peers`) for the pre/post-revocation auth check.

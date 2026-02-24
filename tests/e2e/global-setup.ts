@@ -59,16 +59,16 @@ const ADMIN_SECRET = process.env.ADMIN_SECRET ?? smokeDefaults.adminSecret;
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? smokeDefaults.adminUsername;
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? smokeDefaults.adminPassword;
 
-function sleep(ms: number) {
+function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function writeState(state: SmokeTestState) {
+function writeState(state: SmokeTestState): void {
   fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
   process.env.SMOKE_STATE_FILE = STATE_FILE;
 }
 
-function terminateProcess(proc: ChildProcess | null, label: string) {
+function terminateProcess(proc: ChildProcess | null, label: string): void {
   if (!proc?.pid) return;
   try {
     process.kill(proc.pid, 'SIGTERM');
@@ -205,7 +205,22 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
   process.env.SMOKE_STATE_FILE = STATE_FILE;
 
   try {
-    if (fs.existsSync(TMP_DIR)) fs.rmSync(TMP_DIR, { recursive: true, force: true });
+    const resolvedTmp = path.resolve(TMP_DIR);
+    const tempRoot = path.resolve(os.tmpdir());
+    const relToTempRoot = path.relative(tempRoot, resolvedTmp);
+    const isInsideTemp =
+      relToTempRoot.length > 0 &&
+      relToTempRoot !== '.' &&
+      !relToTempRoot.startsWith('..') &&
+      !path.isAbsolute(relToTempRoot);
+
+    if (fs.existsSync(TMP_DIR)) {
+      if (isInsideTemp) {
+        fs.rmSync(TMP_DIR, { recursive: true, force: true });
+      } else {
+        console.warn('[setup] Skipping TMP_DIR cleanup outside os.tmpdir():', resolvedTmp);
+      }
+    }
     fs.mkdirSync(TMP_DIR, { recursive: true });
     fs.mkdirSync(DB_PATH, { recursive: true });
     writeState(state);

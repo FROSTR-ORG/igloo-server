@@ -48,12 +48,26 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     return;
   }
 
-  let state: SmokeTestState;
+  let state: SmokeTestState = {
+    port: 0,
+    baseUrl: '',
+    tmpDir: path.dirname(resolvedStateFile),
+    serverPid: 0,
+    cosignerPid: 0,
+    sessionId: '',
+    apiKey: null,
+    apiKeyId: null,
+    groupCredential: '',
+    shareCredentials: [],
+    groupPubkeyHex: '',
+    adminUsername: '',
+    adminPassword: '',
+    adminSecret: '',
+  };
   try {
     state = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8')) as SmokeTestState;
   } catch {
-    console.warn('[teardown] Could not parse state file.');
-    return;
+    console.warn('[teardown] Could not parse state file; using fallback cleanup state.');
   }
 
   for (const [label, pid] of [['co-signer', state.cosignerPid], ['server', state.serverPid]] as const) {

@@ -1,6 +1,17 @@
 import { describe, expect, it } from 'bun:test';
 import { getValidRelays, normalizeRelayListForEcho } from './utils.js';
 
+function withEnv(key: string, value: string, fn: () => void): void {
+  const previous = process.env[key];
+  process.env[key] = value;
+  try {
+    fn();
+  } finally {
+    if (previous === undefined) delete process.env[key];
+    else process.env[key] = previous;
+  }
+}
+
 describe('getValidRelays', () => {
   it('returns default relay when fallback is enabled and input is empty', () => {
     expect(getValidRelays()).toEqual(['wss://relay.primal.net']);
@@ -22,44 +33,27 @@ describe('getValidRelays', () => {
   });
 
   it('filters IPv6 localhost relay when localhost relays are disallowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'false';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://[::1]:18002"]', { fallbackToDefault: false })).toEqual([]);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
   
   it('filters 127.0.0.0/8 localhost relay range when localhost relays are disallowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'false';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://127.0.0.2:18002"]', { fallbackToDefault: false })).toEqual([]);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
 
   it('filters localhost hostname relay when localhost relays are disallowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'false';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://localhost:18002"]', { fallbackToDefault: false })).toEqual([]);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
 });
 
 describe('normalizeRelayListForEcho', () => {
   it('filters localhost relays when localhost relays are disallowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'false';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(
         normalizeRelayListForEcho([
           'ws://127.0.0.1:18002',
@@ -67,31 +61,18 @@ describe('normalizeRelayListForEcho', () => {
           'wss://relay.example.com'
         ])
       ).toEqual(['wss://relay.example.com']);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
 
   it('keeps localhost relay in echo list when explicitly allowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'true';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(normalizeRelayListForEcho(['ws://127.0.0.1:18002'])).toEqual(['ws://127.0.0.1:18002']);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
 
   it('keeps localhost hostname in echo list when explicitly allowed', () => {
-    const previous = process.env.ALLOW_LOCALHOST_RELAY;
-    process.env.ALLOW_LOCALHOST_RELAY = 'true';
-    try {
+    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(normalizeRelayListForEcho(['ws://localhost:18002'])).toEqual(['ws://localhost:18002']);
-    } finally {
-      if (previous === undefined) delete process.env.ALLOW_LOCALHOST_RELAY;
-      else process.env.ALLOW_LOCALHOST_RELAY = previous;
-    }
+    });
   });
 });
