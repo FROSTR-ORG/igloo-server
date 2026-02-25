@@ -6,6 +6,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import type { FullConfig } from '@playwright/test';
 import type { SmokeTestState } from './state.js';
 
@@ -29,6 +30,37 @@ function isProcessRunning(pid: number): boolean {
     if (code === 'EPERM') return true;
     return false;
   }
+}
+
+function getProcessCommand(pid: number): string | null {
+  try {
+    const output = execFileSync('ps', ['-o', 'command=', '-p', String(pid)], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const cmd = output.trim();
+    return cmd.length > 0 ? cmd : null;
+  } catch {
+    return null;
+  }
+}
+
+function validateProcessIdentity(pid: number, label: 'co-signer' | 'server'): boolean {
+  const command = getProcessCommand(pid);
+  if (!command) {
+    console.warn(`[teardown] Could not read command line for ${label} pid ${pid}; skipping SIGTERM for safety.`);
+    return false;
+  }
+
+  const expectedFragment = label === 'co-signer' ? 'tests/e2e/cosigner.mjs' : 'src/server.ts';
+  const matches = command.includes(expectedFragment);
+  if (!matches) {
+    console.warn(
+      `[teardown] ${label} pid ${pid} command did not match expected identity (${expectedFragment}); ` +
+      `actual="${command}". Skipping SIGTERM for safety.`
+    );
+  }
+  return matches;
 }
 
 function resolveSafeTmpDir(rawTmpDir: unknown): string | null {
@@ -112,6 +144,9 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     if (!pid) continue;
     if (!isProcessRunning(pid)) {
       console.warn(`[teardown] ${label} pid ${pid} is not running; skipping SIGTERM.`);
+      continue;
+    }
+    if (!validateProcessIdentity(pid, label)) {
       continue;
     }
     try {

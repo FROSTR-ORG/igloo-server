@@ -241,9 +241,12 @@ class RelaySession {
             this.send(['EVENT', sub_id, event])
             this.log.client(`event matched in cache: ${event.id}`)
             this.log.client(`event matched subscription: ${sub_id}`)
+            // Decrement only when we actually sent a matching event.
+            if (limit_count !== undefined) {
+              limit_count -= 1
+              if (limit_count === 0) break
+            }
           }
-          // Update the limit count.
-          if (limit_count !== undefined) limit_count -= 1
         } 
       }
     }

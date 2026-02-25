@@ -110,4 +110,53 @@ describe('NostrRelay REQ handling', () => {
     expect(relay.subs.size).toBe(0);
     expect(socket.closed).toBe(true);
   });
+
+  it('applies filter.limit to matched events only', () => {
+    const relay = new NostrRelay({ info: false, debug: false });
+    const socket = createFakeSocket();
+    const ws = asHandlerSocket(socket);
+    const handler = relay.handler();
+
+    const unmatched = {
+      id: 'u'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: 1,
+      kind: 9,
+      tags: [],
+      content: '',
+      sig: 'b'.repeat(128),
+    } as Parameters<NostrRelay['store']>[0];
+    const matchedA = {
+      id: 'c'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: 2,
+      kind: 1,
+      tags: [],
+      content: '',
+      sig: 'd'.repeat(128),
+    } as Parameters<NostrRelay['store']>[0];
+    const matchedB = {
+      id: 'e'.repeat(64),
+      pubkey: 'a'.repeat(64),
+      created_at: 3,
+      kind: 1,
+      tags: [],
+      content: '',
+      sig: 'f'.repeat(128),
+    } as Parameters<NostrRelay['store']>[0];
+
+    relay.store(unmatched);
+    relay.store(matchedA);
+    relay.store(matchedB);
+
+    handler.open?.(ws);
+    handler.message?.(ws, JSON.stringify(['REQ', 'sub-limit', { kinds: [1], limit: 1 }]));
+
+    const messages = decodeSent(socket);
+    const eventMessages = messages.filter((msg) => msg[0] === 'EVENT');
+    expect(eventMessages).toHaveLength(1);
+    expect(eventMessages[0]?.[1]).toBe('sub-limit');
+    expect((eventMessages[0]?.[2] as { kind?: number }).kind).toBe(1);
+    expect(messages).toContainEqual(['EOSE', 'sub-limit']);
+  });
 });

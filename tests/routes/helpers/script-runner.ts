@@ -31,9 +31,20 @@ export const ISOLATED_ENV_PREFIXES = [
   'RATE_LIMIT_',
 ] as const;
 
+const ERROR_PREVIEW_MAX_CHARS = 200;
+
 function isBlockedEnvKey(key: string): boolean {
   return ISOLATED_ENV_KEYS.includes(key as (typeof ISOLATED_ENV_KEYS)[number]) ||
     ISOLATED_ENV_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+function toSafePreview(raw: string, maxChars = ERROR_PREVIEW_MAX_CHARS): string {
+  const compact = raw.replace(/\s+/g, ' ').trim();
+  if (!compact) return '(empty)';
+  const redacted = compact
+    .replace(/(admin_secret|session_secret|password|api[_-]?key|token)\s*[:=]\s*["']?[^"'\s]+/ig, '$1=<redacted>')
+    .replace(/(bearer\s+)[a-z0-9._-]+/ig, '$1<redacted>');
+  return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}...(truncated)` : redacted;
 }
 
 function sanitizeOverrides(overrides: Record<string, string>): Record<string, string> {
@@ -97,8 +108,10 @@ export function runRouteScript<T = Record<string, unknown>>(code: string, env: R
     });
 
     if (result.exitCode !== 0) {
+      const stderrPreview = toSafePreview(result.stderr.toString());
+      const stdoutPreview = toSafePreview(result.stdout.toString());
       throw new Error(
-        `route script failed: status=${result.exitCode} stderr="${result.stderr.toString()}" stdout="${result.stdout.toString()}"`
+        `route script failed: status=${result.exitCode} stderr_preview="${stderrPreview}" stdout_preview="${stdoutPreview}"`
       );
     }
 
@@ -106,7 +119,7 @@ export function runRouteScript<T = Record<string, unknown>>(code: string, env: R
     const stdout = result.stdout.toString().trim();
     const line = stdout.split('\n').reverse().find(l => l.includes(marker));
     if (!line) {
-      throw new Error(`route script missing result marker: ${stdout}`);
+      throw new Error(`route script missing result marker; stdout_preview="${toSafePreview(stdout)}"`);
     }
     const rawJson = line.slice(line.indexOf(marker) + marker.length);
     try {
@@ -114,7 +127,10 @@ export function runRouteScript<T = Record<string, unknown>>(code: string, env: R
       return parsed as T;
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      throw new Error(`route script returned invalid JSON marker payload: ${detail}; raw="${rawJson}"; stdout="${stdout}"`);
+      throw new Error(
+        `route script returned invalid JSON marker payload: ${detail}; ` +
+        `raw_preview="${toSafePreview(rawJson)}"; stdout_preview="${toSafePreview(stdout)}"`
+      );
     }
   } finally {
     rmSync(tmpDir, { recursive: true, force: true });

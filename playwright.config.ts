@@ -24,10 +24,11 @@ export default defineConfig({
   },
 
   projects: [
-    // Pure API specs (01–07) – use request context only, no browser
+    // Pure API specs – use request context only, no browser
     {
       name: 'api',
-      testMatch: ['**/0[1-7]-*.e2e.ts'],
+      testMatch: ['**/[0-9][0-9]-*.e2e.ts'],
+      testIgnore: ['**/08-ui.e2e.ts'],
     },
     // Browser UI spec (08) – needs a real browser
     {

@@ -103,7 +103,9 @@ try {
   }
 
 } catch (err) {
-  console.error('[cosigner] Failed to start:', err instanceof Error ? err.message : String(err));
+  const message = err instanceof Error ? err.message : String(err);
+  const stack = err instanceof Error && err.stack ? `\n${err.stack}` : '';
+  console.error(`[cosigner] Failed to start: ${message}${stack}`);
   process.exit(2);
 }
 
