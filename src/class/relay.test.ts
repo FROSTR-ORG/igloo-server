@@ -68,6 +68,27 @@ describe('NostrRelay REQ handling', () => {
     expect(messages).toContainEqual(['NOTICE', '', 'REQ requires at least one filter']);
   });
 
+  it('accepts canonical multi-filter REQ payloads and creates a subscription', () => {
+    const relay = new NostrRelay({ info: false, debug: false });
+    const socket = createFakeSocket();
+    const ws = asHandlerSocket(socket);
+    const handler = relay.handler();
+
+    handler.open?.(ws);
+    const authorHex = 'f'.repeat(64);
+    handler.message?.(ws, JSON.stringify(['REQ', 'sub-multi', { kinds: [1] }, { authors: [authorHex] }]));
+
+    expect(relay.subs.size).toBe(1);
+    const [sub] = Array.from(relay.subs.values());
+    expect(sub?.sub_id).toBe('sub-multi');
+    expect(sub?.filters).toHaveLength(2);
+    expect((sub?.filters[0] as { kinds?: number[] }).kinds).toEqual([1]);
+    expect((sub?.filters[1] as { authors?: string[] }).authors).toEqual([authorHex]);
+
+    const messages = decodeSent(socket);
+    expect(messages).toContainEqual(['EOSE', 'sub-multi']);
+  });
+
   it('removes composed-key subscriptions when CLOSE/unsubscribe is processed', () => {
     const relay = new NostrRelay({ info: false, debug: false });
     const socket = createFakeSocket();

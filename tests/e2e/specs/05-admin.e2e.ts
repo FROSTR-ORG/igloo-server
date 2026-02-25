@@ -7,8 +7,9 @@
 import { test, expect, request } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
 import { loadState } from '../state.js';
+import type { SmokeTestState } from '../state.js';
 
-const state = loadState();
+const state: SmokeTestState = loadState();
 const { baseUrl, sessionId, adminUsername } = state;
 
 async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<void> {

@@ -162,6 +162,11 @@ async function resolvePort(host: string, preferredPort: number): Promise<number>
     return preferredPort;
   }
   const fallbackPort = await reserveRandomPort(host);
+  if (!Number.isInteger(fallbackPort) || fallbackPort < 1 || fallbackPort > 65535) {
+    throw new Error(
+      `[setup] Failed to reserve a valid fallback port after preferred port ${preferredPort} was busy (got: ${fallbackPort})`,
+    );
+  }
   console.warn(`[setup] Port ${preferredPort} in use, falling back to ${fallbackPort} (probe-close race still applies)`);
   return fallbackPort;
 }

@@ -33,6 +33,7 @@ Prerequisites:
 - `bun run build` must have been run at least once so `static/app.js` exists (the UI tests load the SPA).
 - `@playwright/test` and Chromium browser installed (`npx playwright install chromium`).
 - Keep port 18002 free when possible. `tests/e2e/global-setup.ts` calls `resolvePort()` and will usually fall back to a random free port if 18002 is busy, but hard-coded references can still break if the preferred port is unavailable.
+- Admin credentials must be provided before running tests. Set `SMOKE_ADMIN_SECRET`, `SMOKE_ADMIN_USERNAME`, and `SMOKE_ADMIN_PASSWORD`, or provide `tests/e2e/smoke-test.local.json`; otherwise `tests/e2e/global-setup.ts` exits early.
 
 ## File Structure
 
@@ -75,7 +76,7 @@ The server is spawned via `spawnDetached('bun', ['run', 'src/server.ts'], env, l
 |---|---|---|
 | `HOST_PORT` | `18002` | Fixed test port |
 | `HOST_NAME` | `127.0.0.1` | Loopback only |
-| `ADMIN_SECRET` | `SmokeTestAdmin1` | Deterministic |
+| `ADMIN_SECRET` | from env/fixture (e.g. `$SMOKE_ADMIN_SECRET`) | Loaded from environment or local fixture — do not commit secrets |
 | `DB_PATH` | `$TMPDIR/igloo-smoke-test/db` | Fresh DB per run |
 | `RATE_LIMIT_ENABLED` | `false` | Avoid rate-limit failures in rapid-fire tests |
 | `SKIP_RELAY_PROBE` | `true` | Skip external relay verification at startup |

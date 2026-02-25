@@ -166,6 +166,7 @@ const PeerList: React.FC<PeerListProps> = ({
   defaultExpanded = false
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [shouldRenderContent, setShouldRenderContent] = useState(defaultExpanded);
   const [peers, setPeers] = useState<PeerStatus[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -183,6 +184,19 @@ const PeerList: React.FC<PeerListProps> = ({
       setIsExpanded(true);
     }
   }, [defaultExpanded]);
+
+  useEffect(() => {
+    if (isExpanded) {
+      setShouldRenderContent(true);
+    }
+  }, [isExpanded]);
+
+  const handleCollapseTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (!isExpanded) {
+      setShouldRenderContent(false);
+    }
+  }, [isExpanded]);
 
   const setPolicyBusyState = useCallback((key: string, busy: boolean) => {
     setPolicySavingPeers(prev => {
@@ -348,7 +362,7 @@ const PeerList: React.FC<PeerListProps> = ({
     return () => {
       isActive = false;
     };
-  }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers]);
+  }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers, authHeaders]);
 
   // Unified handler for peer status and ping updates
   const handlePeerUpdate = (event: CustomEvent) => {
@@ -683,8 +697,10 @@ const PeerList: React.FC<PeerListProps> = ({
           isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
         )}
         aria-hidden={!isExpanded}
+        inert={!isExpanded}
+        onTransitionEnd={handleCollapseTransitionEnd}
       >
-        {isExpanded && (
+        {shouldRenderContent && (
         <div className="bg-gray-900/30 rounded border border-gray-800/30 p-4 space-y-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">

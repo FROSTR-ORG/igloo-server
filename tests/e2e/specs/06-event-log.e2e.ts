@@ -21,6 +21,18 @@ async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<v
 }
 
 test.describe('Event log – /api/event-log', () => {
+  test.beforeAll(async () => {
+    await withApi(async (api) => {
+      const seedRes = await api.post('/api/sign', {
+        headers: { 'X-Session-ID': sessionId },
+        data: { message: 'b'.repeat(64) },
+      });
+      if (!seedRes.ok()) {
+        throw new Error(`Failed to seed event log via /api/sign: ${seedRes.status()} ${await seedRes.text()}`);
+      }
+    });
+  });
+
   test('returns 401 without auth', async () => {
     await withApi(async (api) => {
       const res = await api.get('/api/event-log');

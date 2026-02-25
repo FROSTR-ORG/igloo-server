@@ -64,7 +64,12 @@ const STUB: SmokeTestState = {
  */
 export function loadState(): SmokeTestState {
   const stateFile = process.env.SMOKE_STATE_FILE;
-  if (!stateFile) return STUB;
+  if (!stateFile) {
+    return {
+      ...STUB,
+      shareCredentials: [...STUB.shareCredentials],
+    };
+  }
   try {
     const parsed: unknown = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
     const result = SMOKE_TEST_STATE_SCHEMA.safeParse(parsed);
