@@ -81,14 +81,15 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     throw new Error(`[teardown] State file does not exist: ${resolvedStateFile}`);
   }
 
+  let skipTempCleanup = false;
   try {
     const ageMs = Date.now() - fs.statSync(resolvedStateFile).mtimeMs;
     if (ageMs > MAX_STATE_AGE_MS) {
       console.warn(
         `[teardown] State file is stale (${Math.round(ageMs / 1000)}s old); ` +
-        'skipping process kill and temp cleanup to avoid affecting unrelated runs.'
+        'skipping temp cleanup, but continuing process teardown to avoid leaks.'
       );
-      return;
+      skipTempCleanup = true;
     }
   } catch (error) {
     console.warn('[teardown] Could not stat state file; skipping cleanup for safety:', error);
@@ -105,7 +106,7 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
 
   const cosignerPid = parsePositivePid(parsedState.cosignerPid, 'cosignerPid');
   const serverPid = parsePositivePid(parsedState.serverPid, 'serverPid');
-  const safeTmpDir = resolveSafeTmpDir(parsedState.tmpDir);
+  const safeTmpDir = skipTempCleanup ? null : resolveSafeTmpDir(parsedState.tmpDir);
 
   for (const [label, pid] of [['co-signer', cosignerPid], ['server', serverPid]] as const) {
     if (!pid) continue;
@@ -124,6 +125,11 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
   }
 
   await new Promise(r => setTimeout(r, 500));
+
+  if (skipTempCleanup) {
+    console.warn('[teardown] Skipping temp dir removal because state file is stale.');
+    return;
+  }
 
   if (!safeTmpDir) {
     console.warn('[teardown] Skipping temp dir removal due to invalid tmpDir state.');

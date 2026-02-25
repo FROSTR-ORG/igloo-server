@@ -394,7 +394,7 @@ const PeerList: React.FC<PeerListProps> = ({
       window.removeEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
       window.removeEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
     };
-  }, [authHeaders, isSignerRunning]);
+  }, [isSignerRunning]);
 
   // Ping individual peer
   const handlePingPeer = useCallback(async (peerPubkey: string) => {

@@ -16,6 +16,30 @@ const {
   connectNode,
 } = await import('@frostr/igloo-core');
 
+const CONNECT_TIMEOUT_MS_RAW = process.env.SMOKE_COSIGNER_CONNECT_TIMEOUT_MS ?? '20000';
+const parsedConnectTimeout = Number.parseInt(CONNECT_TIMEOUT_MS_RAW, 10);
+const CONNECT_TIMEOUT_MS = Number.isFinite(parsedConnectTimeout) && parsedConnectTimeout > 0
+  ? parsedConnectTimeout
+  : 20000;
+
+async function connectWithTimeout(nodeInstance, relay) {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new Error(`connectNode timeout after ${CONNECT_TIMEOUT_MS}ms for relay ${relay}`));
+    }, CONNECT_TIMEOUT_MS);
+  });
+
+  const connectionPromise = connectNode(nodeInstance);
+  connectionPromise.catch(() => {});
+
+  try {
+    await Promise.race([connectionPromise, timeoutPromise]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
+}
+
 /**
  * Serializes a value to JSON, replacing circular refs with "[Circular]" to avoid
  * "Converting circular structure to JSON" TypeError from bubbling into outer catch.
@@ -64,7 +88,7 @@ try {
   node.on('subscribed', (...a) => console.log('[cosigner] Subscribed to relay, sub_id:', safeStringify(a).slice(0, 100)));
 
   console.log('[cosigner] Connecting to relay:', relayUrl);
-  await connectNode(node);
+  await connectWithTimeout(node, relayUrl);
   console.log('[cosigner] Connected. Pubkey:', node.pubkey);
   const filter = node.client?.filter;
   const privateFilter = node.client?._filter;

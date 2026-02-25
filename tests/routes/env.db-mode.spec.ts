@@ -1,10 +1,16 @@
 import { describe, expect, test } from 'bun:test';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 function loadFixtureTestKeysetSecret(): string | undefined {
-  const fixturePath = path.resolve('tests/e2e/smoke-test-defaults.json');
+  const fixturePath = path.resolve(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '..',
+    'e2e',
+    'smoke-test-defaults.json'
+  );
   if (!fs.existsSync(fixturePath)) return undefined;
   try {
     const raw: unknown = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));

@@ -48,8 +48,9 @@ describe('buildScriptEnv', () => {
   });
 
   test('removes reserved keys inherited from process.env', () => {
-    const preserved = process.env[ISOLATED_ENV_KEYS[0]];
-    process.env[ISOLATED_ENV_KEYS[0]] = 'should-not-leak';
+    const reservedKey = ISOLATED_ENV_KEYS[0];
+    const preserved = process.env[reservedKey];
+    process.env[reservedKey] = 'should-not-leak';
     try {
       const env = buildScriptEnv(
         {},
@@ -58,10 +59,10 @@ describe('buildScriptEnv', () => {
           envFilePath: '/tmp/forced.env',
         }
       );
-      expect(env[ISOLATED_ENV_KEYS[0]]).toBe('test');
+      expect(env[reservedKey]).toBe('test');
     } finally {
-      if (preserved === undefined) delete process.env[ISOLATED_ENV_KEYS[0]];
-      else process.env[ISOLATED_ENV_KEYS[0]] = preserved;
+      if (preserved === undefined) delete process.env[reservedKey];
+      else process.env[reservedKey] = preserved;
     }
   });
 });

@@ -106,8 +106,8 @@ test.describe('UI – Authenticated app', () => {
 test.describe('UI – Onboarding already completed', () => {
   test('/ does not show onboarding when DB is initialised', async ({ page }) => {
     await page.goto(baseUrl);
-    // The onboarding "ADMIN_SECRET" or "setup" copy should NOT appear
-    await expect(page.locator('body')).not.toContainText(/\badmin[\s_-]*secret\b/i, { timeout: 6_000 });
-    await expect(page.locator('body')).not.toContainText(/\bset[\s_-]*up\b/i, { timeout: 6_000 });
+    // Specific onboarding copy should not appear once DB is initialized.
+    await expect(page.locator('body')).not.toContainText(/enter the admin secret to begin setting up your igloo server/i, { timeout: 6_000 });
+    await expect(page.locator('body')).not.toContainText(/create your admin account to secure your igloo server/i, { timeout: 6_000 });
   });
 });

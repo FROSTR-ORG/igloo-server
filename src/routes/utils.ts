@@ -52,8 +52,6 @@ function extractIpv4MappedIpv6(hostname: string): string | null {
   const mappedPrefixes = [
     /^::ffff:(.+)$/i,
     /^::ffff:0:(.+)$/i,
-    /^0:0:0:0:0:ffff:(.+)$/i,
-    /^0:0:0:0:ffff:0:(.+)$/i,
   ];
   for (const pattern of mappedPrefixes) {
     const match = hostname.match(pattern);
