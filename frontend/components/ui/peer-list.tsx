@@ -307,7 +307,7 @@ const PeerList: React.FC<PeerListProps> = ({
         // Perform initial ping sweep
         setIsInitialPingSweep(true);
         try {
-          await fetch('/api/peers/ping', {
+          const pingResponse = await fetch('/api/peers/ping', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -315,9 +315,13 @@ const PeerList: React.FC<PeerListProps> = ({
             },
             body: JSON.stringify({ target: 'all' })
           });
-          
-          // Refresh peer list after ping sweep
-          await fetchPeers();
+          if (!pingResponse.ok) {
+            const detail = await pingResponse.text().catch(() => '(unreadable)');
+            console.debug(`[PeerList] Initial ping sweep failed (${pingResponse.status}): ${detail}`);
+          } else {
+            // Refresh peer list after ping sweep
+            await fetchPeers();
+          }
         } catch (pingError) {
           console.debug('Initial ping sweep failed:', pingError);
           // Don't set error state for ping failures
@@ -525,7 +529,7 @@ const PeerList: React.FC<PeerListProps> = ({
       return;
     }
     try {
-      await fetch('/api/peers/ping', {
+      const response = await fetch('/api/peers/ping', {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
@@ -533,7 +537,12 @@ const PeerList: React.FC<PeerListProps> = ({
         },
         body: JSON.stringify({ target: 'all' })
       });
-      
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '(unreadable)');
+        console.warn(`[PeerList] Ping all failed (${response.status}): ${detail}`);
+        return;
+      }
+
       // Refresh peer list after pinging all
       await fetchPeers();
     } catch (error) {

@@ -11,43 +11,74 @@ import type { SmokeTestState } from './state.js';
 
 const MAX_STATE_AGE_MS = 10 * 60 * 1000;
 
-function findLatestStateFile(): string | null {
-  const tmpRoot = os.tmpdir();
-  let latestFile: string | null = null;
-  let latestMtime = 0;
-  try {
-    for (const entry of fs.readdirSync(tmpRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !entry.name.startsWith('igloo-smoke-test')) continue;
-      const candidate = path.join(tmpRoot, entry.name, 'state.json');
-      if (!fs.existsSync(candidate)) continue;
-      try {
-        const mtime = fs.statSync(candidate).mtimeMs;
-        if (mtime > latestMtime) {
-          latestMtime = mtime;
-          latestFile = candidate;
-        }
-      } catch {
-        // Ignore transient stat/read errors when scanning tmp entries.
-      }
-    }
-  } catch {
+function parsePositivePid(raw: unknown, fieldName: string): number | null {
+  if (raw == null || raw === 0) return null;
+  if (typeof raw !== 'number' || !Number.isInteger(raw) || raw <= 0) {
+    console.warn(`[teardown] Invalid ${fieldName}; expected positive integer PID, got:`, raw);
     return null;
   }
+  return raw;
+}
 
-  return latestFile;
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === 'EPERM') return true;
+    return false;
+  }
+}
+
+function resolveSafeTmpDir(rawTmpDir: unknown): string | null {
+  if (typeof rawTmpDir !== 'string' || rawTmpDir.trim().length === 0) {
+    console.warn('[teardown] Invalid tmpDir in state; skipping temp cleanup.');
+    return null;
+  }
+  const resolvedTmp = path.resolve(rawTmpDir);
+  const tempRoot = path.resolve(os.tmpdir());
+  const relToTempRoot = path.relative(tempRoot, resolvedTmp);
+  const isInsideTemp =
+    relToTempRoot.length > 0 &&
+    relToTempRoot !== '.' &&
+    !relToTempRoot.startsWith('..') &&
+    !path.isAbsolute(relToTempRoot);
+  if (!isInsideTemp) {
+    console.warn('[teardown] Skipping temp dir removal outside os.tmpdir():', resolvedTmp);
+    return null;
+  }
+  if (!path.basename(resolvedTmp).startsWith('igloo-smoke-test-')) {
+    console.warn('[teardown] Refusing to remove unexpected temp dir name:', resolvedTmp);
+    return null;
+  }
+  try {
+    if (!fs.existsSync(resolvedTmp)) {
+      console.warn('[teardown] tmpDir does not exist; skipping temp cleanup:', resolvedTmp);
+      return null;
+    }
+    if (!fs.statSync(resolvedTmp).isDirectory()) {
+      console.warn('[teardown] tmpDir is not a directory; skipping temp cleanup:', resolvedTmp);
+      return null;
+    }
+  } catch (error) {
+    console.warn('[teardown] Could not validate tmpDir; skipping temp cleanup:', error);
+    return null;
+  }
+  return resolvedTmp;
 }
 
 export default async function globalTeardown(_config: FullConfig): Promise<void> {
   const stateFile = process.env.SMOKE_STATE_FILE;
-  const resolvedStateFile =
-    stateFile && fs.existsSync(stateFile)
-      ? stateFile
-      : findLatestStateFile();
-  console.log('[teardown] Resolved state file:', resolvedStateFile ?? '(none)');
+  if (!stateFile || stateFile.trim().length === 0) {
+    throw new Error('[teardown] SMOKE_STATE_FILE is required; refusing to guess a state file.');
+  }
 
-  if (!resolvedStateFile || !fs.existsSync(resolvedStateFile)) {
-    console.warn('[teardown] No state file found – nothing to clean up.');
-    return;
+  const resolvedStateFile = path.resolve(stateFile);
+  console.log('[teardown] Resolved state file:', resolvedStateFile);
+
+  if (!fs.existsSync(resolvedStateFile)) {
+    throw new Error(`[teardown] State file does not exist: ${resolvedStateFile}`);
   }
 
   try {
@@ -64,61 +95,44 @@ export default async function globalTeardown(_config: FullConfig): Promise<void>
     return;
   }
 
-  let state: SmokeTestState = {
-    port: 0,
-    baseUrl: '',
-    tmpDir: path.dirname(resolvedStateFile),
-    serverPid: 0,
-    cosignerPid: 0,
-    sessionId: '',
-    apiKey: null,
-    apiKeyId: null,
-    groupCredential: '',
-    shareCredentials: [],
-    groupPubkeyHex: '',
-    adminUsername: '',
-    adminPassword: '',
-    adminSecret: '',
-  };
+  let parsedState: Partial<SmokeTestState>;
   try {
-    state = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8')) as SmokeTestState;
-  } catch {
-    console.warn('[teardown] Could not parse state file; using fallback cleanup state.');
+    parsedState = JSON.parse(fs.readFileSync(resolvedStateFile, 'utf8')) as Partial<SmokeTestState>;
+  } catch (error) {
+    console.warn('[teardown] Could not parse state file; skipping cleanup for safety:', error);
+    return;
   }
 
-  for (const [label, pid] of [['co-signer', state.cosignerPid], ['server', state.serverPid]] as const) {
+  const cosignerPid = parsePositivePid(parsedState.cosignerPid, 'cosignerPid');
+  const serverPid = parsePositivePid(parsedState.serverPid, 'serverPid');
+  const safeTmpDir = resolveSafeTmpDir(parsedState.tmpDir);
+
+  for (const [label, pid] of [['co-signer', cosignerPid], ['server', serverPid]] as const) {
     if (!pid) continue;
+    if (!isProcessRunning(pid)) {
+      console.warn(`[teardown] ${label} pid ${pid} is not running; skipping SIGTERM.`);
+      continue;
+    }
     try {
       process.kill(pid, 'SIGTERM');
       console.log(`[teardown] Sent SIGTERM to ${label} (pid ${pid})`);
     } catch (err: unknown) {
-      // ESRCH = process already gone, which is fine
       if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
         console.warn(`[teardown] Could not kill ${label} (pid ${pid}):`, err);
       }
     }
   }
 
-  // Brief pause to let processes flush logs
   await new Promise(r => setTimeout(r, 500));
 
-  const tmpDir = state.tmpDir || path.dirname(resolvedStateFile);
-  try {
-    const resolvedTmp = path.resolve(tmpDir);
-    const tempRoot = path.resolve(os.tmpdir());
-    const relToTempRoot = path.relative(tempRoot, resolvedTmp);
-    const isInsideTemp =
-      relToTempRoot.length > 0 &&
-      relToTempRoot !== '.' &&
-      !relToTempRoot.startsWith('..') &&
-      !path.isAbsolute(relToTempRoot);
+  if (!safeTmpDir) {
+    console.warn('[teardown] Skipping temp dir removal due to invalid tmpDir state.');
+    return;
+  }
 
-    if (!isInsideTemp) {
-      console.warn('[teardown] Skipping temp dir removal outside os.tmpdir():', resolvedTmp);
-    } else {
-      fs.rmSync(resolvedTmp, { recursive: true, force: true });
-      console.log('[teardown] Removed temp dir', resolvedTmp);
-    }
+  try {
+    fs.rmSync(safeTmpDir, { recursive: true, force: true });
+    console.log('[teardown] Removed temp dir', safeTmpDir);
   } catch (err) {
     console.warn('[teardown] Could not remove temp dir:', err);
   }

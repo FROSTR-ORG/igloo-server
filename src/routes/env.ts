@@ -92,9 +92,12 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   // but we keep the broader classification for clarity.
   const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
   // Resolve authenticated DB user id (database mode only)
-  const authenticatedNumericUserId = (!HEADLESS && auth?.authenticated && (
-    typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId))
-  )) ? BigInt(auth!.userId as any) : null;
+  const authenticatedNumericUserId = (() => {
+    if (HEADLESS || !auth?.authenticated) return null;
+    if (typeof auth.userId === 'number') return BigInt(auth.userId);
+    if (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)) return BigInt(auth.userId);
+    return null;
+  })();
   const isRoleAdmin = await (async () => {
     try {
       if (authenticatedNumericUserId === null) return false;
@@ -349,14 +352,6 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             }
 
             return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
-          }
-
-          // Headless writes must be authorized by API key or Basic (sessions are not sufficient)
-          if (HEADLESS && !hasHeadlessWriteAuthorization(req)) {
-            return Response.json(
-              { error: 'Authentication required' },
-              { status: 401, headers }
-            );
           }
 
           let body;

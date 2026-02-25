@@ -48,6 +48,9 @@ test.describe('UI – Authenticated app', () => {
     // The Signer tab or its content should be visible after login
     const signerTab = page.locator('[role="tab"]:has-text("Signer"), button:has-text("Signer"), a:has-text("Signer")').first();
     await expect(signerTab).toBeVisible({ timeout: 8_000 });
+    await signerTab.click();
+    await expect(page.locator('body')).toContainText(/server signer:\s*(running|starting|stopped)/i, { timeout: 8_000 });
+    await expect(page.locator('body')).toContainText(/\bnode\s+(active|inactive)\b/i, { timeout: 8_000 });
   });
 
   test('Configure tab is accessible', async ({ page }) => {
@@ -104,6 +107,7 @@ test.describe('UI – Onboarding already completed', () => {
   test('/ does not show onboarding when DB is initialised', async ({ page }) => {
     await page.goto(baseUrl);
     // The onboarding "ADMIN_SECRET" or "setup" copy should NOT appear
-    await expect(page.locator('body')).not.toContainText('Admin Secret', { timeout: 6_000 });
+    await expect(page.locator('body')).not.toContainText(/\badmin[\s_-]*secret\b/i, { timeout: 6_000 });
+    await expect(page.locator('body')).not.toContainText(/\bset[\s_-]*up\b/i, { timeout: 6_000 });
   });
 });

@@ -34,7 +34,7 @@ const SMOKE_TEST_STATE_SCHEMA = z.object({
   groupCredential: z.string().min(1, 'groupCredential must be non-empty'),
   shareCredentials: z.array(z.string().min(1, 'share credential must be non-empty')),
   groupPubkeyHex: z.string(),
-  adminUsername: z.string(),
+  adminUsername: z.string().min(1, 'adminUsername must be non-empty'),
   adminPassword: z.string().min(1, 'adminPassword must be non-empty'),
   adminSecret: z.string().min(1, 'adminSecret must be non-empty'),
 });

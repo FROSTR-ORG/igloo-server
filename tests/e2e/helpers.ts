@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 
 export async function loginAs(page: Page, username: string, password: string): Promise<void> {
   const usernameField = page
-    .locator('input[type="text"], input[id*="user"], input[name*="user"]')
+    .locator('input[autocomplete="username"], input[id*="user" i], input[name*="user" i], input[placeholder*="user" i]')
     .first();
   const passwordField = page.locator('input[type="password"]').first();
   const submitBtn = page.getByRole('button', { name: /login|sign in/i }).first();

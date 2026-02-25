@@ -154,7 +154,9 @@ test.describe('Admin – Users', () => {
       });
       expect(res.status()).toBe(200);
       const body = await res.json();
+      expect(body).toHaveProperty('admin', true);
       expect(body).toHaveProperty('userId');
+      expect(body.userId).not.toBeNull();
     });
   });
 

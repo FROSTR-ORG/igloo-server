@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'bun:test';
 import { getValidRelays, normalizeRelayListForEcho } from './utils.js';
 
-function withEnv(key: string, value: string, fn: () => void): void {
+async function withEnv<T>(key: string, value: string, fn: () => Promise<T> | T): Promise<T> {
   const previous = process.env[key];
   process.env[key] = value;
   try {
-    fn();
+    return await fn();
   } finally {
     if (previous === undefined) delete process.env[key];
     else process.env[key] = previous;
@@ -32,26 +32,38 @@ describe('getValidRelays', () => {
     expect(getValidRelays('["not-a-relay","ftp://example.com"]', { fallbackToDefault: false })).toEqual([]);
   });
 
-  it('filters IPv6 localhost relay when localhost relays are disallowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+  it('filters IPv6 localhost relay when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://[::1]:18002"]', { fallbackToDefault: false })).toEqual([]);
     });
   });
   
-  it('filters 127.0.0.0/8 localhost relay range when localhost relays are disallowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+  it('filters 127.0.0.0/8 localhost relay range when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://127.0.0.2:18002"]', { fallbackToDefault: false })).toEqual([]);
     });
   });
 
-  it('filters localhost hostname relay when localhost relays are disallowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+  it('filters localhost hostname relay when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://localhost:18002"]', { fallbackToDefault: false })).toEqual([]);
     });
   });
 
-  it('keeps localhost relay when localhost relays are explicitly allowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+  it('filters IPv4-mapped IPv6 relay when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+      expect(getValidRelays('["ws://[::ffff:127.0.0.1]:18002"]', { fallbackToDefault: false })).toEqual([]);
+    });
+  });
+
+  it('filters IPv4-mapped IPv6 hex relay when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+      expect(getValidRelays('["ws://[::ffff:7f00:1]:18002"]', { fallbackToDefault: false })).toEqual([]);
+    });
+  });
+
+  it('keeps localhost relay when localhost relays are explicitly allowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(getValidRelays('["ws://127.0.0.1:18002"]', { fallbackToDefault: false }))
         .toEqual(['ws://127.0.0.1:18002']);
     });
@@ -59,8 +71,8 @@ describe('getValidRelays', () => {
 });
 
 describe('normalizeRelayListForEcho', () => {
-  it('filters localhost relays when localhost relays are disallowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+  it('filters localhost relays when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(
         normalizeRelayListForEcho([
           'ws://127.0.0.1:18002',
@@ -71,14 +83,14 @@ describe('normalizeRelayListForEcho', () => {
     });
   });
 
-  it('keeps localhost relay in echo list when explicitly allowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+  it('keeps localhost relay in echo list when explicitly allowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(normalizeRelayListForEcho(['ws://127.0.0.1:18002'])).toEqual(['ws://127.0.0.1:18002']);
     });
   });
 
-  it('keeps localhost hostname in echo list when explicitly allowed', () => {
-    withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+  it('keeps localhost hostname in echo list when explicitly allowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(normalizeRelayListForEcho(['ws://localhost:18002'])).toEqual(['ws://localhost:18002']);
     });
   });

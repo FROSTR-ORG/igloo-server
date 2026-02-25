@@ -5,7 +5,7 @@ import { pathToFileURL } from 'url';
 
 export const PROJECT_ROOT = pathToFileURL(process.cwd() + '/').href;
 
-const ISOLATED_ENV_KEYS = [
+export const ISOLATED_ENV_KEYS = [
   'NODE_ENV',
   'HEADLESS',
   'AUTH_ENABLED',
@@ -27,11 +27,28 @@ const ISOLATED_ENV_KEYS = [
   'ENV_FILE_PATH',
 ] as const;
 
-const ISOLATED_ENV_PREFIXES = [
+export const ISOLATED_ENV_PREFIXES = [
   'RATE_LIMIT_',
 ] as const;
 
-function buildScriptEnv(overrides: Record<string, string>): Record<string, string> {
+function isBlockedEnvKey(key: string): boolean {
+  return ISOLATED_ENV_KEYS.includes(key as (typeof ISOLATED_ENV_KEYS)[number]) ||
+    ISOLATED_ENV_PREFIXES.some(prefix => key.startsWith(prefix));
+}
+
+function sanitizeOverrides(overrides: Record<string, string>): Record<string, string> {
+  const sanitized: Record<string, string> = {};
+  for (const [key, value] of Object.entries(overrides)) {
+    if (isBlockedEnvKey(key)) continue;
+    sanitized[key] = value;
+  }
+  return sanitized;
+}
+
+export function buildScriptEnv(
+  overrides: Record<string, string>,
+  forced: { dbPath: string; envFilePath: string }
+): Record<string, string> {
   const nextEnv: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (typeof value === 'string') {
@@ -39,37 +56,35 @@ function buildScriptEnv(overrides: Record<string, string>): Record<string, strin
     }
   }
 
-  for (const key of ISOLATED_ENV_KEYS) {
-    delete nextEnv[key];
-  }
-
   for (const key of Object.keys(nextEnv)) {
-    if (ISOLATED_ENV_PREFIXES.some(prefix => key.startsWith(prefix))) {
+    if (isBlockedEnvKey(key)) {
       delete nextEnv[key];
     }
   }
 
+  const sanitizedOverrides = sanitizeOverrides(overrides);
+
   return {
     ...nextEnv,
+    ...sanitizedOverrides,
     NODE_ENV: 'test',
-    ...overrides,
+    DB_PATH: forced.dbPath,
+    ENV_FILE_PATH: forced.envFilePath,
   };
 }
 
 /**
  * Runs route code in an isolated Bun subprocess and returns the parsed @@RESULT@@ JSON payload.
- * Uses T=any by default so callers without an explicit type can access result properties (e.g. out.status).
  */
-export function runRouteScript<T = any>(code: string, env: Record<string, string> = {}): T {
+export function runRouteScript<T = Record<string, unknown>>(code: string, env: Record<string, string> = {}): T {
   const tmpDir = mkdtempSync(path.join(os.tmpdir(), 'igloo-route-'));
   try {
     const runner = path.join(tmpDir, 'runner.ts');
     writeFileSync(runner, code, 'utf8');
 
-    const isolatedEnv = buildScriptEnv({
-      ENV_FILE_PATH: path.join(tmpDir, '.env'),
-      DB_PATH: path.join(tmpDir, 'igloo.db'),
-      ...env
+    const isolatedEnv = buildScriptEnv(env, {
+      envFilePath: path.join(tmpDir, '.env'),
+      dbPath: path.join(tmpDir, 'igloo.db'),
     });
 
     const result = Bun.spawnSync({

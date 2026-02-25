@@ -1,9 +1,30 @@
 import { describe, expect, test } from 'bun:test';
+import fs from 'fs';
+import path from 'path';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
+
+function loadFixtureTestKeysetSecret(): string | undefined {
+  const fixturePath = path.resolve('tests/e2e/smoke-test-defaults.json');
+  if (!fs.existsSync(fixturePath)) return undefined;
+  try {
+    const raw: unknown = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
+    if (typeof raw !== 'object' || raw === null) return undefined;
+    const testNsecHex = (raw as Record<string, unknown>).testNsecHex;
+    return typeof testNsecHex === 'string' && testNsecHex.trim().length > 0 ? testNsecHex : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 const TEST_KEYSET_SECRET =
   process.env.TEST_KEYSET_SECRET ??
-  'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+  process.env.TEST_NSEC_HEX ??
+  loadFixtureTestKeysetSecret();
+if (!TEST_KEYSET_SECRET) {
+  throw new Error(
+    'TEST_KEYSET_SECRET (or TEST_NSEC_HEX) must be set, or tests/e2e/smoke-test-defaults.json must provide testNsecHex.'
+  );
+}
 
 describe('DB-mode /api/env behavior', () => {
   test('rejects non-admin session without ADMIN_SECRET (403)', () => {

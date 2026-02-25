@@ -32,13 +32,51 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
   return hex.toLowerCase();
 }
 
+function isValidIpv4Address(hostname: string): boolean {
+  const octets = hostname.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255);
+}
+
+function decodeMappedIpv4(segment: string): string | null {
+  if (isValidIpv4Address(segment)) return segment;
+  const mappedHex = segment.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!mappedHex) return null;
+  const hi = Number.parseInt(mappedHex[1], 16);
+  const lo = Number.parseInt(mappedHex[2], 16);
+  const decoded = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  return isValidIpv4Address(decoded) ? decoded : null;
+}
+
+function extractIpv4MappedIpv6(hostname: string): string | null {
+  const mappedPrefixes = [
+    /^::ffff:(.+)$/i,
+    /^::ffff:0:(.+)$/i,
+    /^0:0:0:0:0:ffff:(.+)$/i,
+    /^0:0:0:0:ffff:0:(.+)$/i,
+  ];
+  for (const pattern of mappedPrefixes) {
+    const match = hostname.match(pattern);
+    if (!match) continue;
+    const decoded = decodeMappedIpv4(match[1]);
+    if (decoded) return decoded;
+  }
+  return null;
+}
+
 function isLoopbackRelayHost(hostname: string): boolean {
-  const normalized = hostname.replace(/^\[(.*)\]$/, '$1');
+  let normalized = hostname.replace(/^\[(.*)\]$/, '$1').toLowerCase();
   if (normalized === 'localhost' || normalized === '::1') return true;
+
+  const mappedIpv4 = extractIpv4MappedIpv6(normalized);
+  if (mappedIpv4) {
+    normalized = mappedIpv4;
+  }
+
   const octets = normalized.split('.');
   if (octets.length !== 4) return false;
   if (octets[0] !== '127') return false;
-  return octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255);
+  return isValidIpv4Address(normalized);
 }
 
 // Helper function to get valid relay URLs

@@ -37,27 +37,76 @@ const smokeDefaultsRaw: unknown = JSON.parse(fs.readFileSync(smokeDefaultsPath, 
 if (typeof smokeDefaultsRaw !== 'object' || smokeDefaultsRaw === null) {
   throw new Error(`smoke-test-defaults.json must be a JSON object, got ${typeof smokeDefaultsRaw}`);
 }
-const requiredKeys = ['testNsecHex', 'adminSecret', 'adminUsername', 'adminPassword'] as const;
 const raw = smokeDefaultsRaw as Record<string, unknown>;
-const missing = requiredKeys.filter(k => raw[k] == null || typeof raw[k] !== 'string');
-if (missing.length > 0) {
+if (typeof raw.testNsecHex !== 'string' || raw.testNsecHex.trim().length === 0) {
   throw new Error(
-    `smoke-test-defaults.json is missing required string properties: ${missing.join(', ')}. ` +
-    `Expected: ${requiredKeys.join(', ')}`,
+    'smoke-test-defaults.json is missing required non-empty string property: testNsecHex.',
   );
 }
 const smokeDefaults = raw as {
   testNsecHex: string;
+};
+
+function loadOptionalLocalSmokeCredentials(): Partial<{
   adminSecret: string;
   adminUsername: string;
   adminPassword: string;
-};
+}> {
+  const localFixturePath =
+    process.env.SMOKE_LOCAL_FIXTURE_PATH?.trim() ||
+    path.resolve('tests/e2e/smoke-test.local.json');
+  if (!fs.existsSync(localFixturePath)) {
+    return {};
+  }
+  try {
+    const localRaw: unknown = JSON.parse(fs.readFileSync(localFixturePath, 'utf8'));
+    if (typeof localRaw !== 'object' || localRaw === null) {
+      throw new Error('expected JSON object');
+    }
+    const fixture = localRaw as Record<string, unknown>;
+    return {
+      adminSecret: typeof fixture.adminSecret === 'string' && fixture.adminSecret.trim().length > 0
+        ? fixture.adminSecret
+        : undefined,
+      adminUsername: typeof fixture.adminUsername === 'string' && fixture.adminUsername.trim().length > 0
+        ? fixture.adminUsername
+        : undefined,
+      adminPassword: typeof fixture.adminPassword === 'string' && fixture.adminPassword.trim().length > 0
+        ? fixture.adminPassword
+        : undefined,
+    };
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Failed to parse local smoke fixture at ${localFixturePath}: ${detail}`);
+  }
+}
+
+const localSmokeCredentials = loadOptionalLocalSmokeCredentials();
+
+function requireNonEmptyString(value: string | undefined, errorMessage: string): string {
+  if (!value || value.trim().length === 0) {
+    throw new Error(errorMessage);
+  }
+  return value;
+}
 
 // Defaults come from fixture for local CI; callers can still override via environment.
 const TEST_NSEC_HEX = process.env.TEST_NSEC_HEX ?? smokeDefaults.testNsecHex;
-const ADMIN_SECRET = process.env.ADMIN_SECRET ?? smokeDefaults.adminSecret;
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME ?? smokeDefaults.adminUsername;
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD ?? smokeDefaults.adminPassword;
+const MISSING_SMOKE_CREDS_MESSAGE =
+  'Smoke admin credentials are required. Set SMOKE_ADMIN_SECRET, SMOKE_ADMIN_USERNAME, and ' +
+  'SMOKE_ADMIN_PASSWORD (or provide tests/e2e/smoke-test.local.json).';
+const ADMIN_SECRET = requireNonEmptyString(
+  process.env.SMOKE_ADMIN_SECRET ?? process.env.ADMIN_SECRET ?? localSmokeCredentials.adminSecret,
+  MISSING_SMOKE_CREDS_MESSAGE
+);
+const ADMIN_USERNAME = requireNonEmptyString(
+  process.env.SMOKE_ADMIN_USERNAME ?? process.env.ADMIN_USERNAME ?? localSmokeCredentials.adminUsername,
+  MISSING_SMOKE_CREDS_MESSAGE
+);
+const ADMIN_PASSWORD = requireNonEmptyString(
+  process.env.SMOKE_ADMIN_PASSWORD ?? process.env.ADMIN_PASSWORD ?? localSmokeCredentials.adminPassword,
+  MISSING_SMOKE_CREDS_MESSAGE
+);
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -334,14 +383,14 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     console.log('[setup] Probing signing (waiting for co-signer to join relay)...');
     const TEST_MSG = 'a'.repeat(64);
     let signOk = false;
-    for (let attempt = 1; attempt <= 4; attempt++) {
+    for (let attempt = 1; attempt <= 5; attempt++) {
       if (cosignerProcess && cosignerProcess.exitCode !== null) {
         const cosLog = fs.existsSync(COSIGNER_LOG) ? fs.readFileSync(COSIGNER_LOG, 'utf8') : '(empty)';
         throw new Error(
           `Co-signer exited early with code ${cosignerProcess.exitCode} before signing was ready.\nCo-signer log:\n${cosLog}`
         );
       }
-      await sleep(2000);
+      await sleep(3000);
       const sr = await api.post('/api/sign', {
         headers: { 'X-Session-ID': sessionId },
         data: { message: TEST_MSG },
