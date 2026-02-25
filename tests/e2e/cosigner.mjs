@@ -91,15 +91,11 @@ try {
   await connectWithTimeout(node, relayUrl);
   console.log('[cosigner] Connected. Pubkey:', node.pubkey);
   const filter = node.client?.filter;
-  const privateFilter = node.client?._filter;
   if (filter !== undefined) {
     console.log('[cosigner] Filter (public):', safeStringify(filter));
-  } else if (privateFilter !== undefined) {
-    // TODO: Remove private fallback once @frostr/igloo-core exposes a stable public filter accessor.
-    console.warn('[cosigner] Filter fallback in use: node.client._filter (private internals)');
-    console.log('[cosigner] Filter (private fallback):', safeStringify(privateFilter));
   } else {
-    console.warn('[cosigner] Filter unavailable on node.client (public and private fields missing)');
+    // TODO: Track upstream accessor support in @frostr/igloo-core if filter visibility is needed.
+    console.warn('[cosigner] Filter unavailable on node.client.filter (public accessor missing)');
   }
 
 } catch (err) {

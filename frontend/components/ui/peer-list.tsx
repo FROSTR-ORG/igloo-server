@@ -178,6 +178,7 @@ const PeerList: React.FC<PeerListProps> = ({
   const [policySavingPeers, setPolicySavingPeers] = useState<Set<string>>(new Set());
   const [policyPeerErrors, setPolicyPeerErrors] = useState<Map<string, string>>(new Map());
   const hasUserToggledRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (defaultExpanded && !hasUserToggledRef.current) {
@@ -189,6 +190,13 @@ const PeerList: React.FC<PeerListProps> = ({
     if (isExpanded) {
       setShouldRenderContent(true);
     }
+  }, [isExpanded]);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (isExpanded) panel.removeAttribute('inert');
+    else panel.setAttribute('inert', '');
   }, [isExpanded]);
 
   const handleCollapseTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
@@ -638,14 +646,11 @@ const PeerList: React.FC<PeerListProps> = ({
               position="right"
               width="w-64"
               focusable
+              ariaLabel="Peer list help"
               trigger={(
-                <button
-                  type="button"
-                  aria-label="Peer list help"
-                  className="inline-flex items-center text-blue-400 cursor-pointer"
-                >
+                <span className="inline-flex items-center text-blue-400 cursor-pointer" aria-hidden="true">
                   <HelpCircle size={16} />
-                </button>
+                </span>
               )}
               content={
                 <p>Shows the signing peers in your FROSTR group with online/offline status and ping latency. Use the refresh button to ping all peers and update their status.</p>
@@ -692,12 +697,12 @@ const PeerList: React.FC<PeerListProps> = ({
 
       {/* Collapsible Content */}
       <div 
+        ref={panelRef}
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
           isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
         )}
         aria-hidden={!isExpanded}
-        inert={!isExpanded}
         onTransitionEnd={handleCollapseTransitionEnd}
       >
         {shouldRenderContent && (

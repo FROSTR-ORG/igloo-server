@@ -1,6 +1,6 @@
 /**
  * UI event-log smoke tests.
- * Signing operations performed in 04-sign.spec.ts will have produced log entries.
+ * Signing operations performed in 04-sign.e2e.ts will have produced log entries.
  */
 
 import { test, expect, request } from '@playwright/test';

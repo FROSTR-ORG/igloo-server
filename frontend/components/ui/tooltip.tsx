@@ -10,6 +10,7 @@ interface TooltipProps {
   width?: string;
   triggerClassName?: string;
   focusable?: boolean;
+  ariaLabel?: string;
 }
 
 const Tooltip: React.FC<TooltipProps> = ({
@@ -20,6 +21,7 @@ const Tooltip: React.FC<TooltipProps> = ({
   width = 'w-72',
   triggerClassName,
   focusable = false,
+  ariaLabel,
 }) => {
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
@@ -123,6 +125,7 @@ const Tooltip: React.FC<TooltipProps> = ({
         type="button"
         {...commonProps}
         className={cn('inline-flex align-middle', triggerClassName)}
+        aria-label={ariaLabel}
       >
         {triggerContent}
       </button>

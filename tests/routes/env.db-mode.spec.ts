@@ -4,6 +4,12 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
+function normalizeOptionalEnv(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function loadFixtureTestKeysetSecret(): string | undefined {
   const fixturePath = path.resolve(
     path.dirname(fileURLToPath(import.meta.url)),
@@ -23,8 +29,8 @@ function loadFixtureTestKeysetSecret(): string | undefined {
 }
 
 const TEST_KEYSET_SECRET =
-  process.env.TEST_KEYSET_SECRET ??
-  process.env.TEST_NSEC_HEX ??
+  normalizeOptionalEnv(process.env.TEST_KEYSET_SECRET) ??
+  normalizeOptionalEnv(process.env.TEST_NSEC_HEX) ??
   loadFixtureTestKeysetSecret();
 if (!TEST_KEYSET_SECRET) {
   throw new Error(

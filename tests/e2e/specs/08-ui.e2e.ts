@@ -80,6 +80,10 @@ test.describe('UI – Authenticated app', () => {
   });
 
   test('Event Log section is visible on Signer tab and shows no errors', async ({ page }) => {
+    const signerTab = page.locator('[role="tab"]:has-text("Signer"), button:has-text("Signer"), a:has-text("Signer")').first();
+    await expect(signerTab).toBeVisible({ timeout: 8_000 });
+    await signerTab.click();
+
     // The Event Log is a collapsible section embedded in the Signer tab (not a top-level tab).
     // It renders a div with role="button" and a span containing "Event Log".
     const eventLogToggle = page.locator('[role="button"]:has-text("Event Log")').first();

@@ -50,6 +50,12 @@ describe('getValidRelays', () => {
     });
   });
 
+  it('filters localhost hostname with trailing dot when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+      expect(getValidRelays('["ws://localhost.:18002"]', { fallbackToDefault: false })).toEqual([]);
+    });
+  });
+
   it('filters IPv4-mapped IPv6 relay when localhost relays are disallowed', async () => {
     await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://[::ffff:127.0.0.1]:18002"]', { fallbackToDefault: false })).toEqual([]);
