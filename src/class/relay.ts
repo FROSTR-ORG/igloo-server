@@ -201,7 +201,7 @@ class RelaySession {
     this.log.debug('event:', event)
 
     if (!Nostr.verify_event(event)) {
-      this.log.info(`event failed validation (id=${event.id.slice(0, 8)} kind=${event.kind})`)
+      this.log.debug(`event failed validation (id=${event.id.slice(0, 8)} kind=${event.kind})`)
       this.send([ 'OK', event.id, false, 'event failed validation' ])
       return
     }

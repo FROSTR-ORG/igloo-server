@@ -104,7 +104,7 @@ jobs:
 
         audit_output="$(cat "$audit_log")"
         echo "bun audit failed after ${last_attempt:-3} attempts with exit code ${last_exit}"
-        if grep -Eiq 'network|registry|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT' "$audit_log"; then
+        if grep -Eiq 'network|registry|ENOTFOUND|ECONNREFUSED|EAI_AGAIN|ETIMEDOUT' <<< "$audit_output"; then
           echo "bun audit failed after retries due to network/registry error: $audit_output"
         else
           echo "bun audit failed after retries - vulnerabilities detected: $audit_output"
@@ -114,6 +114,7 @@ jobs:
 
     - name: Check for secrets
       # Pinned to immutable commit (v3.93.4) for supply-chain safety.
+      # Maintenance: periodically verify this SHA still corresponds to the intended upstream release.
       uses: trufflesecurity/trufflehog@7c0734f987ad0bb30ee8da210773b800ee2016d3
       with:
         path: ./

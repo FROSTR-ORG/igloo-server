@@ -48,7 +48,9 @@ describe('buildScriptEnv', () => {
   });
 
   test('removes reserved keys inherited from process.env', () => {
-    const reservedKey = ISOLATED_ENV_KEYS[0];
+    const reservedKey = ISOLATED_ENV_KEYS.find((key) => key !== 'NODE_ENV');
+    expect(reservedKey).toBeDefined();
+    if (!reservedKey) throw new Error('Expected at least one reserved key other than NODE_ENV');
     const preserved = process.env[reservedKey];
     process.env[reservedKey] = 'should-not-leak';
     try {
@@ -59,7 +61,7 @@ describe('buildScriptEnv', () => {
           envFilePath: '/tmp/forced.env',
         }
       );
-      expect(env[reservedKey]).toBe('test');
+      expect(env[reservedKey]).toBeUndefined();
     } finally {
       if (preserved === undefined) delete process.env[reservedKey];
       else process.env[reservedKey] = preserved;

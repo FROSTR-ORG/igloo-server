@@ -402,7 +402,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           if (updatingCredentials) {
             // Set the timestamp explicitly here to avoid relying on downstream helpers
             // for correctness, then perform a single write.
-            (env as any).CREDENTIALS_SAVED_AT = new Date().toISOString();
+            env.CREDENTIALS_SAVED_AT = new Date().toISOString();
           }
           const writeOk = await writeEnvFile(env);
 

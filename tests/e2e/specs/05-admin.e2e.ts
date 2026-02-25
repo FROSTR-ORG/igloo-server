@@ -93,32 +93,43 @@ test.describe('Admin – API keys', () => {
 
   test('revoked API key returns 401', async () => {
     await withApi(async (api) => {
-      // Create a fresh key
-      const createRes = await api.post('/api/admin/api-keys', {
-        headers: { 'X-Session-ID': sessionId },
-        data: { label: 'revoke-test-key' },
-      });
-      expect(createRes.status()).toBe(201);
-      const { apiKey } = await createRes.json();
+      let createdApiKey: { id: string | number; token: string } | null = null;
+      try {
+        // Create a fresh key
+        const createRes = await api.post('/api/admin/api-keys', {
+          headers: { 'X-Session-ID': sessionId },
+          data: { label: 'revoke-test-key' },
+        });
+        expect(createRes.status()).toBe(201);
+        const { apiKey } = await createRes.json();
+        createdApiKey = apiKey;
 
-      // Verify it works on an auth-protected endpoint
-      const beforeRes = await api.get('/api/event-log', {
-        headers: { 'X-API-Key': apiKey.token },
-      });
-      expect(beforeRes.status()).toBe(200);
+        // Verify it works on an auth-protected endpoint
+        const beforeRes = await api.get('/api/event-log', {
+          headers: { 'X-API-Key': createdApiKey.token },
+        });
+        expect(beforeRes.status()).toBe(200);
 
-      // Revoke it
-      const revokeRes = await api.post('/api/admin/api-keys/revoke', {
-        headers: { 'X-Session-ID': sessionId },
-        data: { apiKeyId: apiKey.id, reason: 'smoke-test cleanup' },
-      });
-      expect(revokeRes.status()).toBe(200);
+        // Revoke it
+        const revokeRes = await api.post('/api/admin/api-keys/revoke', {
+          headers: { 'X-Session-ID': sessionId },
+          data: { apiKeyId: createdApiKey.id, reason: 'smoke-test cleanup' },
+        });
+        expect(revokeRes.status()).toBe(200);
 
-      // Now the revoked key should be rejected
-      const afterRes = await api.get('/api/event-log', {
-        headers: { 'X-API-Key': apiKey.token },
-      });
-      expect(afterRes.status()).toBe(401);
+        // Now the revoked key should be rejected
+        const afterRes = await api.get('/api/event-log', {
+          headers: { 'X-API-Key': createdApiKey.token },
+        });
+        expect(afterRes.status()).toBe(401);
+      } finally {
+        if (createdApiKey) {
+          await api.post('/api/admin/api-keys/revoke', {
+            headers: { 'X-Session-ID': sessionId },
+            data: { apiKeyId: createdApiKey.id, reason: 'test cleanup' },
+          }).catch(() => null);
+        }
+      }
     });
   });
 

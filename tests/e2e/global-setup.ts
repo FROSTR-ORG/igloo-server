@@ -279,6 +279,17 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
     const { generateKeysetWithSecret, decodeGroup } = iglooCore;
 
     const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, TEST_NSEC_HEX);
+    if (
+      !Array.isArray(shareCredentials) ||
+      shareCredentials.length < 2 ||
+      typeof shareCredentials[0] !== 'string' ||
+      typeof shareCredentials[1] !== 'string'
+    ) {
+      throw new Error(
+        `Invalid keyset from generateKeysetWithSecret: shareCredentials.length=${Array.isArray(shareCredentials) ? shareCredentials.length : 'non-array'} ` +
+        `shareCredentials=${JSON.stringify(shareCredentials)} groupCredentialType=${typeof groupCredential}`
+      );
+    }
     const group = decodeGroup(groupCredential);
     const groupPubkeyHex = group.group_pk.replace(/^(02|03)/, '');
     state.groupCredential = groupCredential;
