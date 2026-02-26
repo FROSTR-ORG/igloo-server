@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS, SKIP_ADMIN_SECRET_VALIDATION } from '../const.js';
@@ -290,21 +290,15 @@ export async function validateAdminSecret(adminSecret: string | undefined): Prom
   try {
     // Coerce to string to prevent type errors
     const adminSecretStr = String(adminSecret);
-    const providedSecret = Buffer.from(adminSecretStr);
-    const expectedSecret = Buffer.from(ADMIN_SECRET);
-
-    // Timing-safe comparison
-    if (providedSecret.length !== expectedSecret.length) {
-      return false;
-    }
-    
-    return timingSafeEqual(providedSecret, expectedSecret);
+    const providedDigest = createHash('sha256').update(adminSecretStr).digest();
+    const expectedDigest = createHash('sha256').update(String(ADMIN_SECRET)).digest();
+    return timingSafeEqual(providedDigest, expectedDigest);
   } catch {
     // On any error, perform dummy comparison to maintain consistent timing
-    const expectedSecret = Buffer.from(String(ADMIN_SECRET));
-    const dummySecret = Buffer.alloc(expectedSecret.length);
+    const expectedDigest = createHash('sha256').update(String(ADMIN_SECRET)).digest();
+    const dummyDigest = Buffer.alloc(expectedDigest.length);
     try {
-      timingSafeEqual(dummySecret, expectedSecret);
+      timingSafeEqual(dummyDigest, expectedDigest);
     } catch {}
     return false;
   }

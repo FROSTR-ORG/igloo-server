@@ -1094,6 +1094,10 @@ export function handleLogout(req: Request): Response {
     'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
+  };
+
+  const logoutHeaders = {
+    ...headers,
     'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
   };
   
@@ -1127,7 +1131,7 @@ export function handleLogout(req: Request): Response {
     try { zeroizeVaultEntryAndDelete(sessionId) } catch {}
   }
 
-  return Response.json({ success: true }, { headers });
+  return Response.json({ success: true }, { headers: logoutHeaders });
 }
 
 // Authentication middleware wrapper (deprecated - use explicit auth parameters instead)

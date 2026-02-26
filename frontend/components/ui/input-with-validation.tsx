@@ -2,7 +2,7 @@ import React, { useId } from 'react';
 import { Input } from "./input";
 import { cn } from "../../lib/utils";
 
-interface InputWithValidationProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
+interface InputWithValidationProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'required'> {
   label?: string | React.ReactNode;
   value: string;
   onChange: (value: string) => void;

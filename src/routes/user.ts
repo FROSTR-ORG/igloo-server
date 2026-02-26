@@ -283,10 +283,13 @@ export async function handleUserRoute(
           
           if ('relays' in body) {
             // Validate relays format
-            if (body.relays === null || 
-                (Array.isArray(body.relays) && 
-                 body.relays.every((r: any) => typeof r === 'string' && isValidWebSocketUrl(r)))) {
-              updates.relays = body.relays;
+            if (body.relays === null) {
+              updates.relays = null;
+            } else if (
+              Array.isArray(body.relays) &&
+              body.relays.every((r: unknown): r is string => typeof r === 'string' && isValidWebSocketUrl(r))
+            ) {
+              updates.relays = body.relays.map((relay: string) => relay.trim());
             } else {
               return Response.json(
                 { error: 'Invalid relay URLs. Must use ws:// or wss://' },

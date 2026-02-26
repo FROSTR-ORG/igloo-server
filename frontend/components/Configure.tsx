@@ -556,19 +556,34 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
 
     setIsGenerating(true);
     try {
-      const resolveRelaysToSave = (): string[] => {
-        if (Array.isArray(existingRelays) && existingRelays.length > 0) {
-          return existingRelays;
+      const parseRelayList = (raw: string): string[] | null => {
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          if (!Array.isArray(parsed)) return null;
+          const relays = parsed
+            .filter((relay): relay is string => typeof relay === 'string')
+            .map((relay) => relay.trim())
+            .filter((relay) => relay.length > 0);
+          return relays.length > 0 ? relays : null;
+        } catch {
+          return null;
         }
-        if (typeof advancedSettings.RELAYS === 'string' && advancedSettings.RELAYS.trim().length > 0) {
-          try {
-            const parsed = JSON.parse(advancedSettings.RELAYS);
-            if (Array.isArray(parsed) && parsed.every(relay => typeof relay === 'string') && parsed.length > 0) {
-              return parsed;
-            }
-          } catch {
-            // fall back to default relay list below
+      };
+
+      const resolveRelaysToSave = (): string[] => {
+        if (!isHeadlessMode) {
+          if (Array.isArray(existingRelays) && existingRelays.length > 0) {
+            return existingRelays.map((relay) => relay.trim()).filter((relay) => relay.length > 0);
           }
+          return ["wss://relay.primal.net"];
+        }
+
+        if (typeof advancedSettings.RELAYS === 'string' && advancedSettings.RELAYS.trim().length > 0) {
+          const parsedRelays = parseRelayList(advancedSettings.RELAYS);
+          if (parsedRelays) return parsedRelays;
+        }
+        if (Array.isArray(existingRelays) && existingRelays.length > 0) {
+          return existingRelays.map((relay) => relay.trim()).filter((relay) => relay.length > 0);
         }
         return ["wss://relay.primal.net"];
       };
@@ -594,6 +609,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
           const detail = await response.text().catch(() => '');
           throw new Error(detail || `Failed to save headless credentials (${response.status})`);
         }
+        setExistingRelays(relaysToSave);
       } else {
         // Database mode - save to user credentials
         // Preserve existing relays or use default if none exist
@@ -616,6 +632,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
           const detail = await response.text().catch(() => '');
           throw new Error(detail || `Failed to save credentials (${response.status})`);
         }
+        setExistingRelays(relaysToSave);
       }
       
       setHasExistingCredentials(true);
