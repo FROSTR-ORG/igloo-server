@@ -34,8 +34,8 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
   }
   if (!context.node) return Response.json({ error: 'Node not available' }, { status: 503, headers });
 
-  // Basic rate limit for e2e crypto ops
-  // Separate bucket for e2e crypto ops
+  // Basic rate limit for crypto operations
+  // Use a dedicated bucket separate from signing traffic.
   const rate = await checkRateLimit(req, 'crypto', { clientIp: context.clientIp });
   if (!rate.allowed) {
     return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {

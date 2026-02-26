@@ -85,12 +85,14 @@ export async function handleNip04Route(req: Request, url: URL, context: RouteCon
   }
   if (!context.node) return Response.json({ error: 'Node not available' }, { status: 503, headers })
 
-  // Separate bucket for e2e crypto ops
+  // Separate bucket for crypto operations
   const rate = await checkRateLimit(req, 'crypto', { clientIp: context.clientIp });
   if (!rate.allowed) {
+    const retryAfterWindow = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '900', 10)
+    const retryAfter = Number.isFinite(retryAfterWindow) ? Math.ceil(retryAfterWindow) : 900
     return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
-      headers: { ...headers, 'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString() }
+      headers: { ...headers, 'Retry-After': retryAfter.toString() }
     })
   }
 

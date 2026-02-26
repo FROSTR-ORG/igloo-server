@@ -1,7 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
 function normalizeOptionalEnv(value: unknown): string | undefined {
@@ -10,33 +7,10 @@ function normalizeOptionalEnv(value: unknown): string | undefined {
   return trimmed.length > 0 ? trimmed : undefined;
 }
 
-function loadFixtureTestKeysetSecret(): string | undefined {
-  const fixturePath = path.resolve(
-    path.dirname(fileURLToPath(import.meta.url)),
-    '..',
-    'e2e',
-    'smoke-test-defaults.json'
-  );
-  if (!fs.existsSync(fixturePath)) return undefined;
-  try {
-    const raw: unknown = JSON.parse(fs.readFileSync(fixturePath, 'utf8'));
-    if (typeof raw !== 'object' || raw === null) return undefined;
-    const testNsecHex = (raw as Record<string, unknown>).testNsecHex;
-    return typeof testNsecHex === 'string' && testNsecHex.trim().length > 0 ? testNsecHex : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
 const TEST_KEYSET_SECRET =
   normalizeOptionalEnv(process.env.TEST_KEYSET_SECRET) ??
   normalizeOptionalEnv(process.env.TEST_NSEC_HEX) ??
-  normalizeOptionalEnv(loadFixtureTestKeysetSecret());
-if (!TEST_KEYSET_SECRET) {
-  throw new Error(
-    'TEST_KEYSET_SECRET (or TEST_NSEC_HEX) must be set, or tests/e2e/smoke-test-defaults.json must provide testNsecHex.'
-  );
-}
+  'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
 
 describe('DB-mode /api/env behavior', () => {
   test('rejects non-admin session without ADMIN_SECRET (403)', () => {

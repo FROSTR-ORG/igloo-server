@@ -65,7 +65,6 @@ test-*.sh
 debug-*.js
 verify-*.md
 test-results/
-playwright-report/
 
 # LLM files
 .claude
