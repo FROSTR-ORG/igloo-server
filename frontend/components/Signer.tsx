@@ -274,7 +274,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   const checkServerStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/status', {
-        headers: authHeaders
+        headers: authHeadersRef.current
       });
       const status = await response.json();
       setServerStatus(status);
@@ -331,8 +331,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     const fetchSelfPubkey = async () => {
       try {
         const response = await fetch('/api/peers/self', {
-        headers: authHeaders
-      });
+          headers: authHeadersRef.current
+        });
         if (response.ok) {
           const data = await response.json();
           setRealSelfPubkey(data.pubkey);
@@ -931,9 +931,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   };
 
   // Save relay URLs to user credentials (database mode)
-  const saveRelaysToUserCredentials = async (relays: string[]) => {
+  const saveRelaysToUserCredentials = async (relays: string[]): Promise<boolean> => {
     try {
-      await fetch('/api/user/relays', {
+      const response = await fetch('/api/user/relays', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -943,15 +943,27 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           relays: relays
         })
       });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const message = detail || `Failed to save relays (${response.status})`;
+        console.error('[Signer] Failed to save relays to user credentials:', message);
+        setCredentialSaveError(message);
+        return false;
+      }
+      setCredentialSaveError(null);
+      return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save relays to user credentials';
       console.error('Error saving relays to user credentials:', error);
+      setCredentialSaveError(message);
+      return false;
     }
   };
   
   // Save relay URLs to server .env file (headless mode)
-  const saveRelaysToServerEnv = async (relays: string[]) => {
+  const saveRelaysToServerEnv = async (relays: string[]): Promise<boolean> => {
     try {
-      await fetch('/api/env', {
+      const response = await fetch('/api/env', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -961,8 +973,20 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           RELAYS: JSON.stringify(relays)
         })
       });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        const message = detail || `Failed to save relays to env (${response.status})`;
+        console.error('[Signer] Failed to save relays to env:', message);
+        setCredentialSaveError(message);
+        return false;
+      }
+      setCredentialSaveError(null);
+      return true;
     } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to save relays to env';
       console.error('Error saving relays to env:', error);
+      setCredentialSaveError(message);
+      return false;
     }
   };
 

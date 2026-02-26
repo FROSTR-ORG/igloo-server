@@ -125,6 +125,22 @@ const CONNECTIVITY_PING_TIMEOUT = (() => {
   return 10000; // default 10s
 })();
 
+let simplePoolSubscribeManyLock: Promise<void> = Promise.resolve();
+
+async function withSimplePoolSubscribeManyLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = simplePoolSubscribeManyLock;
+  let release: (() => void) | undefined;
+  simplePoolSubscribeManyLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release?.();
+  }
+}
+
 async function respondToEchoRequest(node: ServerBifrostNode, msg: any): Promise<boolean> {
   const requesterPubkey = msg?.env?.pubkey;
   if (typeof requesterPubkey !== 'string' || requesterPubkey.trim().length === 0) {
@@ -1707,6 +1723,7 @@ export function setupNodeEventListeners(
 
   // Catch-all for any other events - but exclude ping events since they're handled by message handler
   node.on('*', (event: any) => {
+    const isStringEvent = typeof event === 'string';
     // Only log events that aren't already handled above, and exclude ping events to avoid duplicates
     if (event !== 'message' && 
         event !== 'closed' && 
@@ -1717,11 +1734,13 @@ export function setupNodeEventListeners(
         event !== 'disconnect' &&
         event !== 'reconnect' &&
         event !== 'reconnecting' &&
-        !event.startsWith('/ping/') &&
-        !event.startsWith('/sign/') &&
-        !event.startsWith('/ecdh/')) {
+        (!isStringEvent || (
+          !event.startsWith('/ping/') &&
+          !event.startsWith('/sign/') &&
+          !event.startsWith('/ecdh/')
+        ))) {
       updateNodeActivity(addServerLog);
-      addServerLog('bifrost', `Bifrost event: ${event}`);
+      addServerLog('bifrost', `Bifrost event: ${String(event)}`);
     }
   });
 
@@ -2163,32 +2182,41 @@ export async function createNodeWithCredentials(
           autoReconnect: true        // Enable auto-reconnection
         };
 
-        // Normalize nostr-tools subscribeMany inputs so single-filter arrays are treated as plain objects.
-        try {
-          const poolProto: any = SimplePool?.prototype;
-          if (poolProto && !poolProto.__iglooFilterNormalizePatched) {
-            const originalSubscribeMany = poolProto.subscribeMany;
-            if (typeof originalSubscribeMany === 'function') {
+        const result = await withSimplePoolSubscribeManyLock(async () => {
+          let restoreSubscribeMany: (() => void) | null = null;
+          try {
+            const poolProto: any = SimplePool?.prototype;
+            const originalSubscribeMany = poolProto?.subscribeMany;
+            if (poolProto && typeof originalSubscribeMany === 'function') {
+              // Scope filter normalization to this node-creation attempt only.
               poolProto.subscribeMany = function normalizedSubscribeMany(this: any, relays: any, filters: any, params: any) {
                 const normalizedFilters = Array.isArray(filters) && filters.length === 1 && filters[0] && typeof filters[0] === 'object' && !Array.isArray(filters[0])
                   ? filters[0]
                   : filters;
                 return originalSubscribeMany.call(this, relays, normalizedFilters, params);
               };
-              poolProto.__iglooFilterNormalizePatched = true;
+              restoreSubscribeMany = () => {
+                poolProto.subscribeMany = originalSubscribeMany;
+              };
+            }
+          } catch (patchError) {
+            if (addServerLog) {
+              addServerLog('warn', 'Failed to prepare SimplePool filter normalization', {
+                error: patchError instanceof Error ? patchError.message : String(patchError)
+              });
             }
           }
-        } catch (patchError) {
-          if (addServerLog) {
-            addServerLog('warn', 'Failed to normalize SimplePool filters', {
-              error: patchError instanceof Error ? patchError.message : String(patchError)
-            });
-          }
-        }
 
-        const result = await createConnectedNode(enhancedConfig, {
-          enableLogging: false,      // Disable internal logging to avoid duplication
-          logLevel: 'error'          // Only log errors from igloo-core
+          try {
+            return await createConnectedNode(enhancedConfig, {
+              enableLogging: false,      // Disable internal logging to avoid duplication
+              logLevel: 'error'          // Only log errors from igloo-core
+            });
+          } finally {
+            try {
+              restoreSubscribeMany?.();
+            } catch {}
+          }
         });
         
         if (result.node) {

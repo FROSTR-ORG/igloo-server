@@ -75,7 +75,7 @@ const Tooltip: React.FC<TooltipProps> = (props) => {
         break;
     }
 
-    const clampedTop = Math.max(8, top);
+    const clampedTop = Math.max(8, Math.min(top, window.innerHeight - tooltipRect.height - 8));
     const clampedLeft = Math.max(8, Math.min(left, window.innerWidth - tooltipRect.width - 8));
 
     setCoords({ top: clampedTop, left: clampedLeft });
@@ -119,7 +119,6 @@ const Tooltip: React.FC<TooltipProps> = (props) => {
 
   const commonProps = {
     ref: triggerRef,
-    className: cn('inline-flex align-middle', triggerClassName),
     onMouseEnter: () => setIsVisible(true),
     onMouseLeave: () => setIsVisible(false),
     onFocus: focusable ? () => setIsVisible(true) : undefined,
@@ -148,7 +147,7 @@ const Tooltip: React.FC<TooltipProps> = (props) => {
   }
 
   return (
-    <div {...commonProps}>
+    <div {...commonProps} className={cn('inline-flex align-middle', triggerClassName)}>
       {triggerContent}
     </div>
   );

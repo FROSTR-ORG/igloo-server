@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef, useId, useCallback } from "react"
 import { Button } from "./ui/button"
 import { Input } from "./ui/input"
 import { Tooltip } from "./ui/tooltip"
@@ -80,6 +80,10 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   const [isLoadingConfig, setIsLoadingConfig] = useState(true);
   const [advancedError, setAdvancedError] = useState<string | undefined>(undefined);
   const loadAdvancedSettingsRef = useRef<AbortController | null>(null);
+  const clearConfirmButtonRef = useRef<HTMLButtonElement | null>(null);
+  const clearCancelButtonRef = useRef<HTMLButtonElement | null>(null);
+  const clearTriggerButtonRef = useRef<HTMLButtonElement | null>(null);
+  const clearDialogTitleId = useId();
 
   /**
    * Convert an environment value of unknown type to a string suitable for input fields.
@@ -106,7 +110,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   }
 
   // Function to load advanced settings from env
-  const loadAdvancedSettings = async () => {
+  const loadAdvancedSettings = useCallback(async (headlessMode: boolean) => {
     // Load advanced settings in both headless and database modes
     if (loadAdvancedSettingsRef.current) {
       try { loadAdvancedSettingsRef.current.abort() } catch {}
@@ -144,7 +148,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         
         // Only include RELAYS in headless mode (server-wide configuration)
         // In database mode, relays are managed per-user through the Signer component
-        if (isHeadlessMode) {
+        if (headlessMode) {
           newSettings.RELAYS = coerceEnvValueToString(envVars.RELAYS, '["wss://relay.primal.net"]');
         }
         setAdvancedSettings(newSettings);
@@ -162,7 +166,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     } finally {
       setIsLoadingAdvanced(false);
     }
-  };
+  }, [authHeaders]);
 
   const handleRevealAdminSecret = async () => {
     if (!canRevealAdminSecret) return;
@@ -261,7 +265,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         }
         
         // Load advanced settings in both modes
-        await loadAdvancedSettings();
+        await loadAdvancedSettings(headlessMode);
         
         // Store existing relays (if any)
         if (savedRelays && Array.isArray(savedRelays) && savedRelays.length > 0) {
@@ -305,15 +309,15 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       }
     };
     loadExistingData();
-  }, []);
+  }, [authHeaders, loadAdvancedSettings]);
 
   // Reload advanced settings when window regains focus or when showAdvanced changes
   // This ensures relay changes from Signer.tsx are reflected here
   useEffect(() => {
     if (!showAdvanced) return;
 
-    const handleFocus = () => { loadAdvancedSettings() };
-    loadAdvancedSettings();
+    const handleFocus = () => { void loadAdvancedSettings(isHeadlessMode) };
+    void loadAdvancedSettings(isHeadlessMode);
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('focus', handleFocus);
@@ -322,7 +326,41 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         loadAdvancedSettingsRef.current = null
       }
     };
-  }, [showAdvanced]);
+  }, [showAdvanced, isHeadlessMode, loadAdvancedSettings]);
+
+  useEffect(() => {
+    if (!showClearConfirm) return;
+    const previousFocus = (document.activeElement as HTMLElement | null) ?? clearTriggerButtonRef.current;
+    const focusPrimary = () => clearConfirmButtonRef.current?.focus();
+    const raf = window.requestAnimationFrame(focusPrimary);
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowClearConfirm(false);
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusables = [clearCancelButtonRef.current, clearConfirmButtonRef.current].filter(Boolean) as HTMLElement[];
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.cancelAnimationFrame(raf);
+      window.removeEventListener('keydown', handleKeyDown);
+      (clearTriggerButtonRef.current ?? previousFocus)?.focus();
+    };
+  }, [showClearConfirm]);
 
   const handleNameChange = (value: string) => {
     setKeysetName(value);
@@ -712,6 +750,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             </div>
             {hasExistingCredentials && (
               <Button
+                ref={clearTriggerButtonRef}
                 variant="destructive"
                 size="sm"
                 onClick={() => setShowClearConfirm(true)}
@@ -1328,14 +1367,20 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         {/* Clear Credentials Confirmation Modal */}
         {showClearConfirm && (
           <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
-            <div className="bg-gray-800 border border-red-600/30 rounded-lg p-6 max-w-md mx-4">
-              <h3 className="text-lg font-semibold text-red-300 mb-3">Clear Credentials?</h3>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby={clearDialogTitleId}
+              className="bg-gray-800 border border-red-600/30 rounded-lg p-6 max-w-md mx-4"
+            >
+              <h3 id={clearDialogTitleId} className="text-lg font-semibold text-red-300 mb-3">Clear Credentials?</h3>
               <p className="text-gray-300 mb-4">
                 This will permanently remove your saved credentials and stop the signer. 
                 You'll need to reconfigure with new credentials to use the signer again.
               </p>
               <div className="flex gap-3 justify-end">
                 <Button
+                  ref={clearCancelButtonRef}
                   variant="ghost"
                   onClick={() => setShowClearConfirm(false)}
                   className="text-gray-400 hover:text-gray-300"
@@ -1343,6 +1388,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
                   Cancel
                 </Button>
                 <Button
+                  ref={clearConfirmButtonRef}
                   onClick={handleClearCredentials}
                   className="bg-red-600 hover:bg-red-700 text-white"
                 >

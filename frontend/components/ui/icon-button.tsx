@@ -38,8 +38,6 @@ const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(
   ({ className, variant, size, icon, tooltip, ...props }, ref) => {
     return (
       <Button
-        variant="ghost"
-        size="sm"
         className={cn(iconButtonVariants({ variant, size }), className)}
         ref={ref}
         title={tooltip}

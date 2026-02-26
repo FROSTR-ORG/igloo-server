@@ -10,7 +10,7 @@ import Spinner from './ui/spinner';
 import type { UpdateInfo } from '../types';
 
 interface LoginProps {
-  onLogin: (sessionId: string | undefined, userId: string, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => void;
+  onLogin: (sessionId: string | undefined, userId: string | number, credentials?: { apiKey?: string; basicAuth?: { username: string; password: string } }) => void;
   authEnabled: boolean;
   updateInfo?: UpdateInfo | null;
 }
@@ -82,16 +82,34 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled, updateInfo }) => {
         body: JSON.stringify(loginData),
       });
 
-      const data = await response.json();
+      const raw = await response.text();
+      let data: { success?: boolean; sessionId?: string; userId?: string | number; error?: string; message?: string } | null = null;
+      if (raw) {
+        try {
+          data = JSON.parse(raw);
+        } catch {
+          data = { error: raw, message: raw };
+        }
+      }
 
-      if (response.ok && data.success) {
+      const normalizedUserId = (() => {
+        if (typeof data?.userId === 'string') {
+          const trimmed = data.userId.trim();
+          return trimmed.length > 0 ? trimmed : null;
+        }
+        if (typeof data?.userId === 'number' && Number.isFinite(data.userId)) {
+          return data.userId;
+        }
+        return null;
+      })();
+      if (response.ok && data?.success && normalizedUserId !== null) {
         // Pass credentials along with session info for fallback authentication
         const credentials = authMode === 'api' 
           ? { apiKey } 
           : { basicAuth: { username, password } };
-        onLogin(data.sessionId, data.userId, credentials);
+        onLogin(data.sessionId, normalizedUserId, credentials);
       } else {
-        setError(data.error || 'Login failed');
+        setError(data?.error || data?.message || (response.ok && data?.success ? 'Login response missing userId' : 'Login failed'));
       }
     } catch (error) {
       setError('Network error. Please try again.');

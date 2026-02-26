@@ -11,7 +11,7 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' && github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
     permissions:
       contents: write
       pull-requests: write
@@ -126,28 +126,27 @@ jobs:
           --exclude=.git \
           --exclude=release \
           --exclude=frontend \
-          src static package.json bun.lock tsconfig.json dockerfile compose.yml README.md LICENSE
+          src static package.json bun.lock tsconfig.json Dockerfile compose.yml README.md LICENSE
 
     - name: Create release tag
       run: |
         # Create git tag for release (works with branch protection)
-        # Note: Version changes are not committed back to master due to branch protection
+        # Note: Version changes are not committed back to main due to branch protection
         # The release archives will contain the correct versions
         git tag ${{ steps.new_version.outputs.new_version }}
         git push origin ${{ steps.new_version.outputs.new_version }}
 
-    - name: Create GitHub Release
-      uses: actions/create-release@v1
-      id: create_release
+    - name: Create GitHub release and upload assets
+      uses: softprops/action-gh-release@v2
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
         tag_name: ${{ steps.new_version.outputs.new_version }}
-        release_name: Release ${{ steps.new_version.outputs.new_version }}
+        name: Release ${{ steps.new_version.outputs.new_version }}
         body: |
           ## Changes in ${{ steps.new_version.outputs.new_version }}
           
-          See [CHANGELOG.md](https://github.com/FROSTR-ORG/igloo-server/blob/master/CHANGELOG.md) for full details.
+          See [CHANGELOG.md](https://github.com/FROSTR-ORG/igloo-server/blob/main/CHANGELOG.md) for full details.
           
           ### Installation
           
@@ -166,26 +165,9 @@ jobs:
           ```
         draft: false
         prerelease: false
-
-    - name: Upload source archive
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release/igloo-server-${{ steps.new_version.outputs.version_number }}-src.tar.gz
-        asset_name: igloo-server-${{ steps.new_version.outputs.version_number }}-src.tar.gz
-        asset_content_type: application/gzip
-
-    - name: Upload binary archive
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        upload_url: ${{ steps.create_release.outputs.upload_url }}
-        asset_path: ./release/igloo-server-${{ steps.new_version.outputs.version_number }}.tar.gz
-        asset_name: igloo-server-${{ steps.new_version.outputs.version_number }}.tar.gz
-        asset_content_type: application/gzip
+        files: |
+          ./release/igloo-server-${{ steps.new_version.outputs.version_number }}-src.tar.gz
+          ./release/igloo-server-${{ steps.new_version.outputs.version_number }}.tar.gz
 
   docker:
     runs-on: ubuntu-latest

@@ -42,9 +42,8 @@ describe('admin whoami with DB-backed session', () => {
 
     rmSync(tmpDir, { recursive: true, force: true })
   })
-})
-
-afterAll(async () => {
-  try { const auth = await import('../../src/routes/auth'); auth.stopAuthCleanup(); } catch {}
-  try { const db = await import('../../src/db/database'); await db.closeDatabase(); } catch {}
+  afterAll(async () => {
+    try { const auth = await import('../../src/routes/auth'); auth.stopAuthCleanup(); } catch {}
+    try { const db = await import('../../src/db/database'); await db.closeDatabase(); } catch {}
+  })
 })

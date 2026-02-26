@@ -19,6 +19,9 @@ CREATE TABLE IF NOT EXISTS nip46_data_audit (
   audited_at DATETIME DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Keep this migration idempotent if rerun.
+DELETE FROM nip46_data_audit;
+
 -- Audit existing sessions
 INSERT INTO nip46_data_audit (
   session_id,
@@ -35,27 +38,28 @@ SELECT
   id,
   user_id,
   client_pubkey,
-  CASE WHEN relays IS NOT NULL THEN LENGTH(relays) ELSE 0 END as relay_size,
-  CASE WHEN policy_methods IS NOT NULL THEN LENGTH(policy_methods) ELSE 0 END as methods_size,
-  CASE WHEN policy_kinds IS NOT NULL THEN LENGTH(policy_kinds) ELSE 0 END as kinds_size,
+  CASE WHEN relays IS NOT NULL THEN LENGTH(CAST(relays AS BLOB)) ELSE 0 END as relay_size,
+  CASE WHEN policy_methods IS NOT NULL THEN LENGTH(CAST(policy_methods AS BLOB)) ELSE 0 END as methods_size,
+  CASE WHEN policy_kinds IS NOT NULL THEN LENGTH(CAST(policy_kinds AS BLOB)) ELSE 0 END as kinds_size,
   CASE
     WHEN relays IS NOT NULL OR policy_methods IS NOT NULL OR policy_kinds IS NOT NULL
-    THEN COALESCE(LENGTH(relays), 0) + COALESCE(LENGTH(policy_methods), 0) + COALESCE(LENGTH(policy_kinds), 0)
+    THEN COALESCE(LENGTH(CAST(relays AS BLOB)), 0) + COALESCE(LENGTH(CAST(policy_methods AS BLOB)), 0) + COALESCE(LENGTH(CAST(policy_kinds AS BLOB)), 0)
     ELSE 0
   END as total_size,
   -- Check if any field would exceed old 10KB limit
+  -- (legacy threshold retained for historical comparison)
   CASE
-    WHEN COALESCE(LENGTH(relays), 0) > 10000
-      OR COALESCE(LENGTH(policy_methods), 0) > 10000
-      OR COALESCE(LENGTH(policy_kinds), 0) > 10000
+    WHEN COALESCE(LENGTH(CAST(relays AS BLOB)), 0) > 10000
+      OR COALESCE(LENGTH(CAST(policy_methods AS BLOB)), 0) > 10000
+      OR COALESCE(LENGTH(CAST(policy_kinds AS BLOB)), 0) > 10000
     THEN 1
     ELSE 0
   END as has_risk_old_limit,
-  -- Check if any field would exceed new 50KB limit
+  -- Check if any field would exceed current MAX_JSON_FIELD_SIZE (50KB)
   CASE
-    WHEN COALESCE(LENGTH(relays), 0) > 50000
-      OR COALESCE(LENGTH(policy_methods), 0) > 50000
-      OR COALESCE(LENGTH(policy_kinds), 0) > 50000
+    WHEN COALESCE(LENGTH(CAST(relays AS BLOB)), 0) > 50000
+      OR COALESCE(LENGTH(CAST(policy_methods AS BLOB)), 0) > 50000
+      OR COALESCE(LENGTH(CAST(policy_kinds AS BLOB)), 0) > 50000
     THEN 1
     ELSE 0
   END as has_risk_new_limit

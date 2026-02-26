@@ -33,8 +33,12 @@ describe('Onboarding routes', () => {
       process.exit(0);
     `;
 
-    const result = runRouteScript(script);
-    rmSync(tmpDir, { recursive: true, force: true });
+    let result: { status: number; body: { headlessMode?: boolean; initialized?: boolean } };
+    try {
+      result = runRouteScript<{ status: number; body: { headlessMode?: boolean; initialized?: boolean } }>(script);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
     expect(result.status).toBe(200);
     expect(result.body?.headlessMode).toBe(false);
     expect(typeof result.body?.initialized).toBe('boolean');
@@ -68,8 +72,12 @@ describe('Onboarding routes', () => {
       process.exit(0);
     `;
 
-    const result = runRouteScript(script);
-    rmSync(tmpDir, { recursive: true, force: true });
+    let result: { status: number; body: { error?: string } };
+    try {
+      result = runRouteScript<{ status: number; body: { error?: string } }>(script);
+    } finally {
+      rmSync(tmpDir, { recursive: true, force: true });
+    }
     expect(result.status).toBe(401);
     expect(result.body?.error).toBe('Authentication failed');
   });

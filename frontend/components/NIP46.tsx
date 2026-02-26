@@ -241,23 +241,43 @@ export function NIP46({ authHeaders }: NIP46Props) {
   }, [sessions])
 
   const handleRevokeSession = async (pubkey: string) => {
-    await fetch(`/api/nip46/sessions/${pubkey}`, {
-      method: 'DELETE',
-      headers
-    })
-    await fetchSessions()
+    try {
+      const response = await fetch(`/api/nip46/sessions/${pubkey}`, {
+        method: 'DELETE',
+        headers
+      })
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(detail || `Failed to revoke session (${response.status})`)
+      }
+      await fetchSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to revoke session'
+      setConnectError(message)
+      console.error('[NIP46] Failed to revoke session:', error)
+    }
   }
 
   const handleUpdateSessionPolicy = useCallback(async (pubkey: string, policy: PermissionPolicy) => {
-    await fetch(`/api/nip46/sessions/${pubkey}/policy`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({
-        methods: policy.methods,
-        kinds: policy.kinds
+    try {
+      const response = await fetch(`/api/nip46/sessions/${pubkey}/policy`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          methods: policy.methods,
+          kinds: policy.kinds
+        })
       })
-    })
-    await fetchSessions()
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(detail || `Failed to update policy (${response.status})`)
+      }
+      await fetchSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update session policy'
+      setConnectError(message)
+      console.error('[NIP46] Failed to update session policy:', error)
+    }
   }, [headers, fetchSessions])
 
   const handleAddRelay = async (relay: string) => {

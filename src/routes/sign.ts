@@ -127,9 +127,11 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
   // Use a separate bucket so signing traffic doesn't compete with auth/login
   const rate = await checkRateLimit(req, 'sign', { clientIp: context.clientIp });
   if (!rate.allowed) {
+    const retryAfterWindow = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '900', 10);
+    const retryAfterSeconds = Number.isFinite(retryAfterWindow) ? Math.ceil(retryAfterWindow) : 900;
     return Response.json({ code: 'RATE_LIMITED', error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
-      headers: { ...headers, 'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString() }
+      headers: { ...headers, 'Retry-After': retryAfterSeconds.toString() }
     });
   }
 

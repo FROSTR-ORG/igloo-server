@@ -6,7 +6,7 @@
 
 import { mkdir } from 'node:fs/promises';
 
-const VERSION = process.env.SWAGGER_UI_VERSION || '5.9.0';
+const VERSION = process.env.SWAGGER_UI_VERSION || '5.31.1';
 const BASE = `https://unpkg.com/swagger-ui-dist@${VERSION}`;
 const FILES = [
   'swagger-ui.css',

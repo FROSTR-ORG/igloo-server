@@ -23,7 +23,8 @@ export const RELAYS: string[] = (() => {
 })();
 
 export const HOST_NAME = process.env['HOST_NAME'] ?? 'localhost'
-export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
+const parsedHostPort = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
+export const HOST_PORT = Number.isNaN(parsedHostPort) ? 8002 : parsedHostPort
 
 // Raw credential strings for igloo-core functions - treat empty/whitespace as absent
 export const GROUP_CRED = (() => {

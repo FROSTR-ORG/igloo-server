@@ -97,7 +97,11 @@ export class NostrRelay extends EventEmitter {
   }
 
   store (event : SignedEvent) {
-    this._cache = this._cache.concat(event).sort((a, b) => a > b ? -1 : 1)
+    this._cache = this._cache.concat(event).sort((a, b) => {
+      const createdAtDiff = (b.created_at ?? 0) - (a.created_at ?? 0)
+      if (createdAtDiff !== 0) return createdAtDiff
+      return b.id.localeCompare(a.id)
+    })
   }
 }
 

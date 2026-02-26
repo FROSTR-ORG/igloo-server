@@ -62,7 +62,9 @@ Note: `env_file: .env` injects values only at container start. If you also bind-
 
 4) Firewall (UFW):
 ```bash
-sudo ufw allow 80 443 22
+sudo ufw allow 22
+sudo ufw allow 80
+sudo ufw allow 443
 sudo ufw allow 8002   # only if accessing without reverse proxy
 sudo ufw enable
 ```

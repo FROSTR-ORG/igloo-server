@@ -74,10 +74,9 @@ function normalizeRequestedPolicy(input: any): Nip46Policy | null {
       const [name, arg] = token.split(':')
       if (!name) continue
       if (name === 'sign_event') {
+        methods.sign_event = true
         if (arg && /^\d+$/.test(arg)) {
           kinds[arg] = true
-        } else {
-          methods[name] = true
         }
       } else {
         methods[name] = true
@@ -397,11 +396,18 @@ export class Nip46Service {
 
     this.agent = new SignerAgent(this.signer, config)
     this.registerAgentListeners()
-
-    await this.agent.connect(relays)
-    this.started = true
-    this.currentRelays = relays
-    this.log('info', 'NIP-46 service started', { relays })
+    try {
+      await this.agent.connect(relays)
+      this.started = true
+      this.currentRelays = relays
+      this.log('info', 'NIP-46 service started', { relays })
+    } catch (error) {
+      this.removeAgentListeners()
+      this.agent = null
+      this.signer = null
+      this.started = false
+      throw error
+    }
   }
 
   private async loadRelays(userId: number | bigint): Promise<string[]> {

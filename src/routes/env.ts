@@ -21,7 +21,7 @@ import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
 import { getUserCredentials, getUserById } from '../db/database.js';
-import { timingSafeEqual } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 
 // Wrapper function to use shared node creation with env variables
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
@@ -129,10 +129,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     if (!AUTH_CONFIG.API_KEY) return false;
     const provided = extractApiKeyFromHeaders(r);
     if (!provided) return false;
-    const a = Buffer.from(provided);
-    const b = Buffer.from(AUTH_CONFIG.API_KEY);
-    if (a.length !== b.length) return false;
-    try { return timingSafeEqual(a, b); } catch { return false; }
+    try {
+      const a = createHash('sha256').update(provided).digest();
+      const b = createHash('sha256').update(AUTH_CONFIG.API_KEY).digest();
+      return timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   };
 
   const hasValidHeadlessBasic = (r: Request): boolean => {
@@ -419,12 +422,22 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
                 process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
               }
+              if (validKeys.includes('GROUP_CRED')) {
+                if (typeof env.GROUP_CRED === 'string') process.env.GROUP_CRED = env.GROUP_CRED;
+                else delete process.env.GROUP_CRED;
+              }
+              if (validKeys.includes('SHARE_CRED')) {
+                if (typeof env.SHARE_CRED === 'string') process.env.SHARE_CRED = env.SHARE_CRED;
+                else delete process.env.SHARE_CRED;
+              }
               if (updatingRelays) {
                 const relaysVal = (env as any).RELAYS;
                 if (Array.isArray(relaysVal)) {
                   process.env.RELAYS = relaysVal.join(',');
                 } else if (typeof relaysVal === 'string') {
                   process.env.RELAYS = relaysVal;
+                } else {
+                  delete process.env.RELAYS;
                 }
               }
             } catch {}
@@ -598,6 +611,10 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
           if (await writeEnvFileWithTimestamp(env)) {
             try {
+              process.env.SHARE_CRED = shareCredential;
+              process.env.GROUP_CRED = groupCredential;
+            } catch {}
+            try {
               // Serialize node restart under the global node lock; updateNode inside
               // createAndConnectServerNode() handles teardown of any existing node.
               await executeUnderNodeLock(async () => {
@@ -715,6 +732,15 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
+            try {
+              for (const key of validKeys) {
+                if (key === 'GROUP_CRED') delete process.env.GROUP_CRED;
+                if (key === 'SHARE_CRED') delete process.env.SHARE_CRED;
+                if (key === 'RELAYS') delete process.env.RELAYS;
+                if (key === 'ALLOWED_ORIGINS') delete process.env.ALLOWED_ORIGINS;
+                if (key === 'FROSTR_SIGN_TIMEOUT') delete process.env.FROSTR_SIGN_TIMEOUT;
+              }
+            } catch {}
             // If credentials were deleted, clean up the node
             if (deletingCredentials) {
               try {

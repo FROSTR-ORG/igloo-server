@@ -65,6 +65,24 @@ export async function handleRequest(
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
   };
+  const parsedRateLimitWindowSeconds = Number.parseInt(process.env.RATE_LIMIT_WINDOW ?? '', 10);
+  const retryAfterSeconds = (
+    Number.isFinite(parsedRateLimitWindowSeconds) && parsedRateLimitWindowSeconds > 0
+      ? Math.ceil(parsedRateLimitWindowSeconds)
+      : 900
+  ).toString();
+  const hasAuthHint = (() => {
+    const authz = req.headers.get('authorization');
+    const apiKey = req.headers.get('x-api-key');
+    const sessionHeader = req.headers.get('x-session-id');
+    const cookie = req.headers.get('cookie');
+    return Boolean(
+      (authz && authz.trim().length > 0) ||
+      (apiKey && apiKey.trim().length > 0) ||
+      (sessionHeader && sessionHeader.trim().length > 0) ||
+      (cookie && /(?:^|;\s*)session=/.test(cookie))
+    );
+  })();
 
   // Handle preflight OPTIONS request for all API endpoints
   if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
@@ -85,7 +103,7 @@ export async function handleRequest(
           status: 429,
           headers: {
             ...headers,
-            'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+            'Retry-After': retryAfterSeconds
           }
         });
       }
@@ -202,7 +220,7 @@ export async function handleRequest(
           status: 429,
           headers: {
             ...headers,
-            'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+            'Retry-After': retryAfterSeconds
           }
         });
       }
@@ -229,24 +247,26 @@ export async function handleRequest(
     } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
       // Special handling for /api/status: attempt authentication if headers are present
       // but don't require it (allow unauthenticated health checks)
-      try {
-        const authResult = await authenticate(req);
-        
-        // Only use auth info if authentication actually succeeded (not rate limited or failed)
-        if (authResult.authenticated && !authResult.rateLimited) {
-          // Create auth info with secure ephemeral storage for secrets
-          authInfo = createRequestAuth({
-            userId: authResult.userId,
-            authenticated: true,
-            derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
-            sessionId: authResult.sessionId,
-            hasPassword: authResult.hasPassword
-          });
+      if (hasAuthHint) {
+        try {
+          const authResult = await authenticate(req);
+          
+          // Only use auth info if authentication actually succeeded (not rate limited or failed)
+          if (authResult.authenticated && !authResult.rateLimited) {
+            // Create auth info with secure ephemeral storage for secrets
+            authInfo = createRequestAuth({
+              userId: authResult.userId,
+              authenticated: true,
+              derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+              sessionId: authResult.sessionId,
+              hasPassword: authResult.hasPassword
+            });
+          }
+          // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
+        } catch (error) {
+          // If authentication throws an error, allow unauthenticated access
+          // Authentication attempt failed, allowing unauthenticated access for health checks
         }
-        // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
-      } catch (error) {
-        // If authentication throws an error, allow unauthenticated access
-        // Authentication attempt failed, allowing unauthenticated access for health checks
       }
     }
 

@@ -9,7 +9,14 @@ import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '..
 // Database configuration
 const defaultDbDir = path.join(process.cwd(), 'data');
 const envPath = process.env.DB_PATH;
-const isEnvPathFile = !!envPath && (envPath.endsWith('.db') || path.extname(envPath) !== '');
+const isEnvPathFile = !!envPath && (
+  envPath.endsWith('.db') ||
+  (
+    path.extname(envPath) !== '' &&
+    !envPath.endsWith(path.sep) &&
+    path.basename(envPath).includes('.')
+  )
+);
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
 
@@ -1115,7 +1122,7 @@ export const getAllUsers = (): AdminUserListItem[] => {
 
 /**
  * Delete a user with an atomic last-admin guard.
- * A user is considered an admin if they have both encrypted credentials stored.
+ * A user is considered an admin when role='admin'.
  * The function prevents deleting the last such admin user via a transaction.
  */
 export const deleteUserSafely = (
@@ -1127,7 +1134,7 @@ export const deleteUserSafely = (
 
     const row = db
       .prepare(
-        `SELECT id, (group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL) AS isAdmin
+        `SELECT id, (role = 'admin') AS isAdmin
          FROM users WHERE id = ?`
       )
       .get(userId) as { id: number | bigint; isAdmin: 0 | 1 } | undefined;
@@ -1143,7 +1150,7 @@ export const deleteUserSafely = (
 
     const countRow = db
       .query(
-        `SELECT COUNT(*) as cnt FROM users WHERE group_cred_encrypted IS NOT NULL AND share_cred_encrypted IS NOT NULL`
+        `SELECT COUNT(*) as cnt FROM users WHERE role = 'admin'`
       )
       .get() as { cnt: number } | null;
     const adminCount = countRow?.cnt ?? 0;

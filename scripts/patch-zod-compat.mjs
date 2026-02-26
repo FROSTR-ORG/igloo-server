@@ -36,7 +36,7 @@ try {
     const current = readFileSync(fullPath, 'utf8')
     const target = "import { zod as z } from '@vbyte/micro-lib/schema';"
     if (current.includes("import { z } from 'zod';")) {
-      const updated = current.replace("import { z } from 'zod';", target)
+      const updated = current.replaceAll("import { z } from 'zod';", target)
       writeFileSync(fullPath, updated)
     }
   }

@@ -368,13 +368,24 @@ export async function handleUserRoute(
             // Start the node under the shared lock to avoid races
             try {
               await executeUnderNodeLock(async () => {
-                if (!context.node && credentials) {
+                let latestCredentials: UserCredentials | null = null;
+                try {
+                  latestCredentials = getUserCredentials(
+                    userId,
+                    authSecret.secret,
+                    authSecret.isDerivedKey
+                  );
+                } catch (error) {
+                  context.addServerLog('warn', 'Failed to re-read credentials inside node lock', error);
+                }
+
+                if (!context.node && latestCredentials?.group_cred && latestCredentials?.share_cred) {
                   context.addServerLog('info', 'Starting Bifrost node with saved credentials...');
                   const peerPolicies = getUserPeerPolicies(userId!);
                   const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
-                  const groupCred = credentials.group_cred!;
-                  const shareCred = credentials.share_cred!;
-                  const relays = credentials.relays;
+                  const groupCred = latestCredentials.group_cred;
+                  const shareCred = latestCredentials.share_cred;
+                  const relays = latestCredentials.relays;
                   const relaysEnv = relays?.length ? relays.join(',') : undefined;
 
                   const node = await createNodeWithCredentials(
@@ -484,6 +495,7 @@ export async function handleUserRoute(
           }
 
           const relays = (body as any).relays;
+          let normalizedRelays: string[] | null = null;
 
           if (relays !== null) {
             if (!Array.isArray(relays)) {
@@ -499,13 +511,14 @@ export async function handleUserRoute(
                 { status: 400, headers }
               );
             }
+            normalizedRelays = relays.map((relay: string) => relay.trim());
           }
 
           // Relays are stored as plain JSON, so no auth secret needed for relay-only updates
           // Pass empty string and false to indicate no encryption needed
           const success = updateUserCredentials(
             userId,
-            { relays },
+            { relays: normalizedRelays },
             '',  // No password/key needed for unencrypted fields
             false // Not a derived key
           );

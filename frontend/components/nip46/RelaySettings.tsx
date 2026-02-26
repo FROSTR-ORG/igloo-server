@@ -78,8 +78,8 @@ export function RelaySettings({ relays, onAdd, onRemove, loading = false, saving
                 onClick={async () => {
                   try {
                     await onRemove(relay)
-                  } catch (error) {
-                    console.error('[RelaySettings] Failed to remove relay:', error)
+                  } catch {
+                    // error surface handled via parent `error`
                   }
                 }}
                 disabled={saving}

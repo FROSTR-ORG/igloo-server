@@ -74,15 +74,16 @@ export class PersistentRateLimiter {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(db?: Database, fallbackState?: Map<string, MemoryEntry>) {
-    // Only initialize if not in headless mode and DB provided
-    if (!HEADLESS && db) {
-      this.db = db;
-      this.startCleanup();
-    }
-
-    if (fallbackState && fallbackState.size > 0) {
+    if (fallbackState) {
       // Preserve any in-memory state so new instances retain prior counts if needed
       this.fallbackStore = new Map(fallbackState);
+    }
+
+    if (!HEADLESS) {
+      if (db) {
+        this.db = db;
+      }
+      this.startCleanup();
     }
   }
 
@@ -248,8 +249,10 @@ export class PersistentRateLimiter {
       this.fallbackStore.delete(`${bucket}:${identifier}`);
     } else {
       // Clear all buckets for this identifier
-      for (const key of this.fallbackStore.keys()) {
-        if (key.endsWith(`:${identifier}`)) {
+      const keys = Array.from(this.fallbackStore.keys());
+      for (const key of keys) {
+        const keyIdentifier = key.slice(key.lastIndexOf(':') + 1);
+        if (keyIdentifier === identifier) {
           this.fallbackStore.delete(key);
         }
       }

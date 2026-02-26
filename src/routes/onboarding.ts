@@ -25,7 +25,9 @@ const MAX_ATTEMPTS_PER_WINDOW = 5;
 // Stable client identifier cache (maps canonical fingerprint input -> stable ID)
 const clientIdCache = new Map<string, { id: string; expiresAt: number }>();
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, parseInt(process.env.CLIENT_ID_TTL_MS || '86400000')));
+const parsedClientIdTtl = Number.parseInt(process.env.CLIENT_ID_TTL_MS ?? '', 10);
+const clientIdTtlBase = Number.isFinite(parsedClientIdTtl) && parsedClientIdTtl > 0 ? parsedClientIdTtl : 86400000;
+const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, clientIdTtlBase));
 const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
 const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
 let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
@@ -266,7 +268,7 @@ const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
 // - Uppercase letter
 // - Lowercase letter
 // - Digit
-// - Special character (at least one of @$!%*?&, but allows any special chars)
+// - Special character (must include at least one of @$!%*?&)
 // Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH.
 // Whitespace is allowed and preserved by policy.
 const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).*$/;

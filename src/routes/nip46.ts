@@ -7,11 +7,16 @@ import { getNip46Service } from '../nip46/index.js'
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX = HEADLESS ? 30 : 120;
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS = 3600; // Keep a 1 hour window by default
 
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value ?? '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 // Rate limiting configuration for NIP-46 session creation
 const NIP46_RATE_LIMIT = {
   // Slightly relaxed default for headless/local testing, significantly higher default once persisted to the database
-  MAX: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_MAX || String(DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX)),
-  WINDOW_MS: parseInt(process.env.NIP46_SESSION_RATE_LIMIT_WINDOW || String(DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS)) * 1000
+  MAX: parsePositiveInt(process.env.NIP46_SESSION_RATE_LIMIT_MAX, DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX),
+  WINDOW_MS: parsePositiveInt(process.env.NIP46_SESSION_RATE_LIMIT_WINDOW, DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS) * 1000
 }
 
 const MAX_NIP46_RELAYS = 32;
@@ -106,6 +111,8 @@ function applyPolicyPatch(current: Nip46Policy | null | undefined, patch: Policy
       else delete baseMethods[name]
     }
     result.methods = baseMethods
+  } else if (current?.methods !== undefined) {
+    result.methods = { ...baseMethods }
   }
 
   if (patch.kinds) {
@@ -114,6 +121,8 @@ function applyPolicyPatch(current: Nip46Policy | null | undefined, patch: Policy
       else delete baseKinds[kind]
     }
     result.kinds = baseKinds
+  } else if (current?.kinds !== undefined) {
+    result.kinds = { ...baseKinds }
   }
 
   if (result.methods && Object.keys(result.methods).length === 0) {
@@ -202,17 +211,19 @@ export async function handleNip46Route(
     'Vary': mergedVary,
   }
 
+  if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers })
+
   // Ensure database is initialized before processing any NIP46 requests.
   // This prevents race conditions where routes are accessed before migrations complete.
   try {
     await initializeNip46DB()
   } catch (error) {
     console.error('[NIP46] Failed to initialize DB:', error)
-    const message = error instanceof Error ? error.message : 'Failed to initialize NIP-46 database'
-    return Response.json({ error: 'DB_INIT_FAILED', message }, { status: 500, headers })
+    return Response.json(
+      { error: 'DB_INIT_FAILED', message: 'Internal server error' },
+      { status: 500, headers }
+    )
   }
-
-  if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers })
 
   // Require authenticated DB user
   if (!auth || !auth.authenticated || (typeof auth.userId !== 'number' && (typeof auth.userId !== 'string' || !/^\d+$/.test(auth.userId)))) {

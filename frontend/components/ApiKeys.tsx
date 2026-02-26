@@ -53,6 +53,7 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
 
   // Track copy timeout to avoid leaks if component unmounts before it fires
   const copyTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const initialAdminLoadRef = useRef(false)
 
   const combinedHeaders = useCallback(
     (contentType = true) => {
@@ -223,9 +224,13 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
   const revokedKeys = useMemo(() => keys.filter(key => key.revokedAt), [keys])
 
   useEffect(() => {
-    if (isAdminUser) {
-      loadKeys().catch(err => console.error('Failed to load keys:', err))
+    if (!isAdminUser) {
+      initialAdminLoadRef.current = false
+      return
     }
+    if (initialAdminLoadRef.current) return
+    initialAdminLoadRef.current = true
+    loadKeys().catch(err => console.error('Failed to load keys:', err))
   }, [isAdminUser, loadKeys])
 
   if (headlessMode) {

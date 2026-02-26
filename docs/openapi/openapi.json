@@ -442,6 +442,7 @@
         "tags": [
           "Authentication"
         ],
+        "security": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -524,6 +525,7 @@
         "tags": [
           "Authentication"
         ],
+        "security": [],
         "responses": {
           "200": {
             "description": "Logout successful",
@@ -1384,15 +1386,36 @@
                     "$ref": "#/components/schemas/StoredShare"
                   }
                 },
-                "example": [
-                  {
-                    "shareCredential": "bfshare1qqsqp...",
-                    "groupCredential": "bfgroup1qqsqp...",
-                    "savedAt": "2025-01-20T12:00:00.000Z",
-                    "id": "env-stored-share",
-                    "source": "environment"
+                "examples": {
+                  "metadataOnly": {
+                    "summary": "Default response with credential presence flags only",
+                    "value": [
+                      {
+                        "hasShareCredential": true,
+                        "hasGroupCredential": true,
+                        "isValid": true,
+                        "savedAt": "2025-01-20T12:00:00.000Z",
+                        "id": "env-stored-share",
+                        "source": "environment"
+                      }
+                    ]
+                  },
+                  "includesRaw": {
+                    "summary": "Debug response with raw credentials included",
+                    "value": [
+                      {
+                        "hasShareCredential": true,
+                        "hasGroupCredential": true,
+                        "isValid": true,
+                        "shareCredential": "bfshare1qqsqp...",
+                        "groupCredential": "bfgroup1qqsqp...",
+                        "savedAt": "2025-01-20T12:00:00.000Z",
+                        "id": "env-stored-share",
+                        "source": "environment"
+                      }
+                    ]
                   }
-                ]
+                }
               }
             }
           },
@@ -3000,13 +3023,13 @@
           "methods": {
             "type": "array",
             "items": {
-                "type": "string",
-                "enum": [
-                  "api-key",
-                  "basic-auth",
-                  "session"
-                ]
-              },
+              "type": "string",
+              "enum": [
+                "api-key",
+                "basic-auth",
+                "session"
+              ]
+            },
             "description": "Available authentication methods"
           },
           "rateLimiting": {
@@ -3210,16 +3233,37 @@
       "StoredShare": {
         "type": "object",
         "properties": {
+          "hasShareCredential": {
+            "type": "boolean",
+            "description": "Whether a share credential is currently stored"
+          },
+          "hasGroupCredential": {
+            "type": "boolean",
+            "description": "Whether a group credential is currently stored"
+          },
+          "isValid": {
+            "type": "boolean",
+            "description": "Whether both credentials are present and usable together"
+          },
           "shareCredential": {
-            "type": "string",
-            "description": "The share credential"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional raw share credential (only returned in explicit debug mode)"
           },
           "groupCredential": {
-            "type": "string",
-            "description": "The group credential"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional raw group credential (only returned in explicit debug mode)"
           },
           "savedAt": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time",
             "description": "When the share was saved"
           },
@@ -3233,8 +3277,9 @@
           }
         },
         "required": [
-          "shareCredential",
-          "groupCredential",
+          "hasShareCredential",
+          "hasGroupCredential",
+          "isValid",
           "savedAt",
           "id",
           "source"
@@ -4064,12 +4109,12 @@
               ]
             },
             "example": {
-            "error": "Authentication required",
-            "authMethods": [
-              "api-key",
-              "basic-auth",
-              "session"
-            ]
+              "error": "Authentication required",
+              "authMethods": [
+                "api-key",
+                "basic-auth",
+                "session"
+              ]
             }
           }
         }

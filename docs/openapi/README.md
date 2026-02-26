@@ -39,8 +39,9 @@ Mode and auth nuance:
 
 ### Authentication for API Documentation
 
-- **Development**: No authentication required for easy testing
-- **Production**: Authentication required for security (enforced by the server)
+Authentication behavior is configuration-dependent:
+- **Development**: authentication is commonly disabled by default for local testing, but controlled by environment variables (see `AUTH_ENABLED` in `env.example`)
+- **Production**: authentication should be enabled and enforced by server configuration
 
 To authenticate in Swagger UI:
 1. Use the "Authorize" button in Swagger UI

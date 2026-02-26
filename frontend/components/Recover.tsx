@@ -88,6 +88,7 @@ const Recover: React.FC<RecoverProps> = ({
   
   // Add a timeout ref to clear the autofilled indicator
   const autofilledTimeoutRef = useRef<number | null>(null);
+  const hasAutoDetectedRef = useRef(false);
   
   const [sharesFormValid, setSharesFormValid] = useState(false);
   
@@ -111,6 +112,9 @@ const Recover: React.FC<RecoverProps> = ({
 
   // Auto-detect shares from storage
   useEffect(() => {
+    if (hasAutoDetectedRef.current) return;
+    hasAutoDetectedRef.current = true;
+
     const autoDetectShares = async () => {
       // If we already have initial data, don't auto-detect
       if (initialShare || initialGroupCredential) {
@@ -209,8 +213,8 @@ const Recover: React.FC<RecoverProps> = ({
       }
     };
     
-    autoDetectShares();
-  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, sharesInputs, groupCredential]);
+    void autoDetectShares();
+  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, authHeaders]);
 
   // Handle initialShare and initialGroupCredential
   useEffect(() => {
@@ -322,7 +326,7 @@ const Recover: React.FC<RecoverProps> = ({
         
         // Additional structure validation
         if (typeof decodedGroup.threshold !== 'number' || 
-            typeof decodedGroup.group_pk !== 'string' || 
+            !(typeof decodedGroup.group_pk === 'string' || decodedGroup.group_pk instanceof Uint8Array) || 
             !Array.isArray(decodedGroup.commits) ||
             decodedGroup.commits.length === 0) {
           setIsGroupValid(false);

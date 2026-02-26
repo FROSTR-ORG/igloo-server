@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
+import { randomBytes, timingSafeEqual, pbkdf2Sync, createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
@@ -230,6 +230,10 @@ function validateSessionSecret(): string | null {
 }
 
 const DEFAULT_RATE_LIMIT_MAX = HEADLESS ? 300 : 600;
+const parsePositiveIntEnv = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 // Authentication configuration from environment variables
 export const AUTH_CONFIG = {
@@ -243,13 +247,13 @@ export const AUTH_CONFIG = {
   
   // Session configuration
   SESSION_SECRET: validateSessionSecret(),
-  SESSION_TIMEOUT: parseInt(process.env.SESSION_TIMEOUT || '3600') * 1000, // Default 1 hour
+  SESSION_TIMEOUT: parsePositiveIntEnv(process.env.SESSION_TIMEOUT, 3600) * 1000, // Default 1 hour
   
   // Rate limiting
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED !== 'false',
-  RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW || '900') * 1000, // 15 minutes
+  RATE_LIMIT_WINDOW: parsePositiveIntEnv(process.env.RATE_LIMIT_WINDOW, 900) * 1000, // 15 minutes
   // Default is 300 per 15m in headless mode, 600 per 15m when backed by the database; override for production
-  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || String(DEFAULT_RATE_LIMIT_MAX)),
+  RATE_LIMIT_MAX: parsePositiveIntEnv(process.env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
 };
 
 // Use centralized crypto constants for consistency
@@ -306,9 +310,27 @@ const sessionStore = new Map<string, {
 // Values are kept in-memory only for the lifespan of the session and wiped on cleanup/logout
 const sessionDerivedKeyCache = new Map<string, Uint8Array>();
 
+function parseEnvInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function compareConstantTime(a: string, b: string): boolean {
+  const digestA = createHash('sha256').update(a).digest();
+  const digestB = createHash('sha256').update(b).digest();
+  return timingSafeEqual(digestA, digestB);
+}
+
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
-const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
-const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
+const AUTH_DERIVED_KEY_TTL_MS = Math.max(
+  10_000,
+  Math.min(10 * 60_000, parseEnvInt(process.env.AUTH_DERIVED_KEY_TTL_MS, 120_000))
+);
+const AUTH_DERIVED_KEY_MAX_READS = Math.max(
+  1,
+  Math.min(1000, parseEnvInt(process.env.AUTH_DERIVED_KEY_MAX_READS, 100))
+);
 
 function getAuthDerivedKeyMaxRehydrations(): number {
   const fallback = 3;
@@ -323,7 +345,7 @@ const VAULT_CLEANUP_INTERVAL_MS = Math.max(
   30_000,  // minimum 30 seconds
   Math.min(
     10 * 60_000,  // maximum 10 minutes
-    parseInt(process.env.VAULT_CLEANUP_INTERVAL_MS || '120000')  // default 2 minutes
+    parseEnvInt(process.env.VAULT_CLEANUP_INTERVAL_MS, 120_000)  // default 2 minutes
   )
 );
 
@@ -556,14 +578,8 @@ function authenticateBasicAuth(req: Request): AuthResult {
     const credentials = atob(authHeader.slice(6));
     const [username, password] = credentials.split(':');
     
-    const userValid = timingSafeEqual(
-      Buffer.from(username || ''),
-      Buffer.from(AUTH_CONFIG.BASIC_AUTH_USER)
-    );
-    const passValid = timingSafeEqual(
-      Buffer.from(password || ''),
-      Buffer.from(AUTH_CONFIG.BASIC_AUTH_PASS)
-    );
+    const userValid = compareConstantTime(username || '', AUTH_CONFIG.BASIC_AUTH_USER);
+    const passValid = compareConstantTime(password || '', AUTH_CONFIG.BASIC_AUTH_PASS);
     
     if (userValid && passValid) {
       return { authenticated: true, userId: username };
@@ -925,6 +941,21 @@ export async function handleLogin(req: Request): Promise<Response> {
     
     const { username, password, apiKey } = body;
 
+    const rate = await checkRateLimit(req);
+    if (!rate.allowed) {
+      return Response.json(
+        { error: 'Too many login attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: {
+            ...baseHeaders,
+            'Retry-After': Math.ceil(AUTH_CONFIG.RATE_LIMIT_WINDOW / 1000).toString(),
+            'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+          }
+        }
+      );
+    }
+
     let authenticated = false;
     let userId: string | number | bigint = '';
     let userPassword: string | undefined; // Store for database users
@@ -963,22 +994,6 @@ export async function handleLogin(req: Request): Promise<Response> {
       }
     }
     if (!authenticated && !HEADLESS && username && password && dbInitialized) {
-      // Check rate limit for database authentication attempts
-      const rate = await checkRateLimit(req);
-      if (!rate.allowed) {
-        return Response.json(
-          { error: 'Too many login attempts. Please try again later.' },
-          {
-            status: 429,
-            headers: {
-              ...baseHeaders,
-              'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString(),
-              'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
-            }
-          }
-        );
-      }
-
       try {
         const dbResult = await authenticateUser(username, password);
         // authenticateUser returns a structured result, not throwing for auth failures
@@ -1026,14 +1041,8 @@ export async function handleLogin(req: Request): Promise<Response> {
     
     // Try env-based basic auth (headless mode or fallback)
     if (!authenticated && username && password && AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
-      const userValid = timingSafeEqual(
-        Buffer.from(username),
-        Buffer.from(AUTH_CONFIG.BASIC_AUTH_USER)
-      );
-      const passValid = timingSafeEqual(
-        Buffer.from(password),
-        Buffer.from(AUTH_CONFIG.BASIC_AUTH_PASS)
-      );
+      const userValid = compareConstantTime(username, AUTH_CONFIG.BASIC_AUTH_USER);
+      const passValid = compareConstantTime(password, AUTH_CONFIG.BASIC_AUTH_PASS);
       
       if (userValid && passValid) {
         authenticated = true;

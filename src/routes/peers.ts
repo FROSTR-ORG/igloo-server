@@ -123,12 +123,12 @@ async function persistUserPeerPolicies(
     const { updateUserPeerPolicies } = await import('../db/database.js');
 
     if (!context.node || summaries.length === 0) {
-      updateUserPeerPolicies(userId, null);
+      await updateUserPeerPolicies(userId, null);
       await saveFallbackPeerPolicies(null);
       return;
     }
 
-    const success = updateUserPeerPolicies(userId, sanitizedPolicies);
+    const success = await updateUserPeerPolicies(userId, sanitizedPolicies);
     if (!success) {
       console.warn('Failed to persist peer policies for user', userId);
       await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
@@ -354,17 +354,22 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
             return Response.json({ error: 'Missing credentials' }, { status: statusCode, headers });
           }
           
-          const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
-          if (selfPubkeyResult.pubkey) {
-            return Response.json({ 
-              pubkey: selfPubkeyResult.pubkey,
-              warnings: selfPubkeyResult.warnings 
-            }, { headers });
-          } else {
-            return Response.json({ 
-              error: 'Could not extract self pubkey',
-              warnings: selfPubkeyResult.warnings 
-            }, { status: 400, headers });
+          try {
+            const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
+            if (selfPubkeyResult.pubkey) {
+              return Response.json({ 
+                pubkey: selfPubkeyResult.pubkey,
+                warnings: selfPubkeyResult.warnings 
+              }, { headers });
+            } else {
+              return Response.json({ 
+                error: 'Could not extract self pubkey',
+                warnings: selfPubkeyResult.warnings 
+              }, { status: 400, headers });
+            }
+          } catch (error) {
+            const message = error instanceof Error ? error.message : 'Malformed credentials';
+            return Response.json({ error: 'Malformed credentials', warnings: [message] }, { status: 400, headers });
           }
         }
         break;
@@ -588,8 +593,8 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
     }
     
     const pingPromises = allPeers.map(async (pubkey) => {
-       const normalizedPubkey = normalizePubkey(pubkey);
        try {
+         const normalizedPubkey = normalizePubkey(pubkey);
          const startTime = Date.now();
          let result;
          if (context.node) {
@@ -638,7 +643,10 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
            online: false,
            lastPingAttempt: new Date()
          };
-         context.peerStatuses.set(normalizedPubkey, updatedStatus);
+         try {
+           const normalizedPubkey = normalizePubkey(pubkey);
+           context.peerStatuses.set(normalizedPubkey, updatedStatus);
+         } catch {}
          return { pubkey, success: false, error: errorMessage };
        }
     });
@@ -651,10 +659,9 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
 }
 
 async function handlePingSinglePeer(target: string, context: RouteContext, headers: Record<string, string>): Promise<Response> {
-  // Ping specific peer
-  const normalizedPubkey = normalizePubkey(target);
-  
   try {
+    // Ping specific peer
+    const normalizedPubkey = normalizePubkey(target);
     const startTime = Date.now();
     let result;
     if (context.node) {
@@ -714,7 +721,10 @@ async function handlePingSinglePeer(target: string, context: RouteContext, heade
       online: false,
       lastPingAttempt: new Date()
     };
-    context.peerStatuses.set(normalizedPubkey, updatedStatus);
+    try {
+      const normalizedPubkey = normalizePubkey(target);
+      context.peerStatuses.set(normalizedPubkey, updatedStatus);
+    } catch {}
     
     return Response.json({ 
       pubkey: target, 

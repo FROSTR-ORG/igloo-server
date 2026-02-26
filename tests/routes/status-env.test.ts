@@ -63,6 +63,7 @@ describe('Status & Env routes', () => {
       const root = ${JSON.stringify(PROJECT_ROOT)};
       process.env.NODE_ENV = 'test';
       process.env.HEADLESS = 'false';
+      process.env.AUTH_ENABLED = 'true';
 
       const { handleEnvRoute } = await import(root + 'src/routes/env.ts');
       const context = {

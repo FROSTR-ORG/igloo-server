@@ -28,7 +28,7 @@ function createTestSession(): string {
 }
 
 describe('rehydrateSessionDerivedKey', () => {
-  test('enforces configurable rehydration quota', () => {
+  test('enforces configurable rehydration quota', async () => {
     const sessionId = createTestSession();
 
     const first = auth.rehydrateSessionDerivedKey(sessionId);
@@ -50,6 +50,7 @@ describe('rehydrateSessionDerivedKey', () => {
       method: 'POST',
       headers: { 'x-session-id': sessionId }
     });
-    auth.handleLogout(logoutReq);
+    const logoutRes = auth.handleLogout(logoutReq);
+    expect(logoutRes.status).toBe(200);
   });
 });

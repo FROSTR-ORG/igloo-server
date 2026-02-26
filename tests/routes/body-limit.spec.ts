@@ -22,7 +22,7 @@ describe('JSON body size limits', () => {
         clientIp: '127.0.0.1'
       };
 
-      const headers = new Headers({ 'x-api-key': 'k', 'content-length': String(1024 * 1024) });
+      const headers = new Headers({ 'x-api-key': 'k', 'content-length': String(1024 * 1024 + 1) });
       const req = new Request('http://localhost/api/env', { method: 'POST', headers, body: JSON.stringify({ RELAYS: ['wss://relay.example'] }) });
       const res = await handleEnvRoute(req, new URL(req.url), context, null);
       console.log('@@RESULT@@' + JSON.stringify({ status: res.status }));
@@ -49,7 +49,7 @@ describe('JSON body size limits', () => {
         clientIp: '127.0.0.1'
       };
 
-      const headers = new Headers({ 'content-length': String(1024 * 1024) });
+      const headers = new Headers({ 'content-length': String(1024 * 1024 + 1) });
       const req = new Request('http://localhost/api/recover', { method: 'POST', headers, body: JSON.stringify({ groupCredential: 'g', shareCredentials: ['s'] }) });
       const res = await handleRecoveryRoute(req, new URL(req.url), context, { authenticated: true });
       console.log('@@RESULT@@' + JSON.stringify({ status: res.status }));

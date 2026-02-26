@@ -374,7 +374,7 @@ const PeerList: React.FC<PeerListProps> = ({
   }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers, authHeaders]);
 
   // Unified handler for peer status and ping updates
-  const handlePeerUpdate = (event: CustomEvent) => {
+  const handlePeerUpdate = useCallback((event: CustomEvent) => {
     const { pubkey, status } = event.detail;
     setPeers(prev => {
       const updated = prev.map(peer => {
@@ -388,10 +388,10 @@ const PeerList: React.FC<PeerListProps> = ({
             lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
           } as PeerStatus;
         }
-        // Try match without 02 prefix
-        const peerWithout02 = peer.pubkey.startsWith('02') ? peer.pubkey.slice(2) : peer.pubkey;
-        const pingWithout02 = pubkey.startsWith('02') ? pubkey.slice(2) : pubkey;
-        if (peerWithout02 === pingWithout02) {
+        // Try match with compressed-prefix normalization (02/03)
+        const peerNormalized = toPolicyKey(peer.pubkey);
+        const pingNormalized = toPolicyKey(pubkey);
+        if (peerNormalized !== '' && peerNormalized === pingNormalized) {
           return {
             ...peer,
             online: Boolean(status.online),
@@ -404,7 +404,7 @@ const PeerList: React.FC<PeerListProps> = ({
       });
       return updated;
     });
-  };
+  }, []);
 
   // Listen for peer status and ping updates via custom events from the main SSE connection
   useEffect(() => {
@@ -417,7 +417,7 @@ const PeerList: React.FC<PeerListProps> = ({
       window.removeEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
       window.removeEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
     };
-  }, [isSignerRunning]);
+  }, [isSignerRunning, handlePeerUpdate]);
 
   // Ping individual peer
   const handlePingPeer = useCallback(async (peerPubkey: string) => {
