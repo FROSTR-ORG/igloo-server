@@ -53,19 +53,15 @@ test.describe('UI – Authenticated app', () => {
     await expect(page.locator('body')).toContainText(/\bnode\s+(active|inactive)\b/i, { timeout: 8_000 });
   });
 
-  test('Configure tab is accessible', async ({ page }) => {
-    const configureTab = page
-      .locator('[role="tab"]:has-text("Configure"), button:has-text("Configure"), a:has-text("Configure")')
-      .first();
-    await expect(configureTab).toBeVisible({ timeout: 8_000 });
-    await configureTab.click();
-    // After clicking, the configure panel content should appear
+  test('Back to Configure button navigates to configuration page', async ({ page }) => {
+    // In signer view, config form copy should not be visible yet.
+    await expect(page.locator('body')).not.toContainText(/(update signer configuration|configure signer)/i, { timeout: 8_000 });
+
+    const backToConfigure = page.locator('button:has-text("Back to Configure")').first();
+    await expect(backToConfigure).toBeVisible({ timeout: 8_000 });
+    await backToConfigure.click();
     await page.waitForLoadState('networkidle');
-    // Scope to likely configure containers to avoid matching unrelated page inputs.
-    const configContent = page.locator(
-      '[role="tabpanel"] input, [role="tabpanel"] textarea, [role="tabpanel"] [data-testid*="cred"], [data-testid*="config"] input, [data-testid*="config"] textarea, [id*="config"] input, [id*="config"] textarea'
-    ).first();
-    await expect(configContent).toBeVisible({ timeout: 8_000 });
+    await expect(page.locator('body')).toContainText(/(update signer configuration|configure signer)/i, { timeout: 8_000 });
   });
 
   test('API Keys tab is accessible', async ({ page }) => {
