@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
 import { Badge, type BadgeProps } from './badge';
@@ -179,6 +179,7 @@ const PeerList: React.FC<PeerListProps> = ({
   const [policyPeerErrors, setPolicyPeerErrors] = useState<Map<string, string>>(new Map());
   const hasUserToggledRef = useRef(false);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelId = useId();
 
   useEffect(() => {
     if (defaultExpanded && !hasUserToggledRef.current) {
@@ -627,6 +628,7 @@ const PeerList: React.FC<PeerListProps> = ({
         onClick={handleToggle}
         role="button"
         aria-expanded={isExpanded}
+        aria-controls={panelId}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -698,6 +700,9 @@ const PeerList: React.FC<PeerListProps> = ({
       {/* Collapsible Content */}
       <div 
         ref={panelRef}
+        id={panelId}
+        role="region"
+        aria-label="Peer list panel"
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
           isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
@@ -853,6 +858,7 @@ const PeerList: React.FC<PeerListProps> = ({
                                     width="w-72"
                                     triggerClassName="cursor-help"
                                     focusable
+                                    ariaLabel="Policy controls help"
                                     trigger={<HelpCircle className="h-3.5 w-3.5 text-blue-300" />}
                                     content={
                                       <div className="space-y-1 text-blue-100">

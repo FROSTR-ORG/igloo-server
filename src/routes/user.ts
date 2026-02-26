@@ -285,11 +285,11 @@ export async function handleUserRoute(
             // Validate relays format
             if (body.relays === null || 
                 (Array.isArray(body.relays) && 
-                 body.relays.every((r: any) => typeof r === 'string'))) {
+                 body.relays.every((r: any) => typeof r === 'string' && isValidWebSocketUrl(r)))) {
               updates.relays = body.relays;
             } else {
               return Response.json(
-                { error: 'Invalid relays format. Must be an array of strings or null.' },
+                { error: 'Invalid relay URLs. Must use ws:// or wss://' },
                 { status: 400, headers }
               );
             }

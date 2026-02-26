@@ -9,7 +9,12 @@ const ZOD_DIR = join(PROJECT_ROOT, 'node_modules', 'zod')
 const NOSTR_SCHEMA_DIR = join(PROJECT_ROOT, 'node_modules', '@cmdcode', 'nostr-connect', 'dist', 'schema')
 
 function ensureFile(path, content) {
-  const current = readFileSync(path, 'utf8')
+  let current = ''
+  try {
+    current = readFileSync(path, 'utf8')
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
   if (current !== content) {
     writeFileSync(path, content)
   }

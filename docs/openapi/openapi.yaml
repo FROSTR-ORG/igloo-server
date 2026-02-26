@@ -327,16 +327,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/AuthStatus'
         '400':
-          $ref: '#/components/responses/BadRequest'
+          description: Bad request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/AuthStatus'
+                $ref: '#/components/schemas/ErrorResponse'
               example:
-                enabled: true
-                methods: ["api-key", "bearer", "basic-auth", "session"]
-                rateLimiting: true
-                sessionTimeout: 3600
+                error: "Invalid authentication status request"
 
   /api/auth/login:
     post:
@@ -1960,7 +1957,7 @@ components:
           type: array
           items:
             type: string
-            enum: ["api-key", "bearer", "basic-auth", "session"]
+            enum: ["api-key", "basic-auth", "session"]
           description: Available authentication methods
         rateLimiting:
           type: boolean
@@ -2323,7 +2320,7 @@ components:
       type: object
       description: Client-supplied fields when creating or updating a NIP‑46 session
       properties:
-        client_pubkey:
+        pubkey:
           type: string
           description: Client public key (hex encoded)
         status:
@@ -2338,7 +2335,7 @@ components:
           description: Preferred relays for the session
         policy:
           $ref: '#/components/schemas/Nip46Policy'
-      required: [client_pubkey]
+      required: [pubkey]
 
     Nip46Session:
       type: object
@@ -2631,7 +2628,7 @@ components:
                       type: string
           example:
             error: "Authentication required"
-            authMethods: ["api-key", "bearer", "basic-auth", "session"]
+            authMethods: ["api-key", "basic-auth", "session"]
 
     InternalServerError:
       description: Internal server error

@@ -24,6 +24,7 @@ const { baseUrl, sessionId, groupPubkeyHex } = state;
 // Valid 32-byte hex event IDs for signing
 const EVENT_ID_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const EVENT_ID_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const SIGNATURE_REGEX = /^[0-9a-f]{128}$/i;
 
 async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<void> {
   const api = await request.newContext({ baseURL: baseUrl });
@@ -90,7 +91,7 @@ test.describe('Sign – /api/sign', () => {
       expect(body).toHaveProperty('signature');
       expect(typeof body.signature).toBe('string');
       // Schnorr signature = 64 bytes = 128 hex chars
-      expect(body.signature).toMatch(/^[0-9a-f]{128}$/i);
+      expect(body.signature).toMatch(SIGNATURE_REGEX);
     });
   });
 
@@ -113,7 +114,7 @@ test.describe('Sign – /api/sign', () => {
       const body = await res.json();
       expect(body).toHaveProperty('id');
       expect(body).toHaveProperty('signature');
-      expect(body.signature).toMatch(/^[0-9a-f]{128}$/i);
+      expect(body.signature).toMatch(SIGNATURE_REGEX);
     });
   });
 
@@ -126,7 +127,7 @@ test.describe('Sign – /api/sign', () => {
       });
       expect(res.status()).toBe(200);
       const body = await res.json();
-      expect(body.signature).toMatch(/^[0-9a-f]{128}$/i);
+      expect(body.signature).toMatch(SIGNATURE_REGEX);
     });
   });
 

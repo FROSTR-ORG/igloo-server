@@ -90,8 +90,18 @@ function requireNonEmptyString(value: string | undefined, errorMessage: string):
   return value;
 }
 
+function validateTestNsecHex(raw: string): string {
+  const normalized = raw.trim();
+  if (!/^[0-9a-fA-F]+$/.test(normalized) || normalized.length % 2 !== 0 || normalized.length !== 64) {
+    throw new Error(
+      'Invalid TEST_NSEC_HEX: expected a 32-byte private key encoded as exactly 64 hex characters.'
+    );
+  }
+  return normalized.toLowerCase();
+}
+
 // Defaults come from fixture for local CI; callers can still override via environment.
-const TEST_NSEC_HEX = process.env.TEST_NSEC_HEX ?? smokeDefaults.testNsecHex;
+const TEST_NSEC_HEX = validateTestNsecHex(process.env.TEST_NSEC_HEX ?? smokeDefaults.testNsecHex);
 const MISSING_SMOKE_CREDS_MESSAGE =
   'Smoke admin credentials are required. Set SMOKE_ADMIN_SECRET, SMOKE_ADMIN_USERNAME, and ' +
   'SMOKE_ADMIN_PASSWORD (or provide tests/e2e/smoke-test.local.json).';
@@ -112,8 +122,19 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
+function ensurePrivateDir(dirPath: string): void {
+  fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+  try {
+    fs.chmodSync(dirPath, 0o700);
+  } catch {}
+}
+
 function writeState(state: SmokeTestState): void {
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  ensurePrivateDir(path.dirname(STATE_FILE));
+  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), { mode: 0o600 });
+  try {
+    fs.chmodSync(STATE_FILE, 0o600);
+  } catch {}
   process.env.SMOKE_STATE_FILE = STATE_FILE;
 }
 
@@ -275,8 +296,8 @@ export default async function globalSetup(_config: FullConfig): Promise<void> {
         console.warn('[setup] Skipping TMP_DIR cleanup outside os.tmpdir():', resolvedTmp);
       }
     }
-    fs.mkdirSync(TMP_DIR, { recursive: true });
-    fs.mkdirSync(DB_PATH, { recursive: true });
+    ensurePrivateDir(TMP_DIR);
+    ensurePrivateDir(DB_PATH);
     writeState(state);
 
     console.log('[setup] Generating FROSTR credentials...');

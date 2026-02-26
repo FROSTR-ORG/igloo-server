@@ -64,7 +64,12 @@ function extractIpv4MappedIpv6(hostname: string): string | null {
 
 function isLoopbackRelayHost(hostname: string): boolean {
   let normalized = hostname.replace(/\.+$/, '').replace(/^\[(.*)\]$/, '$1').toLowerCase();
-  if (normalized === 'localhost' || normalized === '::1' || normalized === '0:0:0:0:0:0:0:1') return true;
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '::1' ||
+    normalized === '0:0:0:0:0:0:0:1'
+  ) return true;
 
   const mappedIpv4 = extractIpv4MappedIpv6(normalized);
   if (mappedIpv4) {

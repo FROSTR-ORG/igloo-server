@@ -65,17 +65,15 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
     const mode = url.pathname.endsWith('/encrypt') ? 'encrypt' : url.pathname.endsWith('/decrypt') ? 'decrypt' : null;
     if (!mode) return Response.json({ error: 'Unknown operation' }, { status: 404, headers });
 
-    // Platform-agnostic hex to Uint8Array conversion
-    const hexBytes = secretHex.match(/.{1,2}/g);
-    if (!hexBytes) {
-      throw new Error('Invalid hex string format');
+    const key = Uint8Array.from(Buffer.from(secretHex, 'hex'));
+    if (key.length !== 32) {
+      throw new Error('Invalid shared secret length');
     }
-    const key = new Uint8Array(hexBytes.map(byte => parseInt(byte, 16)));
     if (mode === 'encrypt') {
-      const ciphertext = await nip44.encrypt(content, key);
+      const ciphertext = nip44.encrypt(content, key);
       return Response.json({ result: ciphertext }, { status: 200, headers });
     } else {
-      const plaintext = await nip44.decrypt(content, key);
+      const plaintext = nip44.decrypt(content, key);
       return Response.json({ result: plaintext }, { status: 200, headers });
     }
   } catch (e: any) {

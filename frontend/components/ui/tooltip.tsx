@@ -2,32 +2,47 @@ import React, { useState, ReactNode, useRef, useEffect, useCallback, useId } fro
 import { createPortal } from 'react-dom';
 import { cn } from "../../lib/utils";
 
-interface TooltipProps {
+interface TooltipSharedProps {
   trigger: ReactNode;
   content: ReactNode;
   className?: string;
   position?: 'top' | 'right' | 'bottom' | 'left';
   width?: string;
   triggerClassName?: string;
-  focusable?: boolean;
-  ariaLabel?: string;
 }
 
-const Tooltip: React.FC<TooltipProps> = ({
-  trigger,
-  content,
-  className,
-  position = 'left',
-  width = 'w-72',
-  triggerClassName,
-  focusable = false,
-  ariaLabel,
-}) => {
+type TooltipProps =
+  | (TooltipSharedProps & {
+      focusable: true;
+      ariaLabel: string;
+    })
+  | (TooltipSharedProps & {
+      focusable?: false;
+      ariaLabel?: string;
+    });
+
+const Tooltip: React.FC<TooltipProps> = (props) => {
+  const {
+    trigger,
+    content,
+    className,
+    position = 'left',
+    width = 'w-72',
+    triggerClassName,
+  } = props;
+  const focusable = props.focusable ?? false;
+  const ariaLabel = props.ariaLabel;
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const tooltipId = useId();
   const triggerRef = useRef<HTMLDivElement | HTMLButtonElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (focusable && !ariaLabel) {
+      console.error('[Tooltip] focusable tooltips require ariaLabel for accessibility.');
+    }
+  }, [focusable, ariaLabel]);
 
   const updatePosition = useCallback(() => {
     if (typeof window === 'undefined' || !triggerRef.current || !tooltipRef.current) {

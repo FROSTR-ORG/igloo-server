@@ -31,7 +31,7 @@ function loadFixtureTestKeysetSecret(): string | undefined {
 const TEST_KEYSET_SECRET =
   normalizeOptionalEnv(process.env.TEST_KEYSET_SECRET) ??
   normalizeOptionalEnv(process.env.TEST_NSEC_HEX) ??
-  loadFixtureTestKeysetSecret();
+  normalizeOptionalEnv(loadFixtureTestKeysetSecret());
 if (!TEST_KEYSET_SECRET) {
   throw new Error(
     'TEST_KEYSET_SECRET (or TEST_NSEC_HEX) must be set, or tests/e2e/smoke-test-defaults.json must provide testNsecHex.'

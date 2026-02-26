@@ -382,27 +382,19 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
          let wsUrl = `${protocol}//${window.location.host}/api/events`;
          
-         // Add authentication parameters for WebSocket connection
-         // Since WebSocket doesn't support custom headers during upgrade,
-         // we need to pass auth info via URL parameters
-         const params = new URLSearchParams();
-         
-         // Check if we have auth headers and convert them to URL params
+         // Avoid exposing long-lived credentials in URL query params.
+         // Prefer WebSocket subprotocol auth hints supported by the backend.
+         const protocols: string[] = [];
          const currentAuth = authHeadersRef.current;
          if (currentAuth['X-API-Key']) {
-           params.set('apiKey', currentAuth['X-API-Key']);
+           protocols.push(`api-key.${currentAuth['X-API-Key']}`);
          } else if (currentAuth['X-Session-ID']) {
-           params.set('sessionId', currentAuth['X-Session-ID']);
+           protocols.push(`session.${currentAuth['X-Session-ID']}`);
          } else if (currentAuth['Authorization'] && currentAuth['Authorization'].startsWith('Basic ')) {
-           // For basic auth, we'll rely on cookies or handle it server-side
-           // The server should accept the connection if the user is already authenticated
+           // For basic auth, rely on existing browser credentials/cookies.
          }
-         
-         if (params.toString()) {
-           wsUrl += '?' + params.toString();
-         }
-         
-         ws = new WebSocket(wsUrl);
+
+         ws = protocols.length > 0 ? new WebSocket(wsUrl, protocols) : new WebSocket(wsUrl);
         
         ws.onopen = () => {
           isConnecting = false;

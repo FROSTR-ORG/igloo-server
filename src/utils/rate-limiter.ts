@@ -182,7 +182,8 @@ export class PersistentRateLimiter {
       }
     }
 
-    throw new RateLimiterUnavailableError();
+    // Defensive fallback for type completeness; loop paths above should always return or throw.
+    return this.checkMemoryLimit(identifier, config, Date.now());
   }
 
   /**
@@ -264,14 +265,13 @@ export class PersistentRateLimiter {
 
     if (this.db) {
       try {
-        this.db
+        const result = this.db
           .prepare('DELETE FROM rate_limits WHERE last_attempt < ?')
           .run(cutoff);
 
         // Only log if entries were deleted
-        const changes = this.db.query('SELECT changes() as c').get() as { c: number } | null;
-        if (changes && changes.c > 0) {
-          console.log(`[RateLimiter] Cleaned up ${changes.c} expired entries`);
+        if (result.changes > 0) {
+          console.log(`[RateLimiter] Cleaned up ${result.changes} expired entries`);
         }
       } catch (error) {
         console.error('[RateLimiter] Cleanup failed:', error);

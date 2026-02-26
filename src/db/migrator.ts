@@ -28,7 +28,7 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
 
   // Security: Ensure migrations directory is within project boundaries
   const projectRoot = path.resolve(process.cwd())
-  if (!dir.startsWith(projectRoot + path.sep) && dir !== projectRoot) {
+  if (!dir.startsWith(projectRoot + path.sep)) {
     throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
   }
 

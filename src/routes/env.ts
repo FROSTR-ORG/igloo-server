@@ -94,8 +94,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   // Resolve authenticated DB user id (database mode only)
   const authenticatedNumericUserId = (() => {
     if (HEADLESS || !auth?.authenticated) return null;
-    if (typeof auth.userId === 'number') return BigInt(auth.userId);
-    if (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)) return BigInt(auth.userId);
+    if (typeof auth.userId === 'number') {
+      if (!Number.isInteger(auth.userId) || auth.userId <= 0) return null;
+      return BigInt(auth.userId);
+    }
+    if (typeof auth.userId === 'string' && /^[1-9]\d*$/.test(auth.userId)) {
+      return BigInt(auth.userId);
+    }
     return null;
   })();
   const isRoleAdmin = await (async () => {

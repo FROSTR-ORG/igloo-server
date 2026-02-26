@@ -42,7 +42,10 @@ function toSafePreview(raw: string, maxChars = ERROR_PREVIEW_MAX_CHARS): string 
   const compact = raw.replace(/\s+/g, ' ').trim();
   if (!compact) return '(empty)';
   const redacted = compact
-    .replace(/(admin_secret|session_secret|password|api[_-]?key|token)\s*[:=]\s*["']?[^"'\s]+/ig, '$1=<redacted>')
+    .replace(
+      /(["']?(?:admin_secret|session_secret|password|api[_-]?key|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,"'\s}]+)/ig,
+      '$1<redacted>'
+    )
     .replace(/(bearer\s+)[a-z0-9._-]+/ig, '$1<redacted>');
   return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}...(truncated)` : redacted;
 }

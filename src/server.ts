@@ -415,12 +415,14 @@ async function initializeDatabase(): Promise<void> {
   }
 }
 
-// Initialize database with single exit point
-initializeDatabase().catch((err) => {
+// Initialize database before starting relay/node setup
+try {
+  await initializeDatabase();
+} catch (err) {
   console.error('❌ Fatal initialization error:');
   console.error('  ', err instanceof Error ? err.message : String(err));
   process.exit(1);
-});
+}
 
 // Create the Nostr relay
 const relay = new NostrRelay();

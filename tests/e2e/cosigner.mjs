@@ -63,6 +63,7 @@ function safeStringify(obj) {
 }
 
 let node;
+let shuttingDown = false;
 try {
   node = createBifrostNode({
     group: groupCred,
@@ -74,7 +75,14 @@ try {
     console.log('[cosigner] Node ready. PubKey:', node.pubkey?.slice(0, 16));
     console.log('[cosigner] Peers:', node.peers.map(p => p.pubkey?.slice(0, 16)).join(', '));
   });
-  node.on('closed', () => console.log('[cosigner] Node closed'));
+  node.on('closed', () => {
+    if (shuttingDown) {
+      console.log('[cosigner] Node closed');
+      return;
+    }
+    console.error('[cosigner] Node closed unexpectedly');
+    process.exit(1);
+  });
   node.on('error', (e) => console.log('[cosigner] Error:', String(e).slice(0, 200)));
   node.on('bounced', (...args) => console.log('[cosigner] Bounced:', safeStringify(args).slice(0, 200)));
   node.on('message', (msg) => {
@@ -106,6 +114,7 @@ try {
 }
 
 const shutdown = () => {
+  shuttingDown = true;
   try { node?.close?.(); } catch (e) {
     console.error('[cosigner] Error closing node:', e instanceof Error ? e.message : String(e));
   }

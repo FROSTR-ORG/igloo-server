@@ -126,13 +126,17 @@ export async function handleAdminRoute(
   // Check rate limit before admin authentication to prevent brute force attacks
   const rate = await checkRateLimit(req, 'auth', { clientIp: _context.clientIp });
   if (!rate.allowed) {
+    const fallbackRetryAfterSeconds = Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString();
+    const retryAfterSeconds = typeof rate.resetAt === 'number'
+      ? Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)).toString()
+      : fallbackRetryAfterSeconds;
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
       {
         status: 429,
         headers: {
           ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+          'Retry-After': retryAfterSeconds
         }
       }
     );
@@ -272,7 +276,7 @@ export async function handleAdminRoute(
             createdAt: key.createdAt,
             updatedAt: key.updatedAt,
             lastUsedAt: key.lastUsedAt,
-            lastUsedIp: key.lastUsedIp,
+            lastUsedIp: null,
             revokedAt: key.revokedAt,
             revokedReason: key.revokedReason,
             createdByUserId: key.createdByUserId,

@@ -192,10 +192,6 @@ export async function handleNip46Route(
     return Response.json({ error: 'NIP-46 persistence unavailable in headless mode' }, { status: 404 })
   }
 
-  // Ensure database is initialized before processing any NIP46 requests
-  // This prevents race conditions where routes are accessed before migrations complete
-  await initializeNip46DB()
-
   const corsHeaders = getSecureCorsHeaders(req)
   const mergedVary = mergeVaryHeaders(corsHeaders)
   const headers = {
@@ -204,6 +200,16 @@ export async function handleNip46Route(
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
+  }
+
+  // Ensure database is initialized before processing any NIP46 requests.
+  // This prevents race conditions where routes are accessed before migrations complete.
+  try {
+    await initializeNip46DB()
+  } catch (error) {
+    console.error('[NIP46] Failed to initialize DB:', error)
+    const message = error instanceof Error ? error.message : 'Failed to initialize NIP-46 database'
+    return Response.json({ error: 'DB_INIT_FAILED', message }, { status: 500, headers })
   }
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers })
@@ -336,33 +342,33 @@ export async function handleNip46Route(
       const result = typeof body?.result === 'string' ? body.result : null
       const errorMessage = typeof body?.error === 'string' ? body.error : null
 
-       const policyPatch = parsePolicyPatch(body?.policy)
-       let existingRecord = policyPatch ? getNip46RequestById(id) : null
-       if (policyPatch) {
-         if (!existingRecord) {
-           return Response.json({ error: 'Request not found' }, { status: 404, headers })
-         }
-         const recordUserId = typeof existingRecord.user_id === 'bigint'
-           ? existingRecord.user_id.toString()
-           : String(existingRecord.user_id)
-         const requestUserId = typeof userId === 'bigint' ? userId.toString() : String(userId)
-         if (recordUserId !== requestUserId) {
-           return Response.json({ error: 'Request not found' }, { status: 404, headers })
-         }
+      const existingRecord = getNip46RequestById(id)
+      if (!existingRecord) {
+        return Response.json({ error: 'Request not found' }, { status: 404, headers })
+      }
+      const recordUserId = typeof existingRecord.user_id === 'bigint'
+        ? existingRecord.user_id.toString()
+        : String(existingRecord.user_id)
+      const requestUserId = typeof userId === 'bigint' ? userId.toString() : String(userId)
+      if (recordUserId !== requestUserId) {
+        return Response.json({ error: 'Forbidden' }, { status: 403, headers })
+      }
 
-         const session = getSession(userId, existingRecord.session_pubkey)
-         if (!session) {
-           return Response.json({ error: 'Session not found for policy update' }, { status: 404, headers })
-         }
+      const policyPatch = parsePolicyPatch(body?.policy)
+      if (policyPatch) {
+        const session = getSession(userId, existingRecord.session_pubkey)
+        if (!session) {
+          return Response.json({ error: 'Session not found for policy update' }, { status: 404, headers })
+        }
 
-         try {
-           const mergedPolicy = applyPolicyPatch(session.policy, policyPatch)
-           updatePolicy(userId, existingRecord.session_pubkey, mergedPolicy)
-         } catch (error) {
-           const message = error instanceof Error ? error.message : 'Failed to update policy'
-           return Response.json({ error: message }, { status: 400, headers })
-         }
-       }
+        try {
+          const mergedPolicy = applyPolicyPatch(session.policy, policyPatch)
+          updatePolicy(userId, existingRecord.session_pubkey, mergedPolicy)
+        } catch (error) {
+          const message = error instanceof Error ? error.message : 'Failed to update policy'
+          return Response.json({ error: message }, { status: 400, headers })
+        }
+      }
 
       const record = updateNip46RequestStatus(id, status, { result, error: errorMessage })
       if (!record) {
@@ -386,6 +392,18 @@ export async function handleNip46Route(
       const id = typeof body?.id === 'string' ? body.id.trim() : ''
       if (!id) {
         return Response.json({ error: 'Field "id" is required' }, { status: 400, headers })
+      }
+
+      const existingRecord = getNip46RequestById(id)
+      if (!existingRecord) {
+        return Response.json({ error: 'Request not found' }, { status: 404, headers })
+      }
+      const recordUserId = typeof existingRecord.user_id === 'bigint'
+        ? existingRecord.user_id.toString()
+        : String(existingRecord.user_id)
+      const requestUserId = typeof userId === 'bigint' ? userId.toString() : String(userId)
+      if (recordUserId !== requestUserId) {
+        return Response.json({ error: 'Forbidden' }, { status: 403, headers })
       }
 
       deleteNip46Request(id)
@@ -603,6 +621,9 @@ export async function handleNip46Route(
   if (url.pathname.startsWith('/api/nip46/sessions/') && req.method === 'DELETE') {
     const pubkey = parsePubkeyFromPath(url.pathname)
     if (!pubkey || !isValidHex(pubkey)) return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
+    if (url.pathname !== `/api/nip46/sessions/${pubkey}`) {
+      return Response.json({ error: 'Not Found' }, { status: 404, headers })
+    }
     const ok = deleteSession(userId, pubkey.toLowerCase())
     return Response.json({ ok }, { headers })
   }

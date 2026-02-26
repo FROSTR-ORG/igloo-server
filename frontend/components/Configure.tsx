@@ -556,10 +556,28 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
 
     setIsGenerating(true);
     try {
+      const resolveRelaysToSave = (): string[] => {
+        if (Array.isArray(existingRelays) && existingRelays.length > 0) {
+          return existingRelays;
+        }
+        if (typeof advancedSettings.RELAYS === 'string' && advancedSettings.RELAYS.trim().length > 0) {
+          try {
+            const parsed = JSON.parse(advancedSettings.RELAYS);
+            if (Array.isArray(parsed) && parsed.every(relay => typeof relay === 'string') && parsed.length > 0) {
+              return parsed;
+            }
+          } catch {
+            // fall back to default relay list below
+          }
+        }
+        return ["wss://relay.primal.net"];
+      };
+
       // Save credentials based on mode
       if (isHeadlessMode) {
         // Headless mode - save to env
-        await fetch('/api/env', {
+        const relaysToSave = resolveRelaysToSave();
+        const response = await fetch('/api/env', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -569,16 +587,19 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             SHARE_CRED: share,
             GROUP_CRED: groupCredential,
             GROUP_NAME: keysetName,
-            // Ensure we have at least one valid relay for the server to use
-            RELAYS: JSON.stringify(["wss://relay.primal.net"])
+            RELAYS: JSON.stringify(relaysToSave)
           })
         });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          throw new Error(detail || `Failed to save headless credentials (${response.status})`);
+        }
       } else {
         // Database mode - save to user credentials
         // Preserve existing relays or use default if none exist
-        const relaysToSave = existingRelays || ["wss://relay.primal.net"];
+        const relaysToSave = resolveRelaysToSave();
         
-        await fetch('/api/user/credentials', {
+        const response = await fetch('/api/user/credentials', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -591,6 +612,10 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
             relays: relaysToSave
           })
         });
+        if (!response.ok) {
+          const detail = await response.text().catch(() => '');
+          throw new Error(detail || `Failed to save credentials (${response.status})`);
+        }
       }
       
       setHasExistingCredentials(true);

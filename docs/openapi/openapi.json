@@ -419,22 +419,14 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest",
+            "description": "Bad request",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthStatus"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
-                  "enabled": true,
-                  "methods": [
-                    "api-key",
-                    "bearer",
-                    "basic-auth",
-                    "session"
-                  ],
-                  "rateLimiting": true,
-                  "sessionTimeout": 3600
+                  "error": "Invalid authentication status request"
                 }
               }
             }
@@ -3008,14 +3000,13 @@
           "methods": {
             "type": "array",
             "items": {
-              "type": "string",
-              "enum": [
-                "api-key",
-                "bearer",
-                "basic-auth",
-                "session"
-              ]
-            },
+                "type": "string",
+                "enum": [
+                  "api-key",
+                  "basic-auth",
+                  "session"
+                ]
+              },
             "description": "Available authentication methods"
           },
           "rateLimiting": {
@@ -3526,7 +3517,7 @@
         "type": "object",
         "description": "Client-supplied fields when creating or updating a NIP‑46 session",
         "properties": {
-          "client_pubkey": {
+          "pubkey": {
             "type": "string",
             "description": "Client public key (hex encoded)"
           },
@@ -3554,7 +3545,7 @@
           }
         },
         "required": [
-          "client_pubkey"
+          "pubkey"
         ]
       },
       "Nip46Session": {
@@ -4073,13 +4064,12 @@
               ]
             },
             "example": {
-              "error": "Authentication required",
-              "authMethods": [
-                "api-key",
-                "bearer",
-                "basic-auth",
-                "session"
-              ]
+            "error": "Authentication required",
+            "authMethods": [
+              "api-key",
+              "basic-auth",
+              "session"
+            ]
             }
           }
         }

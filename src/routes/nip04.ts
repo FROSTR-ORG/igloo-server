@@ -79,6 +79,10 @@ export async function handleNip04Route(req: Request, url: URL, context: RouteCon
   if (!isContentLengthWithin(req, DEFAULT_MAX_JSON_BODY)) {
     return Response.json({ error: 'Request too large' }, { status: 413, headers })
   }
+  const authContext = _auth ?? context.auth
+  if (!authContext?.authenticated) {
+    return Response.json({ error: 'Unauthorized' }, { status: 401, headers })
+  }
   if (!context.node) return Response.json({ error: 'Node not available' }, { status: 503, headers })
 
   // Separate bucket for e2e crypto ops

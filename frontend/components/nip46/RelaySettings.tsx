@@ -75,7 +75,13 @@ export function RelaySettings({ relays, onAdd, onRemove, loading = false, saving
                 size="sm"
                 icon={<X className="h-3 w-3" />}
                 tooltip="Remove relay"
-                onClick={() => onRemove(relay)}
+                onClick={async () => {
+                  try {
+                    await onRemove(relay)
+                  } catch (error) {
+                    console.error('[RelaySettings] Failed to remove relay:', error)
+                  }
+                }}
                 disabled={saving}
               />
             </span>

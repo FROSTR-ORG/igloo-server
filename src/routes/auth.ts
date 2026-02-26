@@ -453,7 +453,7 @@ export async function checkRateLimit(
   req: Request,
   bucket: string = 'auth',
   opts?: { windowMs?: number; max?: number; clientIp?: string }
-): Promise<{ allowed: boolean; remaining: number }> {
+): Promise<{ allowed: boolean; remaining: number; resetAt?: number }> {
   if (!AUTH_CONFIG.RATE_LIMIT_ENABLED) {
     return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX };
   }
@@ -469,7 +469,8 @@ export async function checkRateLimit(
 
   return {
     allowed: result.allowed,
-    remaining: result.remaining
+    remaining: result.remaining,
+    resetAt: result.resetAt
   };
 }
 
@@ -1009,7 +1010,7 @@ export async function handleLogin(req: Request): Promise<Response> {
           return Response.json({ 
             success: false, 
             error: 'Database temporarily unavailable. Please try again.' 
-          }, { status: 503 }); // 503 Service Unavailable
+          }, { status: 503, headers: baseHeaders }); // 503 Service Unavailable
         }
         
         // For unexpected errors, log but don't expose details
@@ -1098,6 +1099,19 @@ export function handleLogout(req: Request): Response {
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers });
+  }
+
+  if (req.method !== 'POST') {
+    return Response.json(
+      { error: 'Method not allowed' },
+      {
+        status: 405,
+        headers: {
+          ...headers,
+          'Allow': 'POST, OPTIONS'
+        }
+      }
+    );
   }
   
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);

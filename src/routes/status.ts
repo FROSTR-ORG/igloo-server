@@ -59,7 +59,7 @@ export async function handleStatusRoute(req: Request, url: URL, context: RouteCo
                 // Lazy-load DB only in non-headless, authenticated path
                 const { userHasStoredCredentials } = await import('../db/database.js');
                 // Convert to bigint for database operation
-                const dbUserId = typeof parsedUserId === 'string' ? BigInt(parsedUserId) : parsedUserId;
+                const dbUserId = typeof parsedUserId === 'string' ? BigInt(parsedUserId) : BigInt(parsedUserId);
                 hasStoredCredentials = userHasStoredCredentials(dbUserId);
               }
             }

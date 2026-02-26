@@ -38,6 +38,7 @@ const Collapsible: React.FC<CollapsibleProps> = ({
         )}
         onClick={toggleExpanded}
         role="button"
+        aria-expanded={isExpanded}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {

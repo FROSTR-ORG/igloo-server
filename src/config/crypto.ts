@@ -5,7 +5,7 @@
 
 // PBKDF2 Configuration for Key Derivation
 export const PBKDF2_CONFIG = {
-  ITERATIONS: 200000,      // Number of iterations (higher = more secure but slower)
+  ITERATIONS: 600000,      // OWASP-aligned baseline for PBKDF2-HMAC-SHA256
   KEY_LENGTH: 32,          // 256 bits
   ALGORITHM: 'sha256',     // Hash algorithm
 } as const;

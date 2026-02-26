@@ -1,6 +1,6 @@
 /**
  * UI event-log smoke tests.
- * Signing operations performed in 04-sign.e2e.ts will have produced log entries.
+ * This suite seeds its own event-log entries in beforeAll.
  */
 
 import { test, expect, request } from '@playwright/test';
@@ -23,9 +23,10 @@ async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<v
 test.describe('Event log – /api/event-log', () => {
   test.beforeAll(async () => {
     await withApi(async (api) => {
+      const runUniqueHex = `${Date.now().toString(16)}${Math.random().toString(16).slice(2)}`.padStart(64, 'b').slice(0, 64);
       const seedRes = await api.post('/api/sign', {
         headers: { 'X-Session-ID': sessionId },
-        data: { message: 'b'.repeat(64) },
+        data: { message: runUniqueHex },
       });
       if (!seedRes.ok()) {
         throw new Error(`Failed to seed event log via /api/sign: ${seedRes.status()} ${await seedRes.text()}`);

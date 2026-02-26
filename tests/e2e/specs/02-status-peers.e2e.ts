@@ -7,8 +7,10 @@ import type { APIRequestContext } from '@playwright/test';
 import { loadState } from '../state.js';
 import type { SmokeTestState } from '../state.js';
 
-const state: SmokeTestState = loadState();
-const { baseUrl, sessionId } = state;
+let state: SmokeTestState;
+let baseUrl = '';
+let sessionId = '';
+let groupPubkeyHex = '';
 
 async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<void> {
   const api = await request.newContext({ baseURL: baseUrl });
@@ -18,6 +20,13 @@ async function withApi(fn: (api: APIRequestContext) => Promise<void>): Promise<v
     await api.dispose();
   }
 }
+
+test.beforeAll(() => {
+  state = loadState();
+  baseUrl = state.baseUrl;
+  sessionId = state.sessionId;
+  groupPubkeyHex = state.groupPubkeyHex;
+});
 
 test.describe('Status – /api/status', () => {
   test('GET /api/status is publicly accessible without auth', async () => {
@@ -91,7 +100,7 @@ test.describe('Peers – /api/peers', () => {
       expect(res.status()).toBe(200);
       const body = await res.json();
       expect(body).toHaveProperty('pubkey');
-      expect(body.pubkey).toBe(state.groupPubkeyHex);
+      expect(body.pubkey).toBe(groupPubkeyHex);
       expect(typeof body.threshold).toBe('number');
     });
   });

@@ -68,6 +68,20 @@ describe('NostrRelay REQ handling', () => {
     expect(messages).toContainEqual(['NOTICE', '', 'REQ requires at least one filter']);
   });
 
+  it('rejects REQ with no filters', () => {
+    const relay = new NostrRelay({ info: false, debug: false });
+    const socket = createFakeSocket();
+    const ws = asHandlerSocket(socket);
+    const handler = relay.handler();
+
+    handler.open?.(ws);
+    handler.message?.(ws, JSON.stringify(['REQ', 'sub-empty-no-filters']));
+
+    expect(relay.subs.size).toBe(0);
+    const messages = decodeSent(socket);
+    expect(messages).toContainEqual(['NOTICE', '', 'REQ requires at least one filter']);
+  });
+
   it('accepts canonical multi-filter REQ payloads and creates a subscription', () => {
     const relay = new NostrRelay({ info: false, debug: false });
     const socket = createFakeSocket();

@@ -1,7 +1,7 @@
 # E2E Smoke Test Suite (Playwright – DB Mode)
 
 Last verified: 2026-02-20
-Test count: 62 (54 API + 8 UI) — all passing
+Status snapshot: all Playwright smoke tests passing as of the verification date above. For current counts, run `npx playwright test --list`.
 
 ## Purpose
 

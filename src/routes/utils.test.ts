@@ -56,6 +56,12 @@ describe('getValidRelays', () => {
     });
   });
 
+  it('filters localhost subdomain relay when localhost relays are disallowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
+      expect(getValidRelays('["ws://relay.localhost:18002"]', { fallbackToDefault: false })).toEqual([]);
+    });
+  });
+
   it('filters IPv4-mapped IPv6 relay when localhost relays are disallowed', async () => {
     await withEnv('ALLOW_LOCALHOST_RELAY', 'false', () => {
       expect(getValidRelays('["ws://[::ffff:127.0.0.1]:18002"]', { fallbackToDefault: false })).toEqual([]);
@@ -100,6 +106,8 @@ describe('normalizeRelayListForEcho', () => {
       expect(
         normalizeRelayListForEcho([
           'ws://127.0.0.1:18002',
+          'ws://[::1]:18002',
+          'ws://[::ffff:127.0.0.1]:18002',
           'ws://localhost:18002',
           'wss://relay.example.com'
         ])
@@ -116,6 +124,18 @@ describe('normalizeRelayListForEcho', () => {
   it('keeps localhost hostname in echo list when explicitly allowed', async () => {
     await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
       expect(normalizeRelayListForEcho(['ws://localhost:18002'])).toEqual(['ws://localhost:18002']);
+    });
+  });
+
+  it('keeps IPv6 localhost relay in echo list when explicitly allowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+      expect(normalizeRelayListForEcho(['ws://[::1]:18002'])).toEqual(['ws://[::1]:18002']);
+    });
+  });
+
+  it('keeps IPv4-mapped IPv6 relay in echo list when explicitly allowed', async () => {
+    await withEnv('ALLOW_LOCALHOST_RELAY', 'true', () => {
+      expect(normalizeRelayListForEcho(['ws://[::ffff:127.0.0.1]:18002'])).toEqual(['ws://[::ffff:127.0.0.1]:18002']);
     });
   });
 });
