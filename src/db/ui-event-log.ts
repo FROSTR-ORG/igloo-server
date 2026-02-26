@@ -438,10 +438,34 @@ export function createUiEventLogStore(dbConn: Database) {
   }
 }
 
-const defaultStore = createUiEventLogStore(db)
+let defaultStore: ReturnType<typeof createUiEventLogStore> | null = null
 
-export const appendUiEventLogEntry = defaultStore.append
-export const listUiEventLogEntries = defaultStore.list
-export const getUiEventLogBlob = defaultStore.getBlob
-export const exportUiEventLogChunk = defaultStore.exportChunk
-export const pruneUiEventLog = defaultStore.prune
+function getDefaultStore(): ReturnType<typeof createUiEventLogStore> {
+  if (!defaultStore) defaultStore = createUiEventLogStore(db)
+  return defaultStore
+}
+
+export function appendUiEventLogEntry(entry: UiEventLogStreamEntry): { seq: number; dataHash: string | null } {
+  return getDefaultStore().append(entry)
+}
+
+export function listUiEventLogEntries(opts?: { limit?: number; beforeSeq?: number; types?: string[] }): UiEventLogListResult {
+  return getDefaultStore().list(opts)
+}
+
+export function getUiEventLogBlob(hash: string): { data: unknown; byteLength: number } | null {
+  return getDefaultStore().getBlob(hash)
+}
+
+export function exportUiEventLogChunk(opts?: {
+  afterSeq?: number;
+  untilSeq?: number;
+  limit?: number;
+  types?: string[];
+}): { rows: UiEventLogExportRow[]; nextAfterSeq: number | null } {
+  return getDefaultStore().exportChunk(opts)
+}
+
+export function pruneUiEventLog(opts?: { retentionDays?: number }): UiEventLogPruneResult | null {
+  return getDefaultStore().prune(opts)
+}
