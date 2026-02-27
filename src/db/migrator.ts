@@ -1,5 +1,5 @@
 import path from 'path'
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs'
 import db from './database.js'
 
 function ensureMigrationsTable() {
@@ -26,13 +26,20 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
     path.isAbsolute(migrationsDirRel) ? migrationsDirRel : path.join(process.cwd(), migrationsDirRel)
   )
 
+  if (!existsSync(dir)) return []
+
   // Security: Ensure migrations directory is within project boundaries
   const projectRoot = path.resolve(process.cwd())
-  if (!dir.startsWith(projectRoot + path.sep)) {
-    throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+  try {
+    const resolvedRealDir = realpathSync(dir)
+    const resolvedProjectRoot = realpathSync(projectRoot)
+    if (resolvedRealDir !== resolvedProjectRoot && !resolvedRealDir.startsWith(resolvedProjectRoot + path.sep)) {
+      throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+    }
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Security: Failed to validate migration directory path: ${detail}`)
   }
-
-  if (!existsSync(dir)) return []
   const files = readdirSync(dir)
     .filter(f => f.toLowerCase().endsWith('.sql'))
     .sort()

@@ -43,12 +43,12 @@
     },
   },
   "overrides": {
-    "ajv": "^8.18.0",
-    "fast-xml-parser": "^5.3.8",
-    "glob": "^10.5.0",
-    "js-yaml": "^4.1.1",
-    "minimatch": "^10.2.3",
-    "undici": "^6.23.0",
+    "ajv": "8.18.0",
+    "fast-xml-parser": "5.4.1",
+    "glob": "10.5.0",
+    "js-yaml": "4.1.1",
+    "minimatch": "10.2.4",
+    "undici": "6.23.0",
   },
   "packages": {
     "@alloc/quick-lru": ["@alloc/quick-lru@5.2.0", "", {}, "sha512-UrcABB+4bUrFABwbluTIBErXwvbsU/V7TZWfmbgJfbkwiBuziS9gxdODUyuiecfdGQ85jglMW6juS3+z5TsKLw=="],

@@ -40,7 +40,7 @@ interface UpdateResponse {
 const UPDATE_CHECK_TIMEOUT_MS = parseInt(process.env['UPDATE_CHECK_TIMEOUT_MS'] ?? '5000', 10) || 5000;
 const UPDATE_CHECK_TTL_MS = parseInt(process.env['UPDATE_CHECK_TTL_MS'] ?? '21600000', 10) || 21_600_000; // 6 hours
 const UPDATE_CHECK_FAILURE_TTL_MS = parseInt(process.env['UPDATE_CHECK_FAILURE_TTL_MS'] ?? '900000', 10) || 900_000; // 15 minutes
-const ALLOW_PRERELEASE_UPDATES = false;
+const ALLOW_PRERELEASE_UPDATES = parseBoolean(process.env['ALLOW_PRERELEASE_UPDATES']);
 
 const GITHUB_OWNER = 'FROSTR-ORG';
 const GITHUB_REPO = 'igloo-server';

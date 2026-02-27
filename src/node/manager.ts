@@ -2185,15 +2185,29 @@ export async function createNodeWithCredentials(
         const result = await withSimplePoolSubscribeManyLock(async () => {
           let restoreSubscribeMany: (() => void) | null = null;
           try {
-            const poolProto: any = SimplePool?.prototype;
-            const originalSubscribeMany = poolProto?.subscribeMany;
+            const poolProtoUnknown: unknown = SimplePool?.prototype;
+            const poolProto = poolProtoUnknown && typeof poolProtoUnknown === 'object'
+              ? poolProtoUnknown as { subscribeMany?: unknown }
+              : null;
+            const originalSubscribeMany: unknown = poolProto?.subscribeMany;
             if (poolProto && typeof originalSubscribeMany === 'function') {
+              const originalSubscribeManyFn = originalSubscribeMany as (
+                this: unknown,
+                relays: unknown,
+                filters: unknown,
+                params: unknown
+              ) => unknown;
               // Scope filter normalization to this node-creation attempt only.
-              poolProto.subscribeMany = function normalizedSubscribeMany(this: any, relays: any, filters: any, params: any) {
+              poolProto.subscribeMany = function normalizedSubscribeMany(
+                this: unknown,
+                relays: unknown,
+                filters: unknown,
+                params: unknown
+              ) {
                 const normalizedFilters = Array.isArray(filters) && filters.length === 1 && filters[0] && typeof filters[0] === 'object' && !Array.isArray(filters[0])
                   ? filters[0]
                   : filters;
-                return originalSubscribeMany.call(this, relays, normalizedFilters, params);
+                return originalSubscribeManyFn.call(this, relays, normalizedFilters, params);
               };
               restoreSubscribeMany = () => {
                 poolProto.subscribeMany = originalSubscribeMany;

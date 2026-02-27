@@ -88,8 +88,13 @@ export async function handleNip04Route(req: Request, url: URL, context: RouteCon
   // Separate bucket for crypto operations
   const rate = await checkRateLimit(req, 'crypto', { clientIp: context.clientIp });
   if (!rate.allowed) {
+    const resetAt = typeof rate.resetAt === 'number' && Number.isFinite(rate.resetAt) ? rate.resetAt : null
+    const retryAfterFromReset = resetAt !== null
+      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+      : null
     const retryAfterWindow = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '900', 10)
-    const retryAfter = Number.isFinite(retryAfterWindow) ? Math.ceil(retryAfterWindow) : 900
+    const retryAfterFallback = Number.isFinite(retryAfterWindow) && retryAfterWindow > 0 ? retryAfterWindow : 900
+    const retryAfter = retryAfterFromReset !== null ? retryAfterFromReset : retryAfterFallback
     return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
       headers: { ...headers, 'Retry-After': retryAfter.toString() }

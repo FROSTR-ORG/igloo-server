@@ -132,9 +132,10 @@ export async function handleRequest(
     if (AUTH_CONFIG.ENABLED && process.env.NODE_ENV === 'production') {
       const authResult = await authenticate(req);
       if (!authResult.authenticated) {
+        const authStatus = getAuthStatus();
         return Response.json({ 
           error: 'Authentication required for API documentation in production',
-          authMethods: getAuthStatus()
+          authMethods: authStatus.methods
         }, { 
           status: 401,
           headers 
@@ -228,9 +229,10 @@ export async function handleRequest(
       if (!authResult.authenticated) {
         // Don't set WWW-Authenticate header to avoid browser's native auth dialog
         // The frontend will handle authentication through its own UI
+        const authStatus = getAuthStatus();
         return Response.json({ 
           error: authResult.error || 'Authentication required',
-          authMethods: getAuthStatus()
+          authMethods: authStatus.methods
         }, { 
           status: 401,
           headers 

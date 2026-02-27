@@ -268,10 +268,10 @@ const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
 // - Uppercase letter
 // - Lowercase letter
 // - Digit
-// - Special character (must include at least one of @$!%*?&)
+// - Special character (any non-alphanumeric, excluding whitespace)
 // Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH.
 // Whitespace is allowed and preserved by policy.
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&]).*$/;
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).*$/;
 
 /**
  * Validates the admin secret in a timing-safe manner

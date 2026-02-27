@@ -24,6 +24,15 @@ interface RevokeApiKeyRequest {
   reason?: unknown;
 }
 
+const KNOWN_ADMIN_PATHS = new Set([
+  '/api/admin/whoami',
+  '/api/admin/users',
+  '/api/admin/users/delete',
+  '/api/admin/api-keys',
+  '/api/admin/api-keys/revoke',
+  '/api/admin/status',
+]);
+
 /**
  * Convert various input types into a normalized positive integer (number or bigint).
  * Accepts number, numeric string (e.g. "1", "42"), and bigint (e.g. 1n).
@@ -453,15 +462,7 @@ export async function handleAdminRoute(
         break;
     }
 
-    const knownAdminPaths = new Set([
-      '/api/admin/whoami',
-      '/api/admin/users',
-      '/api/admin/users/delete',
-      '/api/admin/api-keys',
-      '/api/admin/api-keys/revoke',
-      '/api/admin/status',
-    ]);
-    const isKnownPath = knownAdminPaths.has(url.pathname);
+    const isKnownPath = KNOWN_ADMIN_PATHS.has(url.pathname);
     return Response.json(
       { error: isKnownPath ? 'Method not allowed' : 'Not found' },
       { status: isKnownPath ? 405 : 404, headers }

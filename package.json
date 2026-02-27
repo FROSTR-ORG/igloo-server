@@ -74,11 +74,11 @@
     "typescript": "^5.7.3"
   },
   "overrides": {
-    "glob": "^10.5.0",
-    "minimatch": "^10.2.3",
-    "js-yaml": "^4.1.1",
-    "undici": "^6.23.0",
-    "ajv": "^8.18.0",
-    "fast-xml-parser": "^5.3.8"
+    "glob": "10.5.0",
+    "minimatch": "10.2.4",
+    "js-yaml": "4.1.1",
+    "undici": "6.23.0",
+    "ajv": "8.18.0",
+    "fast-xml-parser": "5.4.1"
   }
 }

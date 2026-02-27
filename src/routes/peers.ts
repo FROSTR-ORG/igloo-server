@@ -107,15 +107,16 @@ async function persistUserPeerPolicies(
   }));
   const sanitizedPolicies = sanitizePeerPolicyEntries(rawPolicies) as StoredPeerPolicy[];
   const hasPolicies = sanitizedPolicies.length > 0;
+  const fallbackPolicies = hasPolicies ? sanitizedPolicies : null;
 
   if (HEADLESS) {
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    await saveFallbackPeerPolicies(fallbackPolicies);
     return;
   }
 
   const userId = resolveDatabaseUserId(auth);
   if (userId === null) {
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    await saveFallbackPeerPolicies(fallbackPolicies);
     return;
   }
 
@@ -123,21 +124,24 @@ async function persistUserPeerPolicies(
     const { updateUserPeerPolicies } = await import('../db/database.js');
 
     if (!context.node || summaries.length === 0) {
-      await updateUserPeerPolicies(userId, null);
+      const success = updateUserPeerPolicies(userId, null);
+      if (!success) {
+        console.warn('Failed to clear peer policies for user', userId);
+        throw new Error('Failed to persist peer policies');
+      }
       await saveFallbackPeerPolicies(null);
       return;
     }
 
-    const success = await updateUserPeerPolicies(userId, sanitizedPolicies);
+    const success = updateUserPeerPolicies(userId, sanitizedPolicies);
     if (!success) {
       console.warn('Failed to persist peer policies for user', userId);
-      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
-    } else {
-      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+      throw new Error('Failed to persist peer policies');
     }
+    await saveFallbackPeerPolicies(fallbackPolicies);
   } catch (error) {
     console.error('Failed to persist peer policies:', error);
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    throw error;
   }
 }
 
@@ -368,8 +372,8 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
               }, { status: 400, headers });
             }
           } catch (error) {
-            const message = error instanceof Error ? error.message : 'Malformed credentials';
-            return Response.json({ error: 'Malformed credentials', warnings: [message] }, { status: 400, headers });
+            console.error('Failed to extract self pubkey from credentials:', error);
+            return Response.json({ error: 'Malformed credentials', warnings: ['Invalid credentials format'] }, { status: 400, headers });
           }
         }
         break;
@@ -643,10 +647,10 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
            online: false,
            lastPingAttempt: new Date()
          };
-         try {
-           const normalizedPubkey = normalizePubkey(pubkey);
-           context.peerStatuses.set(normalizedPubkey, updatedStatus);
-         } catch {}
+         const safePubkey = safeNormalizePubkey(pubkey);
+         if (safePubkey) {
+           context.peerStatuses.set(safePubkey, updatedStatus);
+         }
          return { pubkey, success: false, error: errorMessage };
        }
     });
@@ -721,10 +725,10 @@ async function handlePingSinglePeer(target: string, context: RouteContext, heade
       online: false,
       lastPingAttempt: new Date()
     };
-    try {
-      const normalizedPubkey = normalizePubkey(target);
-      context.peerStatuses.set(normalizedPubkey, updatedStatus);
-    } catch {}
+    const safePubkey = safeNormalizePubkey(target);
+    if (safePubkey) {
+      context.peerStatuses.set(safePubkey, updatedStatus);
+    }
     
     return Response.json({ 
       pubkey: target, 

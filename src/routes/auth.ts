@@ -1211,7 +1211,12 @@ function getAvailableAuthMethods(): string[] {
 }
 
 // Status endpoint for authentication info
-export function getAuthStatus(): object {
+export function getAuthStatus(): {
+  enabled: boolean;
+  methods: string[];
+  rateLimiting: boolean;
+  sessionTimeout: number;
+} {
   return {
     enabled: AUTH_CONFIG.ENABLED,
     methods: getAvailableAuthMethods(),

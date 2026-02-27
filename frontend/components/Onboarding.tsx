@@ -15,6 +15,10 @@ interface OnboardingProps {
   initialSkipAdminValidation?: boolean;
 }
 
+interface OnboardingValidationResponse {
+  error?: string;
+}
+
 const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminValidation = false }) => {
   // Always start with instructions step regardless of skip admin validation
   const [step, setStep] = useState<'instructions' | 'admin' | 'setup' | 'complete'>('instructions');
@@ -35,7 +39,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
   // Match server-side password policy exactly (see src/routes/onboarding.ts)
   // - Minimum 8 characters
   // - At least one uppercase letter, one lowercase letter, one digit, and one special character
-  const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$/;
 
   const parseRetryAfter = (retryAfterHeader: string | null): number | null => {
     if (!retryAfterHeader) return null;
@@ -144,7 +148,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       }
 
       // Try to parse JSON response, but handle non-JSON gracefully
-      let data: any = {};
+      let data: OnboardingValidationResponse = {};
       try {
         data = await response.json();
       } catch (jsonError) {

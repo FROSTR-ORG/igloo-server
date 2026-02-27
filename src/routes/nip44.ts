@@ -38,9 +38,11 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
   // Use a dedicated bucket separate from signing traffic.
   const rate = await checkRateLimit(req, 'crypto', { clientIp: context.clientIp });
   if (!rate.allowed) {
+    const retryAfterWindow = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '', 10);
+    const retryAfterSeconds = Number.isFinite(retryAfterWindow) && retryAfterWindow > 0 ? retryAfterWindow : 900;
     return Response.json({ error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
-      headers: { ...headers, 'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString() }
+      headers: { ...headers, 'Retry-After': Math.ceil(retryAfterSeconds).toString() }
     });
   }
 

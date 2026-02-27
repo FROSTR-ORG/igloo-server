@@ -945,17 +945,18 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
-        const message = detail || `Failed to save relays (${response.status})`;
-        console.error('[Signer] Failed to save relays to user credentials:', message);
-        setCredentialSaveError(message);
+        console.error('[Signer] Failed to save relays to user credentials:', {
+          status: response.status,
+          detail
+        });
+        setCredentialSaveError('Unable to save relays. Please try again.');
         return false;
       }
       setCredentialSaveError(null);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save relays to user credentials';
       console.error('Error saving relays to user credentials:', error);
-      setCredentialSaveError(message);
+      setCredentialSaveError('Unable to save relays. Please try again.');
       return false;
     }
   };
@@ -975,17 +976,18 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
       });
       if (!response.ok) {
         const detail = await response.text().catch(() => '');
-        const message = detail || `Failed to save relays to env (${response.status})`;
-        console.error('[Signer] Failed to save relays to env:', message);
-        setCredentialSaveError(message);
+        console.error('[Signer] Failed to save relays to env:', {
+          status: response.status,
+          detail
+        });
+        setCredentialSaveError('Unable to save relays. Please try again.');
         return false;
       }
       setCredentialSaveError(null);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to save relays to env';
       console.error('Error saving relays to env:', error);
-      setCredentialSaveError(message);
+      setCredentialSaveError('Unable to save relays. Please try again.');
       return false;
     }
   };

@@ -241,8 +241,10 @@ export function NIP46({ authHeaders }: NIP46Props) {
   }, [sessions])
 
   const handleRevokeSession = async (pubkey: string) => {
+    setConnectError(null)
+    const encodedPubkey = encodeURIComponent(pubkey)
     try {
-      const response = await fetch(`/api/nip46/sessions/${pubkey}`, {
+      const response = await fetch(`/api/nip46/sessions/${encodedPubkey}`, {
         method: 'DELETE',
         headers
       })
@@ -259,8 +261,10 @@ export function NIP46({ authHeaders }: NIP46Props) {
   }
 
   const handleUpdateSessionPolicy = useCallback(async (pubkey: string, policy: PermissionPolicy) => {
+    setConnectError(null)
+    const encodedPubkey = encodeURIComponent(pubkey)
     try {
-      const response = await fetch(`/api/nip46/sessions/${pubkey}/policy`, {
+      const response = await fetch(`/api/nip46/sessions/${encodedPubkey}/policy`, {
         method: 'PUT',
         headers,
         body: JSON.stringify({

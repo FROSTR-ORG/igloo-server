@@ -46,6 +46,12 @@ interface ConfigureProps {
   authHeaders?: Record<string, string>;
 }
 
+function isAbortError(err: unknown): boolean {
+  if (err instanceof DOMException) return err.name === 'AbortError';
+  if (err instanceof Error) return err.name === 'AbortError';
+  return false;
+}
+
 const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSaved, onBack, authHeaders = {} }) => {
   const [keysetGenerated, setKeysetGenerated] = useState<{ success: boolean; location: string | React.ReactNode | null }>({ success: false, location: null });
   const [isGenerating, setIsGenerating] = useState(false);
@@ -158,7 +164,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         setAdvancedError(err.error || `Failed to load settings: ${envResponse.status}`);
       }
     } catch (error) {
-      if ((error as any)?.name === 'AbortError') {
+      if (isAbortError(error)) {
         return; // newer request superseded this one
       }
       console.error('Error loading advanced settings:', error);
@@ -358,7 +364,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
     return () => {
       window.cancelAnimationFrame(raf);
       window.removeEventListener('keydown', handleKeyDown);
-      (clearTriggerButtonRef.current ?? previousFocus)?.focus();
+      previousFocus?.focus();
     };
   }, [showClearConfirm]);
 

@@ -251,7 +251,8 @@ export class PersistentRateLimiter {
       // Clear all buckets for this identifier
       const keys = Array.from(this.fallbackStore.keys());
       for (const key of keys) {
-        const keyIdentifier = key.slice(key.lastIndexOf(':') + 1);
+        const separatorIndex = key.indexOf(':');
+        const keyIdentifier = separatorIndex === -1 ? key : key.slice(separatorIndex + 1);
         if (keyIdentifier === identifier) {
           this.fallbackStore.delete(key);
         }

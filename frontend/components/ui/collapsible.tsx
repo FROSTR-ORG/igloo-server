@@ -1,4 +1,4 @@
-import React, { useState, ReactNode } from 'react';
+import React, { useState, ReactNode, useId } from 'react';
 import { cn } from "../../lib/utils";
 import { ChevronDown, ChevronUp } from "lucide-react";
 
@@ -24,6 +24,7 @@ const Collapsible: React.FC<CollapsibleProps> = ({
   actions
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultOpen);
+  const contentId = useId();
 
   const toggleExpanded = () => {
     setIsExpanded(prev => !prev);
@@ -39,6 +40,7 @@ const Collapsible: React.FC<CollapsibleProps> = ({
         onClick={toggleExpanded}
         role="button"
         aria-expanded={isExpanded}
+        aria-controls={contentId}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -61,6 +63,7 @@ const Collapsible: React.FC<CollapsibleProps> = ({
         )}
       </div>
       <div 
+        id={contentId}
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
           isExpanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0",

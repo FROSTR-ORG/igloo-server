@@ -11,11 +11,7 @@ const defaultDbDir = path.join(process.cwd(), 'data');
 const envPath = process.env.DB_PATH;
 const isEnvPathFile = !!envPath && (
   envPath.endsWith('.db') ||
-  (
-    path.extname(envPath) !== '' &&
-    !envPath.endsWith(path.sep) &&
-    path.basename(envPath).includes('.')
-  )
+  (path.extname(envPath) !== '' && !envPath.endsWith(path.sep))
 );
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');

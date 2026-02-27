@@ -32,6 +32,8 @@ const Tooltip: React.FC<TooltipProps> = (props) => {
   } = props;
   const focusable = props.focusable ?? false;
   const ariaLabel = props.ariaLabel;
+  const ariaLabelFallback = typeof content === 'string' && content.trim().length > 0 ? content.trim() : 'Tooltip';
+  const resolvedAriaLabel = ariaLabel || ariaLabelFallback;
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const tooltipId = useId();
@@ -139,7 +141,7 @@ const Tooltip: React.FC<TooltipProps> = (props) => {
         type="button"
         {...commonProps}
         className={cn('inline-flex align-middle', triggerClassName)}
-        aria-label={ariaLabel}
+        aria-label={resolvedAriaLabel}
       >
         {triggerContent}
       </button>
