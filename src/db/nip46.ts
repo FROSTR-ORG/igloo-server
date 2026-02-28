@@ -177,6 +177,36 @@ export interface Nip46RequestRecord {
   expires_at?: string | null
 }
 
+function parseRelayArray(raw: string): string[] {
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) {
+    throw new Error('[nip46] Data integrity violation: relays must be an array')
+  }
+  const relays: string[] = []
+  for (const value of parsed) {
+    if (typeof value !== 'string') {
+      throw new Error('[nip46] Data integrity violation: relay entries must be strings')
+    }
+    relays.push(value)
+  }
+  return relays
+}
+
+function parseBooleanMap(raw: string, label: string): Record<string, boolean> {
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`[nip46] Data integrity violation: ${label} must be an object`)
+  }
+  const normalized: Record<string, boolean> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== 'boolean') {
+      throw new Error(`[nip46] Data integrity violation: ${label}.${key} must be a boolean`)
+    }
+    normalized[key] = value
+  }
+  return normalized
+}
+
 function rowToSession(row: any): Nip46Session {
   let relays: string[] | null = null
 
@@ -187,8 +217,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Relay data exceeds maximum size')
     }
     try {
-      relays = JSON.parse(row.relays)
+      relays = parseRelayArray(row.relays)
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse relays JSON, using null:', e)
       relays = null
@@ -205,8 +238,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Policy methods data exceeds maximum size')
     }
     try {
-      methods = JSON.parse(row.policy_methods)
+      methods = parseBooleanMap(row.policy_methods, 'policy_methods')
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse policy_methods JSON, using empty:', e)
       methods = {}
@@ -220,8 +256,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Policy kinds data exceeds maximum size')
     }
     try {
-      kinds = JSON.parse(row.policy_kinds)
+      kinds = parseBooleanMap(row.policy_kinds, 'policy_kinds')
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse policy_kinds JSON, using empty:', e)
       kinds = {}
@@ -253,7 +292,7 @@ export function listSessions(userId: number | bigint, opts?: { includeRevoked?: 
 }
 
 export function getSession(userId: number | bigint, client_pubkey: string): Nip46Session | null {
-  const key = (client_pubkey || '').trim().toLowerCase()
+  const key = normalizeClientPubkey(client_pubkey)
   if (!key || !/^[0-9a-f]{64}$/.test(key)) return null
   const row = db
     .prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?')
@@ -343,6 +382,40 @@ export function createNip46Request(params: {
 export function getNip46RequestById(id: string): Nip46RequestRecord | null {
   const row = db.prepare('SELECT * FROM nip46_requests WHERE id = ?').get(id) as Nip46RequestRecord | undefined
   return row ?? null
+}
+
+export function getPendingNip46RequestByClientId(
+  userId: number | bigint,
+  sessionPubkey: string,
+  clientRequestId: string
+): Nip46RequestRecord | null {
+  const normalizedPubkey = normalizeClientPubkey(sessionPubkey)
+  const normalizedClientRequestId = clientRequestId.trim()
+  if (!normalizedPubkey || !/^[0-9a-f]{64}$/.test(normalizedPubkey) || !normalizedClientRequestId) {
+    return null
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM nip46_requests
+       WHERE user_id = ? AND session_pubkey = ? AND status = 'pending'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 500`
+    )
+    .all(userId, normalizedPubkey) as Nip46RequestRecord[]
+
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.params)
+      const payloadId = payload?.id
+      if (payloadId !== undefined && String(payloadId) === normalizedClientRequestId) {
+        return row
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 export function listNip46Requests(
@@ -664,7 +737,7 @@ export function logSessionEvent(userId: number | bigint, client_pubkey: string, 
 }
 
 export function listSessionEvents(userId: number | bigint, client_pubkey: string, limit = 50): Nip46SessionEvent[] {
-  const key = (client_pubkey || '').trim().toLowerCase()
+  const key = normalizeClientPubkey(client_pubkey)
   const rows = db.prepare(
     'SELECT * FROM nip46_session_events WHERE user_id = ? AND client_pubkey = ? ORDER BY created_at DESC, id DESC LIMIT ?'
   ).all(userId, key, limit) as any[]

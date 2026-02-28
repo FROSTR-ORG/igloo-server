@@ -42,7 +42,14 @@ describe('admin whoami with DB-backed session', () => {
 
     rmSync(tmpDir, { recursive: true, force: true })
   })
-afterAll(async () => {
-  try { const auth = await import('../../src/routes/auth'); auth.stopAuthCleanup(); } catch {}
-})
+
+  afterAll(async () => {
+    try {
+      const auth = await import('../../src/routes/auth')
+      auth.stopAuthCleanup()
+    } catch (error) {
+      console.error('admin.whoami.session teardown failed:', error)
+      throw error
+    }
+  })
 })

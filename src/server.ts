@@ -655,6 +655,11 @@ const parsedMsgBurst = Number.parseInt(process.env.WS_MSG_BURST ?? '', 10);
 const WS_MSG_BURST = Number.isFinite(parsedMsgBurst) && parsedMsgBurst > 0
   ? Math.max(parsedMsgBurst, WS_MSG_RATE)
   : Math.max(WS_MSG_RATE, 40);
+const parsedAllowQueryCredentials = (process.env.ALLOW_QUERY_CREDENTIALS ?? '').trim().toLowerCase();
+// Backward-compatible default: allow legacy ?apiKey= / ?sessionId= WS auth unless explicitly disabled.
+const WS_ALLOW_QUERY_CREDENTIALS = parsedAllowQueryCredentials === ''
+  ? true
+  : !['0', 'false', 'no', 'off'].includes(parsedAllowQueryCredentials);
 const WS_POLICY_CLOSE = 1008; // Policy violation
 
 const wsConnectionsPerIp = new Map<string, number>();
@@ -819,10 +824,12 @@ const server = serve<AppWebSocketData>({
         let authReq = req;
         const qpHeaders = new Headers(req.headers);
         let qpTouched = false;
-        const qpApiKey = url.searchParams.get('apiKey');
-        const qpSessionId = url.searchParams.get('sessionId');
-        if (qpApiKey) { qpHeaders.set('X-API-Key', qpApiKey); qpTouched = true; }
-        if (qpSessionId) { qpHeaders.set('X-Session-ID', qpSessionId); qpTouched = true; }
+        if (WS_ALLOW_QUERY_CREDENTIALS) {
+          const qpApiKey = url.searchParams.get('apiKey');
+          const qpSessionId = url.searchParams.get('sessionId');
+          if (qpApiKey) { qpHeaders.set('X-API-Key', qpApiKey); qpTouched = true; }
+          if (qpSessionId) { qpHeaders.set('X-Session-ID', qpSessionId); qpTouched = true; }
+        }
         if (qpTouched) {
           authReq = new Request(req.url, { method: req.method, headers: qpHeaders });
         }

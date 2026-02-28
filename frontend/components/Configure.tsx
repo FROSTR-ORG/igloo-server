@@ -41,7 +41,7 @@ const defaultAdvancedSettings: AdvancedSettingsState = {
 
 interface ConfigureProps {
   onKeysetCreated: (data: { groupCredential: string; shareCredentials: string[]; name: string }) => void;
-  onCredentialsSaved?: () => void;
+  onCredentialsSaved?: () => void | Promise<void>;
   onBack?: () => void;
   authHeaders?: Record<string, string>;
 }
@@ -337,7 +337,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   useEffect(() => {
     if (!showClearConfirm) return;
     const previousFocus = (document.activeElement as HTMLElement | null) ?? clearTriggerButtonRef.current;
-    const focusPrimary = () => clearConfirmButtonRef.current?.focus();
+    const focusPrimary = () => clearCancelButtonRef.current?.focus();
     const raf = window.requestAnimationFrame(focusPrimary);
 
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -569,7 +569,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       
       // Notify parent component to refresh views
       if (onCredentialsSaved) {
-        onCredentialsSaved();
+        await onCredentialsSaved();
       }
       
       // Clear the form

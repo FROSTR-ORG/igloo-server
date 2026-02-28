@@ -1,4 +1,4 @@
-import { createHash, timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS, SKIP_ADMIN_SECRET_VALIDATION } from '../const.js';
@@ -29,6 +29,7 @@ const parsedClientIdTtl = Number.parseInt(process.env.CLIENT_ID_TTL_MS ?? '', 10
 const clientIdTtlBase = Number.isFinite(parsedClientIdTtl) && parsedClientIdTtl > 0 ? parsedClientIdTtl : 86400000;
 const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, clientIdTtlBase));
 const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
+const FALLBACK_FINGERPRINT_SECRET = FINGERPRINT_SECRET || randomBytes(32).toString('hex');
 const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
 let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -228,9 +229,7 @@ function getClientIp(req: Request, fallbackFromServer?: string | null): string {
   const cached = clientIdCache.get(canonical);
   if (cached && cached.expiresAt > now) return cached.id;
   const encoder = new TextEncoder();
-  const digest = FINGERPRINT_SECRET
-    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), encoder.encode(canonical))
-    : sha256(encoder.encode(canonical));
+  const digest = hmac(sha256, encoder.encode(FALLBACK_FINGERPRINT_SECRET), encoder.encode(canonical));
   const hex = Buffer.from(digest).toString('hex');
   const id = `fp_${hex.slice(0, 32)}`;
   clientIdCache.set(canonical, { id, expiresAt: now + CLIENT_ID_TTL_MS });
@@ -346,7 +345,7 @@ function validatePasswordStrength(password: string, username?: string): string |
   }
 
   if (!PASSWORD_REGEX.test(password)) {
-    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (must include at least one of @$!%*?&)';
+    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (any non-alphanumeric character, excluding whitespace).';
   }
 
   // Check for sequential or repeated characters

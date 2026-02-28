@@ -132,6 +132,24 @@ export async function handleRequest(
     if (AUTH_CONFIG.ENABLED && process.env.NODE_ENV === 'production') {
       const authResult = await authenticate(req);
       if (!authResult.authenticated) {
+        if (authResult.rateLimited) {
+          const retryAfterSeconds = typeof authResult.retryAfter === 'number' ? authResult.retryAfter : 60;
+          const retryHeaders = {
+            ...headers,
+            'Retry-After': String(retryAfterSeconds)
+          };
+          return Response.json(
+            {
+              error: 'Rate limit exceeded',
+              retryAfter: retryAfterSeconds,
+              resetAt: authResult.resetAt
+            },
+            {
+              status: 429,
+              headers: retryHeaders
+            }
+          );
+        }
         const authStatus = getAuthStatus();
         return Response.json({ 
           error: 'Authentication required for API documentation in production',

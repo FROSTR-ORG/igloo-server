@@ -140,14 +140,28 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     });
   }
 
+  const maxBodyBytes = 1024 * 100;
   const contentLength = req.headers.get('content-length');
-  if (contentLength && parseInt(contentLength) > 1024 * 100) { // 100KB limit
+  const declaredLength = contentLength ? Number.parseInt(contentLength, 10) : null;
+  if (declaredLength !== null && Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
+    return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
+  }
+
+  let rawBody = '';
+  try {
+    rawBody = await req.text();
+  } catch {
+    return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
+  }
+
+  const actualBodyBytes = new TextEncoder().encode(rawBody).byteLength;
+  if (actualBodyBytes > maxBodyBytes) {
     return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
   }
 
   let body: SignRequestBody;
   try {
-    body = await req.json();
+    body = JSON.parse(rawBody) as SignRequestBody;
   } catch {
     return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
   }
@@ -206,7 +220,19 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
       }
     }
 
-    if (!signatureHex || typeof signatureHex !== 'string') {
+    if (typeof signatureHex === 'string' && signatureHex.startsWith('0x')) {
+      signatureHex = signatureHex.slice(2);
+    }
+    if (!signatureHex || !/^[0-9a-fA-F]{128}$/.test(signatureHex)) {
+      try {
+        context.addServerLog('error', 'Invalid signature format', { id, signature: signatureHex });
+      } catch {
+        try { console.error('Invalid signature format', id, signatureHex); } catch {}
+      }
+      signatureHex = null;
+    }
+
+    if (!signatureHex) {
       return Response.json({ code: 'INVALID_NODE_RESPONSE', error: 'invalid signature response from node' }, { status: 502, headers });
     }
 

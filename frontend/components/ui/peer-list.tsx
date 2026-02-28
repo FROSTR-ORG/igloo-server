@@ -150,8 +150,8 @@ const derivePolicyState = (
 };
 
 const hasCustomPolicy = (policy: PeerPolicy): boolean => {
-  const sendOverride = typeof policy.allowSend === 'boolean' && policy.allowSend === false;
-  const receiveOverride = typeof policy.allowReceive === 'boolean' && policy.allowReceive === false;
+  const sendOverride = typeof policy.allowSend === 'boolean';
+  const receiveOverride = typeof policy.allowReceive === 'boolean';
   return sendOverride || receiveOverride;
 };
 
@@ -380,24 +380,34 @@ const PeerList: React.FC<PeerListProps> = ({
       const updated = prev.map(peer => {
         // Try exact match first
         if (peer.pubkey === pubkey) {
+          const hasLatency = status.latency !== undefined && status.latency !== null;
+          const parsedLatency = Number(status.latency);
+          const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : peer.latency;
+          const parsedLastSeen = parseDate(status.lastSeen);
+          const parsedLastPingAttempt = parseDate(status.lastPingAttempt);
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
-            latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
+            lastSeen: parsedLastSeen ?? peer.lastSeen,
+            latency,
+            lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
           } as PeerStatus;
         }
         // Try match with compressed-prefix normalization (02/03)
         const peerNormalized = toPolicyKey(peer.pubkey);
         const pingNormalized = toPolicyKey(pubkey);
         if (peerNormalized !== '' && peerNormalized === pingNormalized) {
+          const hasLatency = status.latency !== undefined && status.latency !== null;
+          const parsedLatency = Number(status.latency);
+          const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : peer.latency;
+          const parsedLastSeen = parseDate(status.lastSeen);
+          const parsedLastPingAttempt = parseDate(status.lastPingAttempt);
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
-            latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
+            lastSeen: parsedLastSeen ?? peer.lastSeen,
+            latency,
+            lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
           } as PeerStatus;
         }
         return peer;
@@ -439,15 +449,20 @@ const PeerList: React.FC<PeerListProps> = ({
       const result = await response.json();
       
       if (result.status) {
+        const hasLatency = result.status.latency !== undefined && result.status.latency !== null;
+        const parsedLatency = Number(result.status.latency);
+        const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : null;
+        const parsedLastSeen = parseDate(result.status.lastSeen);
+        const parsedLastPingAttempt = parseDate(result.status.lastPingAttempt);
         // Update peer status immediately
         setPeers(prev => prev.map(peer => 
           peer.pubkey === peerPubkey 
             ? {
                 ...peer,
                 online: Boolean(result.status.online),
-                lastSeen: parseDate(result.status.lastSeen) ?? peer.lastSeen,
-                latency: result.status.latency ? Number(result.status.latency) : peer.latency,
-                lastPingAttempt: parseDate(result.status.lastPingAttempt) ?? peer.lastPingAttempt
+                lastSeen: parsedLastSeen ?? peer.lastSeen,
+                latency: latency ?? peer.latency,
+                lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
               } as PeerStatus
             : peer
         ));

@@ -90,6 +90,7 @@ Timeouts:
 WebSocket abuse controls:
 - `RATE_LIMIT_WS_UPGRADE_WINDOW`, `RATE_LIMIT_WS_UPGRADE_MAX`
 - `WS_MAX_CONNECTIONS_PER_IP`, `WS_MSG_RATE`, `WS_MSG_BURST`
+- `ALLOW_QUERY_CREDENTIALS` (default `true` for legacy `/api/events?apiKey=...` / `sessionId` compatibility; set `false` to disable query-param auth on upgrades)
 
 Recovery throttling:
 - `RATE_LIMIT_RECOVERY_WINDOW`, `RATE_LIMIT_RECOVERY_MAX`

@@ -54,12 +54,7 @@ servers:
     description: Local development server (HTTP for local development only)
     x-internal-only: true
 
-security:
-  - apiKeyAuth: []
-  - bearerAuth: []
-  - basicAuth: []
-  - sessionCookie: []
-  - sessionHeader: []
+security: []
 
 paths:
   /api/status:
@@ -132,6 +127,12 @@ paths:
         - The stream emits JSON objects shaped like `{ type, message, data?, timestamp, id }`.
       tags:
         - Events
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: |
@@ -187,6 +188,12 @@ paths:
         - Use `types` (comma-separated) to filter by event type.
       tags:
         - Event Log
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - name: limit
           in: query
@@ -234,6 +241,12 @@ paths:
         The UI typically loads this lazily when a log entry is expanded.
       tags:
         - Event Log
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - name: hash
           in: path
@@ -269,6 +282,12 @@ paths:
         - `types`: comma-separated list of event types to include.
       tags:
         - Event Log
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - name: sinceSeq
           in: query
@@ -422,6 +441,12 @@ paths:
       description: Retrieve current environment configuration (whitelisted variables only)
       tags:
         - Configuration
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: Environment variables retrieved successfully
@@ -445,6 +470,12 @@ paths:
       description: Update environment configuration (whitelisted variables only)
       tags:
         - Configuration
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -495,6 +526,12 @@ paths:
       description: Remove specified environment variables
       tags:
         - Configuration
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -547,6 +584,12 @@ paths:
       description: Return the signing group public key and quorum information
       tags:
         - Peers
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: Group metadata retrieved successfully
@@ -584,6 +627,12 @@ paths:
       description: Get all peers from the group credential with their current status
       tags:
         - Peers
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: Peers retrieved successfully
@@ -602,12 +651,12 @@ paths:
                     type: integer
                 example:
                   peers:
-                    - pubkey: "02abcd1234..."
+                    - pubkey: "021111111111111111111111111111111111111111111111111111111111111111"
                       online: true
                       lastSeen: "2025-01-20T12:00:00.000Z"
                       latency: 150
                       lastPingAttempt: "2025-01-20T11:59:00.000Z"
-                    - pubkey: "03efgh5678..."
+                    - pubkey: "032222222222222222222222222222222222222222222222222222222222222222"
                       online: false
                       lastSeen: null
                       latency: null
@@ -632,6 +681,12 @@ paths:
       description: Get the public key of this node from the share credential
       tags:
         - Peers
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: Self public key retrieved successfully
@@ -668,6 +723,12 @@ paths:
       description: Ping specific peer or all peers to check connectivity
       tags:
         - Peers
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -755,6 +816,12 @@ paths:
       description: Use threshold shares to recover the original secret key
       tags:
         - Key Recovery
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -859,6 +926,12 @@ paths:
       description: Validate group or share credentials without performing recovery
       tags:
         - Key Recovery
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -940,6 +1013,12 @@ paths:
       description: Retrieve currently stored share information when running in headless mode
       tags:
         - Share Management
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: Shares retrieved successfully
@@ -981,6 +1060,12 @@ paths:
       description: Save share and group credentials when running in headless mode
       tags:
         - Share Management
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -1222,6 +1307,12 @@ paths:
       operationId: listNip46Sessions
       summary: List NIP‑46 sessions
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - in: query
           name: history
@@ -1247,6 +1338,12 @@ paths:
       operationId: upsertNip46Session
       summary: Create or update a NIP‑46 session
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       requestBody:
         required: true
         content:
@@ -1273,6 +1370,12 @@ paths:
       operationId: updateNip46Policy
       summary: Update session policy
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - $ref: '#/components/parameters/PubkeyParam'
       requestBody:
@@ -1290,6 +1393,12 @@ paths:
       operationId: updateNip46Status
       summary: Update session status (revoked deletes)
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - $ref: '#/components/parameters/PubkeyParam'
       requestBody:
@@ -1314,6 +1423,12 @@ paths:
       operationId: deleteNip46Session
       summary: Delete a NIP‑46 session
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       parameters:
         - $ref: '#/components/parameters/PubkeyParam'
       responses:
@@ -1335,6 +1450,12 @@ paths:
       operationId: nip46History
       summary: Compact NIP‑46 history summary
       tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
       responses:
         '200':
           description: History
@@ -1349,6 +1470,289 @@ paths:
                       $ref: '#/components/schemas/Nip46SessionSummary'
         '401':
           $ref: '#/components/responses/Unauthorized'
+
+  /api/nip46/requests:
+    get:
+      operationId: listNip46Requests
+      summary: List persisted NIP‑46 requests
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+          description: Comma-separated request statuses (pending, approved, denied, completed, failed, expired)
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 500
+          description: Number of requests to return (default 100)
+        - in: query
+          name: beforeCreatedAt
+          schema:
+            type: string
+          description: Cursor created_at value for pagination (must be paired with beforeId)
+        - in: query
+          name: beforeId
+          schema:
+            type: string
+          description: Cursor id value for pagination (must be paired with beforeCreatedAt)
+      responses:
+        '200':
+          description: Requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  requests:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Nip46Request'
+                  nextCursor:
+                    oneOf:
+                      - type: object
+                        properties:
+                          createdAt: { type: string }
+                          id: { type: string }
+                      - type: 'null'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: updateNip46Request
+      summary: Update a NIP‑46 request status
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46RequestActionInput'
+      responses:
+        '200':
+          description: Updated request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  request:
+                    $ref: '#/components/schemas/Nip46Request'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      operationId: deleteNip46Request
+      summary: Delete a persisted NIP‑46 request
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46RequestDeleteInput'
+      responses:
+        '200':
+          description: Request deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/nip46/connect:
+    post:
+      operationId: createNip46Connect
+      summary: Process a nostrconnect invite string
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46ConnectInput'
+      responses:
+        '200':
+          description: Session created/updated from invite
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Nip46ConnectResponse'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /api/nip46/relays:
+    get:
+      operationId: listNip46Relays
+      summary: Get NIP‑46 relay pool
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: Relay list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relays:
+                    type: array
+                    items: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      operationId: updateNip46Relays
+      summary: Replace NIP‑46 relay pool
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46RelaysInput'
+      responses:
+        '200':
+          description: Updated relays
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relays:
+                    type: array
+                    items: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      operationId: mergeNip46Relays
+      summary: Merge relays into NIP‑46 relay pool
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46RelaysInput'
+      responses:
+        '200':
+          description: Updated relays
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  relays:
+                    type: array
+                    items: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/nip46/transport:
+    get:
+      operationId: getNip46Transport
+      summary: Get NIP‑46 transport key
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      responses:
+        '200':
+          description: Transport key
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Nip46Transport'
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    put:
+      operationId: updateNip46Transport
+      summary: Set or rotate NIP‑46 transport key
+      tags: [NIP‑46]
+      security:
+        - apiKeyAuth: []
+        - bearerAuth: []
+        - basicAuth: []
+        - sessionCookie: []
+        - sessionHeader: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/Nip46Transport'
+      responses:
+        '200':
+          description: Updated transport key
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  transport_sk: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
 
   /api/admin/api-keys:
     get:
@@ -1800,6 +2204,8 @@ components:
       description: |
         API key authentication via X-API-Key header.
 
+        This scheme is enforced only when `AUTH_ENABLED=true`. When `AUTH_ENABLED=false`, server auth checks are bypassed.
+
         **Security Requirements:**
         - HTTPS is mandatory in production environments
         - API keys must be transmitted over encrypted connections only
@@ -1814,6 +2220,8 @@ components:
       description: |
         Bearer token authentication (alternative to X-API-Key header).
 
+        This scheme is enforced only when `AUTH_ENABLED=true`. When `AUTH_ENABLED=false`, server auth checks are bypassed.
+
         **Security Requirements:**
         - HTTPS is mandatory in production environments
         - Bearer tokens must be transmitted over encrypted connections only
@@ -1827,6 +2235,8 @@ components:
       scheme: basic
       description: |
         HTTP Basic Authentication using username and password.
+
+        This scheme is enforced only when `AUTH_ENABLED=true`. When `AUTH_ENABLED=false`, server auth checks are bypassed.
 
         **Security Requirements:**
         - HTTPS is absolutely critical - Basic Auth transmits credentials in Base64 encoding (not encryption)
@@ -1843,6 +2253,8 @@ components:
       description: |
         Session-based authentication via the `X-Session-ID` header.
 
+        This scheme is enforced only when `AUTH_ENABLED=true`. When `AUTH_ENABLED=false`, server auth checks are bypassed.
+
         **Security Requirements:**
         - HTTPS is mandatory to protect session identifiers from interception
         - Treat the header value like a credential and avoid logging it
@@ -1857,6 +2269,8 @@ components:
       name: session
       description: |
         Session-based authentication via HttpOnly cookie.
+
+        This scheme is enforced only when `AUTH_ENABLED=true`. When `AUTH_ENABLED=false`, server auth checks are bypassed.
 
         **Security Requirements:**
         - HTTPS is mandatory so cookies are only sent over encrypted channels
@@ -2409,6 +2823,85 @@ components:
           type: array
           items: { type: string }
 
+    Nip46Request:
+      type: object
+      description: Persisted NIP‑46 request payload and lifecycle status
+      properties:
+        id: { type: string }
+        user_id:
+          oneOf:
+            - type: integer
+            - type: string
+        session_pubkey: { type: string }
+        method: { type: string }
+        params: { type: string }
+        status:
+          type: string
+          enum: [pending, approved, denied, completed, failed, expired]
+        result:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
+        created_at: { type: string }
+        updated_at: { type: string }
+        expires_at:
+          type: [string, 'null']
+      required: [id, user_id, session_pubkey, method, params, status, created_at, updated_at]
+
+    Nip46RequestActionInput:
+      type: object
+      properties:
+        id:
+          type: string
+          description: Persisted request identifier
+        action:
+          type: string
+          enum: [approve, deny, fail, complete]
+        policy:
+          $ref: '#/components/schemas/Nip46Policy'
+        result:
+          type: [string, 'null']
+        error:
+          type: [string, 'null']
+      required: [id, action]
+
+    Nip46RequestDeleteInput:
+      type: object
+      properties:
+        id:
+          type: string
+      required: [id]
+
+    Nip46ConnectInput:
+      type: object
+      properties:
+        uri:
+          type: string
+          description: nostrconnect:// invite URI
+      required: [uri]
+
+    Nip46ConnectResponse:
+      type: object
+      properties:
+        session:
+          $ref: '#/components/schemas/Nip46Session'
+
+    Nip46RelaysInput:
+      type: object
+      properties:
+        relays:
+          type: ['array', 'null']
+          items: { type: string }
+      required: [relays]
+
+    Nip46Transport:
+      type: object
+      properties:
+        transport_sk:
+          type: string
+          description: 32-byte transport secret key encoded as hex
+      required: [transport_sk]
+
     AdminApiKey:
       type: object
       description: Metadata about an API key managed in database mode
@@ -2745,3 +3238,7 @@ tags:
     description: First-run onboarding and admin validation (database mode)
   - name: Event Log
     description: Persisted UI event log endpoints (database mode only)
+  - name: Crypto
+    description: Cryptographic operations and key management
+  - name: NIP‑46
+    description: NIP‑46 protocol and signing interactions

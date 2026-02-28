@@ -161,7 +161,7 @@ class RelaySession {
           // NIP-01 format: ["REQ", "sub_id", {filter1}, {filter2}]
           if (payload.length === 2 && Array.isArray(payload[1]) && payload[1].length === 0) {
             this.log.info('ignoring REQ with empty filter array')
-            this.send(['NOTICE', '', 'REQ requires at least one filter'])
+            this.send(['NOTICE', String(payload[0] ?? ''), 'REQ requires at least one filter'])
             return
           }
           if (payload.length === 2 && Array.isArray(payload[1])) {
@@ -170,7 +170,7 @@ class RelaySession {
           const [ id, ...filters ] = sub_schema.parse(payload)
           if (filters.length === 0) {
             this.log.info('ignoring REQ with no filters')
-            this.send(['NOTICE', '', 'REQ requires at least one filter'])
+            this.send(['NOTICE', id, 'REQ requires at least one filter'])
             return
           }
           return this._onreq(id, filters)

@@ -66,7 +66,7 @@ const Collapsible: React.FC<CollapsibleProps> = ({
         id={contentId}
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
-          isExpanded ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0",
+          isExpanded ? "max-h-screen opacity-100" : "max-h-0 opacity-0",
           contentClassName
         )}
       >

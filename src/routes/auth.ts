@@ -576,7 +576,12 @@ function authenticateBasicAuth(req: Request): AuthResult {
 
   try {
     const credentials = atob(authHeader.slice(6));
-    const [username, password] = credentials.split(':');
+    const separatorIndex = credentials.indexOf(':');
+    if (separatorIndex === -1) {
+      return { authenticated: false, error: 'Invalid authorization header' };
+    }
+    const username = credentials.slice(0, separatorIndex);
+    const password = credentials.slice(separatorIndex + 1);
     
     const userValid = compareConstantTime(username || '', AUTH_CONFIG.BASIC_AUTH_USER);
     const passValid = compareConstantTime(password || '', AUTH_CONFIG.BASIC_AUTH_PASS);
@@ -848,7 +853,14 @@ export async function authenticate(req: Request): Promise<AuthResult> {
   } else {
     // In non-headless mode, check if database is initialized
     // If not initialized, allow access to onboarding routes only
-    const isOnboardingRoute = req.url.includes('/api/onboarding');
+    const onboardingPath = (() => {
+      try {
+        return new URL(req.url).pathname;
+      } catch {
+        return '';
+      }
+    })();
+    const isOnboardingRoute = onboardingPath === '/api/onboarding' || onboardingPath.startsWith('/api/onboarding/');
     try {
       const initialized = isDatabaseInitialized();
       if (!initialized && !isOnboardingRoute) {

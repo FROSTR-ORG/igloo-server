@@ -2,9 +2,9 @@
 
 CREATE TABLE IF NOT EXISTS nip46_relays (
   user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  relays TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  relays TEXT NOT NULL DEFAULT '[]',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
 -- NOTE: we intentionally avoid an UPDATE-in-trigger pattern here. Application-level

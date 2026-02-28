@@ -9,13 +9,24 @@ interface QRScannerProps {
   onError?: (error: Error) => void
 }
 
+/**
+ * QRScanner keeps callback handlers in refs so parent re-renders can update
+ * onResult/onError without tearing down and re-initializing the scanner.
+ */
 export function QRScanner({ onResult, onError }: QRScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const scannerRef = useRef<QrScanner | null>(null)
   const scanningRef = useRef<boolean>(false)
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const onResultRef = useRef(onResult)
+  const onErrorRef = useRef(onError)
   const [error, setError] = useState<string | null>(null)
   const [hasPermission, setHasPermission] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    onResultRef.current = onResult
+    onErrorRef.current = onError
+  }, [onResult, onError])
 
   useEffect(() => {
     let scanner: QrScanner | null = null
@@ -37,7 +48,7 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
             if (scanningRef.current) return
             if (result.data && result.data.startsWith('nostrconnect://')) {
               scanningRef.current = true
-              onResult(result.data)
+              onResultRef.current(result.data)
               scannerRef.current?.destroy()
               scannerRef.current = null
               timeoutRef.current = setTimeout(() => {
@@ -56,12 +67,12 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
         const e = err instanceof Error ? err : new Error('Failed to initialize scanner')
         setError(e.message)
         setHasPermission(false)
-        if (onError) {
-            onError(e)
+        if (onErrorRef.current) {
+          onErrorRef.current(e);
         } else {
-            console.error('Failed to start QR scanner:', e)
+          console.error('Failed to start QR scanner:', e);
         }
-        scannerRef.current?.destroy()
+        scanner?.destroy()
         scannerRef.current = null
       }
     }
@@ -75,7 +86,7 @@ export function QRScanner({ onResult, onError }: QRScannerProps) {
       scannerRef.current?.destroy()
       scannerRef.current = null
     }
-  }, [onResult, onError])
+  }, [])
 
   return (
     <div className="scanner-container">

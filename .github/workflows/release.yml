@@ -87,25 +87,45 @@ jobs:
           echo "# CHANGELOG" > CHANGELOG.md
           echo "" >> CHANGELOG.md
         fi
-        
-        # Add new version entry
+
+        VERSION="${{ steps.new_version.outputs.version_number }}"
         DATE=$(date +%Y-%m-%d)
-        sed -i "3i\\## [${{ steps.new_version.outputs.version_number }}] - $DATE\\n" CHANGELOG.md
-        
-        # Add commit messages since last tag
+        if ! grep -Fq "## [${VERSION}]" CHANGELOG.md; then
+          awk -v version="$VERSION" -v date="$DATE" '
+            NR == 1 { print; print ""; print "## [" version "] - " date; print ""; next }
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+          mv CHANGELOG.md.tmp CHANGELOG.md
+        fi
+
+        temp_changelog="$(mktemp)"
+
+        # Add commit messages since last tag (safe for special chars in subjects)
         LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
         if [ -n "$LAST_TAG" ]; then
-          echo "### Changes since $LAST_TAG:" >> temp_changelog.md
-          git log --pretty=format:"- %s" $LAST_TAG..HEAD >> temp_changelog.md
+          printf '### Changes since %s:\n' "$LAST_TAG" > "$temp_changelog"
+          git log --pretty=format:'%s%x00' "$LAST_TAG..HEAD" \
+            | tr '\0' '\n' \
+            | awk 'NF { print "- " $0 }' >> "$temp_changelog"
         else
-          echo "### Changes:" >> temp_changelog.md
-          git log --pretty=format:"- %s" -n 10 >> temp_changelog.md
+          printf '### Changes:\n' > "$temp_changelog"
+          git log --pretty=format:'%s%x00' -n 10 \
+            | tr '\0' '\n' \
+            | awk 'NF { print "- " $0 }' >> "$temp_changelog"
         fi
-        echo "" >> temp_changelog.md
-        
-        # Insert changes into changelog
-        sed -i "/## \[${{ steps.new_version.outputs.version_number }}\]/r temp_changelog.md" CHANGELOG.md
-        rm temp_changelog.md
+        printf '\n' >> "$temp_changelog"
+
+        # Insert changes into changelog after the current version heading
+        awk -v target="## [${VERSION}]" -v insert_file="$temp_changelog" '
+          { print }
+          $0 == target && !inserted {
+            while ((getline line < insert_file) > 0) print line
+            close(insert_file)
+            inserted = 1
+          }
+        ' CHANGELOG.md > CHANGELOG.md.tmp
+        mv CHANGELOG.md.tmp CHANGELOG.md
+        rm -f "$temp_changelog"
 
     - name: Create release archive
       run: |
@@ -133,8 +153,14 @@ jobs:
         # Create git tag for release (works with branch protection)
         # Note: Version changes are not committed back to main due to branch protection
         # The release archives will contain the correct versions
-        git tag ${{ steps.new_version.outputs.new_version }}
-        git push origin ${{ steps.new_version.outputs.new_version }}
+        TAG="${{ steps.new_version.outputs.new_version }}"
+        git fetch --tags origin
+        if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+          echo "Tag ${TAG} already exists, skipping tag creation"
+        else
+          git tag "${TAG}"
+          git push origin "${TAG}"
+        fi
 
     - name: Create GitHub release and upload assets
       uses: softprops/action-gh-release@v2
@@ -172,6 +198,8 @@ jobs:
   docker:
     runs-on: ubuntu-latest
     needs: release
+    permissions:
+      packages: write
     
     steps:
     - name: Checkout code

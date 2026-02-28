@@ -560,7 +560,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
-                  pattern={PASSWORD_REGEX.source}
                   title="Minimum 8 characters, with at least one uppercase letter, one lowercase letter, one number, and one special character"
                 />
               </div>

@@ -46,7 +46,7 @@ function toSafePreview(raw: string, maxChars = ERROR_PREVIEW_MAX_CHARS): string 
       /(["']?(?:admin_secret|session_secret|derived[_-]?key|encryption[_-]?key|password|api[_-]?key|token)["']?\s*[:=]\s*)(?:"[^"]*"|'[^']*'|[^,"'\s}]+)/ig,
       '$1<redacted>'
     )
-    .replace(/(bearer\s+)[a-z0-9._-]+/ig, '$1<redacted>');
+    .replace(/((?:bearer|basic)\s+)[a-z0-9._~+/=-]+/ig, '$1<redacted>');
   return redacted.length > maxChars ? `${redacted.slice(0, maxChars)}...(truncated)` : redacted;
 }
 

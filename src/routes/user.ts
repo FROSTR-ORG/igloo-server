@@ -110,13 +110,7 @@ export async function handleUserRoute(
   }
 
   // Database users have numeric IDs (number or string representation of bigint)
-  let userId: number | bigint | null = null;
-  if (typeof auth.userId === 'number') {
-    userId = auth.userId;
-  } else if (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)) {
-    // Convert string representation back to bigint for database
-    userId = BigInt(auth.userId);
-  }
+  const userId = resolveUserId(auth.userId);
   
   // Require a valid database user
   // Note: Environment auth users (API Key/Basic Auth) have string userIds and

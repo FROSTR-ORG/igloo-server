@@ -37,10 +37,10 @@ bun run docs:validate
 git checkout -b release/prepare-v1.1.1
 git push origin release/prepare-v1.1.1
 ```
-Create PR: `release/prepare-v1.1.1` → `master`
+Create PR: `release/prepare-v1.1.1` → `main`
 
 ### 3. Merge & Release
-- Merge PR to `master`
+- Merge PR to `main`
 - GitHub Actions automatically:
   - Bumps version in `package.json`
   - Updates `CHANGELOG.md`
@@ -50,7 +50,7 @@ Create PR: `release/prepare-v1.1.1` → `master`
 ### 4. Verify Release
 - ✅ Check [GitHub Releases](https://github.com/FROSTR-ORG/igloo-server/releases)
 - ✅ Test Docker image: `docker pull ghcr.io/frostr-org/igloo-server:latest`
-- ✅ Sync dev: `git checkout dev && git merge master && git push origin dev`
+- ✅ Sync dev: `git checkout dev && git merge main && git push origin dev`
 
 ## 🔄 Version Bumping Logic
 
@@ -66,11 +66,11 @@ GitHub Actions automatically detects version type from commit messages:
 
 For critical fixes:
 ```bash
-git checkout master
+git checkout main
 git checkout -b hotfix/critical-fix
 # Make fix and commit
 git push origin hotfix/critical-fix
-# Create PR to master
+# Create PR to main
 ```
 
 ## 📦 Release Artifacts

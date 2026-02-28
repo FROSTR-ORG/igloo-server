@@ -117,7 +117,7 @@ Files:
   - `RATE_LIMIT_ENV_WRITE_WINDOW` and `RATE_LIMIT_ENV_WRITE_MAX` override env write limits.
 
 Files:
-- `src/utils/rate-limiter.ts`
+- `src/util/rate-limiter.ts`
 - `src/routes/auth.ts` (checkRateLimit)
 - `src/routes/onboarding.ts` (per-IP rate limiting)
 - `src/routes/env.ts` (env write throttling)

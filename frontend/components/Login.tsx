@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { PageLayout } from './ui/page-layout';
@@ -33,11 +33,7 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled, updateInfo }) => {
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [statusLoading, setStatusLoading] = useState(true);
 
-  useEffect(() => {
-    fetchAuthStatus();
-  }, []);
-
-  const fetchAuthStatus = async () => {
+  const fetchAuthStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/auth/status');
       if (response.ok) {
@@ -62,7 +58,11 @@ const Login: React.FC<LoginProps> = ({ onLogin, authEnabled, updateInfo }) => {
     } finally {
       setStatusLoading(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void fetchAuthStatus();
+  }, [fetchAuthStatus]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();

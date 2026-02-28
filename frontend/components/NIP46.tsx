@@ -107,14 +107,21 @@ export function NIP46({ authHeaders }: NIP46Props) {
   const fetchTransport = useCallback(async () => {
     try {
       const res = await fetch('/api/nip46/transport', { headers })
-      if (res.ok) {
-        const data = await res.json()
-        if (typeof data?.transport_sk === 'string') {
-          setTransportKey(data.transport_sk)
-          setIsConnected(true)
-        }
+      if (!res.ok) {
+        setTransportKey(null)
+        setIsConnected(false)
+        return
+      }
+      const data = await res.json()
+      if (typeof data?.transport_sk === 'string') {
+        setTransportKey(data.transport_sk)
+        setIsConnected(true)
+      } else {
+        setTransportKey(null)
+        setIsConnected(false)
       }
     } catch {
+      setTransportKey(null)
       setIsConnected(false)
     }
   }, [headers])
@@ -127,8 +134,11 @@ export function NIP46({ authHeaders }: NIP46Props) {
     if (!targets.length) return
     setRequestsError(null)
     setRequestActionPending(true)
+    const extractErrorMessage = (error: unknown): string => {
+      return error instanceof Error ? error.message : 'Failed to update request'
+    }
     try {
-      await Promise.all(targets.map(async target => {
+      const results = await Promise.allSettled(targets.map(async target => {
         const payload: Record<string, any> = { id: target.id, action }
         if (options?.policyPatch) {
           payload.policy = options.policyPatch
@@ -147,9 +157,14 @@ export function NIP46({ authHeaders }: NIP46Props) {
       if (options?.policyPatch) {
         await fetchSessions()
       }
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map(result => extractErrorMessage(result.reason))
+      if (errors.length > 0) {
+        setRequestsError(errors.join('; '))
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update request'
-      setRequestsError(message)
+      setRequestsError(extractErrorMessage(error))
     } finally {
       setRequestActionPending(false)
     }
@@ -411,17 +426,22 @@ export function NIP46({ authHeaders }: NIP46Props) {
             <div className="flex items-center gap-4 flex-wrap">
               <StatusIndicator status={isConnected ? 'success' : 'idle'} label={isConnected ? 'NIP-46 Ready' : 'NIP-46 Disconnected'} />
               <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-1">
-                  <Users className="h-4 w-4 text-blue-400" />
-                  <span className="text-gray-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
-                </div>
+            <div className="flex items-center gap-1">
+              <Users className="h-4 w-4 text-blue-400" />
+              <span className="text-gray-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
+            </div>
                 <div className="flex items-center gap-1">
                   <Bell className="h-4 w-4 text-blue-400" />
                   <span className="text-gray-400">{requests.filter(r => r.status === 'pending').length} pending requests</span>
                 </div>
               </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setShowFullKeys(v => !v)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowFullKeys(v => !v)}
+              aria-label={showFullKeys ? 'Hide keys' : 'Show keys'}
+            >
               {showFullKeys ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </Button>
           </div>
@@ -434,7 +454,13 @@ export function NIP46({ authHeaders }: NIP46Props) {
                 <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
                   {showFullKeys ? transportKey : truncate(transportKey, 8)}
                 </span>
-                <Button variant="ghost" size="icon" onClick={() => handleCopy('transport', transportKey)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleCopy('transport', transportKey)}
+                  aria-label={`Copy transport key${copied.transport ? ' (copied)' : ''}`}
+                  title="Copy transport key"
+                >
                   {copied.transport ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
                 </Button>
               </div>

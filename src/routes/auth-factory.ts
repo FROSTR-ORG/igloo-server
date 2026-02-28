@@ -78,7 +78,7 @@ export function createRequestAuth(params: {
 
   // Add secure getter for derivedKey with lazy vault retrieval
   // Only add if we have a direct key or password-based auth with sessionId
-  if (params.derivedKey != null || (params.sessionId && params.hasPassword)) {
+  if (params.derivedKey != null || params.sessionId) {
     Object.defineProperty(auth, 'getDerivedKey', {
       enumerable: false,
       configurable: false,

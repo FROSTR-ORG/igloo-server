@@ -2,6 +2,13 @@ import path from 'path'
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs'
 import db from './database.js'
 
+class MigrationDirSecurityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MigrationDirSecurityError'
+  }
+}
+
 function ensureMigrationsTable() {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -34,9 +41,12 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
     const resolvedRealDir = realpathSync(dir)
     const resolvedProjectRoot = realpathSync(projectRoot)
     if (resolvedRealDir !== resolvedProjectRoot && !resolvedRealDir.startsWith(resolvedProjectRoot + path.sep)) {
-      throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+      throw new MigrationDirSecurityError(`Security: Migration directory must be within project root. Attempted: ${dir}`)
     }
   } catch (error) {
+    if (error instanceof MigrationDirSecurityError) {
+      throw error
+    }
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Security: Failed to validate migration directory path: ${detail}`)
   }

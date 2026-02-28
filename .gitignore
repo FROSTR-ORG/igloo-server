@@ -40,6 +40,8 @@ dist
 static/app.js
 static/app.css
 static/styles.css
+static/docs/swagger-ui-bundle.js
+static/docs/swagger-ui-bundle.js.map
 static/qr-scanner-worker.min.js
 
 # VSCode

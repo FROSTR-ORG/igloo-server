@@ -412,100 +412,100 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             // for correctness, then perform a single write.
             env.CREDENTIALS_SAVED_AT = new Date().toISOString();
           }
-          const writeOk = await writeEnvFile(env);
-
-          if (writeOk) {
+          if (updatingCredentials || updatingRelays) {
             try {
-              if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
-                process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
-              }
-              if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
-                process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
-              }
-              if (validKeys.includes('GROUP_CRED')) {
-                if (typeof env.GROUP_CRED === 'string') process.env.GROUP_CRED = env.GROUP_CRED;
-                else delete process.env.GROUP_CRED;
-              }
-              if (validKeys.includes('SHARE_CRED')) {
-                if (typeof env.SHARE_CRED === 'string') process.env.SHARE_CRED = env.SHARE_CRED;
-                else delete process.env.SHARE_CRED;
-              }
-              if (updatingRelays) {
-                const relaysVal = (env as any).RELAYS;
-                if (Array.isArray(relaysVal)) {
-                  process.env.RELAYS = relaysVal.join(',');
-                } else if (typeof relaysVal === 'string') {
-                  process.env.RELAYS = relaysVal;
-                } else {
-                  delete process.env.RELAYS;
-                }
-              }
-            } catch {}
+              // Make restart intent explicit for observability and reviews
+              context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
+                updatingCredentials,
+                updatingRelays
+              });
 
-            if (updatingCredentials || updatingRelays) {
-              try {
-                // Make restart intent explicit for observability and reviews
-                context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
-                  updatingCredentials,
-                  updatingRelays
-                });
-
-                const echoPayload = (() => {
-                  if (!updatingCredentials) return null;
-                  const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
-                  const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
-                  if (!groupCred || !shareCred) return null;
-                  const relaysArray = normalizeRelayListForEcho(env.RELAYS);
-                  const relaysEnvValue = Array.isArray(env.RELAYS)
-                    ? env.RELAYS.join(',')
-                    : typeof env.RELAYS === 'string'
-                      ? env.RELAYS
-                      : undefined;
-                  return {
-                    groupCred,
-                    shareCred,
-                    relaysArray,
-                    relaysEnvValue,
-                    contextLabel: HEADLESS ? 'headless env credential update' : 'env credential update'
-                  };
-                })();
-
-                // Serialize node restart under the global node lock. createAndConnectServerNode()
-                // calls context.updateNode(newNode), which performs prior-node cleanup and
-                // listener re-wiring atomically to avoid resource leaks or races.
-                await executeUnderNodeLock(async () => {
-                  await createAndConnectServerNode(env, context);
-                }, context);
-
-                if (echoPayload) {
-                  const echoOptions = {
-                    relays: echoPayload.relaysArray,
-                    relaysEnv: echoPayload.relaysEnvValue,
-                    addServerLog: context.addServerLog,
-                    contextLabel: echoPayload.contextLabel,
-                    timeoutMs: 30000
-                  } as const;
-                  sendSelfEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
-                    try { context.addServerLog('warn', 'Self-echo failed after env credential update', error); } catch {}
-                  });
-                  broadcastShareEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
-                    try { context.addServerLog('warn', 'Credential echo broadcast failed after env credential update', error); } catch {}
-                  });
-                }
-              } catch (error) {
-                context.addServerLog('error', 'Error recreating Bifrost node', error);
-                throw (error instanceof Error) ? error : new Error(String(error));
-              }
+              // Serialize node restart under the global node lock.
+              // createAndConnectServerNode() updates the active node from the new env.
+              await executeUnderNodeLock(async () => {
+                await createAndConnectServerNode(env, context);
+              }, context);
+            } catch (error) {
+              context.addServerLog('error', 'Error recreating Bifrost node', error);
+              return Response.json({ success: false, message: 'Failed to recreate Bifrost node' }, { status: 500, headers });
             }
-
-            const responseMessage = rejectedKeys.length > 0
-              ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
-              : 'Environment variables updated';
-
-            return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
           }
 
-          return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+          const writeOk = await writeEnvFile(env);
+          if (!writeOk) {
+            return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+          }
+
+          try {
+            if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
+              process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
+            }
+            if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
+              process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
+            }
+            if (validKeys.includes('GROUP_CRED')) {
+              if (typeof env.GROUP_CRED === 'string') process.env.GROUP_CRED = env.GROUP_CRED;
+              else delete process.env.GROUP_CRED;
+            }
+            if (validKeys.includes('SHARE_CRED')) {
+              if (typeof env.SHARE_CRED === 'string') process.env.SHARE_CRED = env.SHARE_CRED;
+              else delete process.env.SHARE_CRED;
+            }
+            if (updatingRelays) {
+              const relaysVal = (env as any).RELAYS;
+              if (Array.isArray(relaysVal)) {
+                process.env.RELAYS = relaysVal.join(',');
+              } else if (typeof relaysVal === 'string') {
+                process.env.RELAYS = relaysVal;
+              } else {
+                delete process.env.RELAYS;
+              }
+            }
+          } catch {}
+
+          if (updatingCredentials || updatingRelays) {
+            const echoPayload = (() => {
+              if (!updatingCredentials) return null;
+              const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
+              const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
+              if (!groupCred || !shareCred) return null;
+              const relaysArray = normalizeRelayListForEcho(env.RELAYS);
+              const relaysEnvValue = Array.isArray(env.RELAYS)
+                ? env.RELAYS.join(',')
+                : typeof env.RELAYS === 'string'
+                  ? env.RELAYS
+                  : undefined;
+              return {
+                groupCred,
+                shareCred,
+                relaysArray,
+                relaysEnvValue,
+                contextLabel: HEADLESS ? 'headless env credential update' : 'env credential update'
+              };
+            })();
+
+            if (echoPayload) {
+              const echoOptions = {
+                relays: echoPayload.relaysArray,
+                relaysEnv: echoPayload.relaysEnvValue,
+                addServerLog: context.addServerLog,
+                contextLabel: echoPayload.contextLabel,
+                timeoutMs: 30000
+              } as const;
+              sendSelfEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Self-echo failed after env credential update', error); } catch {}
+              });
+              broadcastShareEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Credential echo broadcast failed after env credential update', error); } catch {}
+              });
+            }
+          }
+
+          const responseMessage = rejectedKeys.length > 0
+            ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
+            : 'Environment variables updated';
+
+          return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
         }
         break;
 

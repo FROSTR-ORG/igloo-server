@@ -60,7 +60,6 @@ export const ADMIN_SECRET = (() => {
 
   if (isUnset && shouldAutoGenerateAdminSecret) {
     const fallback = 'ci-auto-admin-secret';
-    process.env['ADMIN_SECRET'] = fallback;
     console.warn('[init] ADMIN_SECRET was unset. Generated ephemeral secret for CI/test environment.');
     return fallback;
   }

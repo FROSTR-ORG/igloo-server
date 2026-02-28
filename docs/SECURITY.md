@@ -647,7 +647,7 @@ bun run start
 # 2. Test with API key authentication
 AUTH_ENABLED=true
 API_KEY=<EXAMPLE_TEST_API_KEY>  # Replace with test API key
-curl -H "X-API-Key: test-api-key-12345" http://localhost:8002/api/status
+curl -H "X-API-Key: <EXAMPLE_TEST_API_KEY>" http://localhost:8002/api/status
 
 # 3. Test with basic authentication
 AUTH_ENABLED=true

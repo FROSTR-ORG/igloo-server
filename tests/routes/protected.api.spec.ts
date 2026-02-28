@@ -238,7 +238,7 @@ describe('API key-protected route handlers', () => {
     expect(decBody?.result).toBe('hello nip04');
   }, { timeout: 10000 });
 
-  test('HTTP requests to /api/events fall through to 404', () => {
+  test('HTTP requests to /api/events return 404', () => {
     const root = pathToFileURL(process.cwd() + '/').href;
     const script = `
       const root = ${JSON.stringify(root)};
@@ -268,6 +268,6 @@ describe('API key-protected route handlers', () => {
     `;
 
     const result = runRouteScript(script);
-    expect([401, 404]).toContain(result.status);
+    expect(result.status).toBe(404);
   }, { timeout: 8000 });
 });

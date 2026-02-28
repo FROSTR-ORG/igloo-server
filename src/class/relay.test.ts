@@ -65,7 +65,7 @@ describe('NostrRelay REQ handling', () => {
 
     expect(relay.subs.size).toBe(0);
     const messages = decodeSent(socket);
-    expect(messages).toContainEqual(['NOTICE', '', 'REQ requires at least one filter']);
+    expect(messages).toContainEqual(['NOTICE', 'sub-empty', 'REQ requires at least one filter']);
   });
 
   it('rejects REQ with no filters', () => {
@@ -79,7 +79,7 @@ describe('NostrRelay REQ handling', () => {
 
     expect(relay.subs.size).toBe(0);
     const messages = decodeSent(socket);
-    expect(messages).toContainEqual(['NOTICE', '', 'REQ requires at least one filter']);
+    expect(messages).toContainEqual(['NOTICE', 'sub-empty-no-filters', 'REQ requires at least one filter']);
   });
 
   it('accepts canonical multi-filter REQ payloads and creates a subscription', () => {
@@ -171,6 +171,7 @@ describe('NostrRelay REQ handling', () => {
     expect(eventMessages).toHaveLength(1);
     expect(eventMessages[0]?.[1]).toBe('sub-limit');
     expect((eventMessages[0]?.[2] as { kind?: number }).kind).toBe(1);
+    expect((eventMessages[0]?.[2] as { id?: string }).id).toBe(matchedB.id);
     expect(messages).toContainEqual(['EOSE', 'sub-limit']);
   });
 });

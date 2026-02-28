@@ -43,9 +43,7 @@ function loadOpenApiSpec() {
 
 // Allowed local asset names to serve for the docs UI
 const ALLOWED_DOCS_ASSETS = new Set([
-  'swagger-ui.css',
-  'swagger-ui-bundle.js',
-  'swagger-ui-standalone-preset.js'
+  'swagger-ui.css'
 ]);
 
 // Swagger UI HTML template (self-hosted assets under /api/docs/assets/*)
@@ -56,7 +54,7 @@ const swaggerUIHtml = (specUrl: string) => `
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Igloo Server API Documentation</title>
-  <link rel="stylesheet" type="text/css" href="/api/docs/assets/swagger-ui.css" />
+  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
   <style>
     html {
       box-sizing: border-box;
@@ -83,14 +81,14 @@ const swaggerUIHtml = (specUrl: string) => `
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
-  <script src="/api/docs/assets/swagger-ui-standalone-preset.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
   <script>
     function renderDocsFallback() {
       var el = document.getElementById('swagger-ui') || document.body;
       el.innerHTML = \`<div style="max-width:960px;margin:40px auto;padding:24px;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;border:1px solid #e5e7eb;border-radius:12px;background:#fff">
         <h1 style="margin:0 0 12px;font-size:20px;color:#111827">API docs assets not found</h1>
-        <p style="margin:0 0 12px;color:#374151">Run <code style="background:#f3f4f6;padding:2px 6px;border-radius:6px">bun run docs:vendor</code> to fetch Swagger UI files into <code style="background:#f3f4f6;padding:2px 6px;border-radius:6px">static/docs/</code>, then refresh this page.</p>
+        <p style="margin:0 0 12px;color:#374151">Load the Swagger UI assets from a CDN or run <code style="background:#f3f4f6;padding:2px 6px;border-radius:6px">bun run docs:vendor</code> to fetch local copies.</p>
         <p style="margin:0;color:#374151">You can still view the raw spec: <a href="/api/docs/openapi.json" style="color:#2563eb;text-decoration:underline">openapi.json</a> or <a href="/api/docs/openapi.yaml" style="color:#2563eb;text-decoration:underline">openapi.yaml</a>.</p>
       </div>\`;
     }
@@ -169,7 +167,7 @@ export async function handleDocsRoute(req: Request, url: URL): Promise<Response 
         error: 'Docs assets not found',
         hint: 'Run: bun run docs:vendor to fetch swagger-ui assets into static/docs/'
       }),
-      { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } }
+      { status: 404, headers: { ...headers, 'Content-Type': 'application/json' } }
     );
   }
 

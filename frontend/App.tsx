@@ -311,7 +311,9 @@ const App: React.FC = () => {
                 setSignerData(prev => prev ?? { share: '', groupCredential: '', name: 'Server credentials' });
               }
             }
-          } catch {}
+          } catch (error) {
+            console.error('Failed to fetch /api/status while checking headless fallback state:', error);
+          }
         }
       }
       // If no saved credentials, we'll show Configure page (default state)

@@ -226,6 +226,8 @@ const ApiKeys: React.FC<ApiKeysProps> = ({ authHeaders = {}, headlessMode = fals
   useEffect(() => {
     if (!isAdminUser) {
       initialAdminLoadRef.current = false
+      setKeys([])
+      setIssuedKey(null)
       return
     }
     if (initialAdminLoadRef.current) return

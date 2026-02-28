@@ -121,8 +121,8 @@ const RelayInput: React.FC<RelayInputProps> = ({
         <div className="mt-4 space-y-2 w-full">
           <label className="text-blue-200 text-sm font-medium">Relays</label>
           <div className="space-y-2 w-full">
-            {relays.map((relay, index) => (
-              <div key={index} className="flex justify-between items-center bg-gray-800/30 p-2 rounded-md border border-gray-700/30 w-full">
+            {relays.map((relay) => (
+              <div key={relay} className="flex justify-between items-center bg-gray-800/30 p-2 rounded-md border border-gray-700/30 w-full">
                 <span className="text-blue-300 text-sm truncate mr-2">{relay}</span>
                 <Button
                   variant="ghost"

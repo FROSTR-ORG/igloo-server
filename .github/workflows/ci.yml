@@ -142,13 +142,13 @@ jobs:
 
     - name: Test Docker image
       run: |
+        set -euo pipefail
+        trap 'docker stop test-container >/dev/null 2>&1 || true; docker rm test-container >/dev/null 2>&1 || true' EXIT
         docker run -d --name test-container -p 8002:8002 \
           -e AUTO_ADMIN_SECRET=true \
           igloo-server:test
         sleep 10
-        curl -f http://localhost:8002/api/status || exit 1
-        docker stop test-container
-        docker rm test-container 
+        curl -f http://localhost:8002/api/status
 
     - name: Build Umbrel Docker image
       uses: docker/build-push-action@v5
@@ -162,12 +162,12 @@ jobs:
 
     - name: Test Umbrel Docker image
       run: |
+        set -euo pipefail
+        trap 'docker stop test-umbrel >/dev/null 2>&1 || true; docker rm test-umbrel >/dev/null 2>&1 || true' EXIT
         docker run -d --name test-umbrel -p 8003:8002 \
           -e ADMIN_SECRET=ci-admin-secret \
           -e ALLOWED_ORIGINS=http://localhost:8003 \
           -e TRUST_PROXY=true \
           igloo-server-umbrel:test
         sleep 10
-        curl -f http://localhost:8003/api/status || exit 1
-        docker stop test-umbrel
-        docker rm test-umbrel
+        curl -f http://localhost:8003/api/status

@@ -83,8 +83,9 @@ echo "📋 Validating documentation..."
 bun run docs:validate
 
 # Determine version
-if [[ "$VERSION_TYPE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    NEW_VERSION="$VERSION_TYPE"
+if [[ "$VERSION_TYPE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+    echo "📈 Explicit version: $VERSION_TYPE"
+    NEW_VERSION=$(npm version "$VERSION_TYPE" --no-git-tag-version --allow-same-version)
 else
     CURRENT_VERSION=$(node -p "require('./package.json').version")
     echo "📊 Current version: $CURRENT_VERSION"
@@ -92,9 +93,15 @@ else
     
     # Compute new version using npm version command
     NEW_VERSION=$(npm version $VERSION_TYPE --no-git-tag-version)
-    # Remove 'v' prefix from version (npm version returns v1.2.3)
-    NEW_VERSION=${NEW_VERSION#v}
-    echo "🎯 New version: $NEW_VERSION"
+fi
+
+# Remove 'v' prefix from version (npm version returns v1.2.3)
+NEW_VERSION=${NEW_VERSION#v}
+echo "🎯 New version: $NEW_VERSION"
+
+if [[ -z "$NEW_VERSION" || ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+    echo "❌ Invalid NEW_VERSION computed from npm version output: '${NEW_VERSION}'"
+    exit 1
 fi
 
 # Create release branch

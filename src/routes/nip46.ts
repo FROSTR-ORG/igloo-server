@@ -6,10 +6,30 @@ import { getNip46Service } from '../nip46/index.js'
 
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX = HEADLESS ? 30 : 120;
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS = 3600; // Keep a 1 hour window by default
+const NIP46_JSON_BODY_LIMIT_BYTES = 16_384;
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value ?? '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+async function parseJsonWithLimit(req: Request, maxBytes: number): Promise<unknown | null> {
+  const contentLengthHeader = req.headers.get('content-length')
+  if (contentLengthHeader) {
+    const contentLength = Number.parseInt(contentLengthHeader, 10)
+    if (!Number.isNaN(contentLength) && contentLength > maxBytes) {
+      return null
+    }
+  }
+  const text = await req.text()
+  if (new TextEncoder().encode(text).byteLength > maxBytes) {
+    return null
+  }
+  try {
+    return JSON.parse(text)
+  } catch (error) {
+    throw error
+  }
 }
 
 // Rate limiting configuration for NIP-46 session creation
@@ -98,6 +118,59 @@ function parsePolicyPatch(value: unknown): PolicyPatch | null {
   }
 
   return Object.keys(patch).length ? patch : null
+}
+
+function parseBooleanPolicyMap(
+  value: unknown,
+  fieldPath: string,
+  options?: { validateKey?: (key: string) => boolean; keyValidationMessage?: string }
+): Record<string, boolean> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error(`Field "${fieldPath}" must be an object`)
+  }
+
+  const normalized: Record<string, boolean> = {}
+  for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
+    const key = rawKey.trim()
+    if (!key) {
+      throw new Error(`Field "${fieldPath}" must not contain empty keys`)
+    }
+    if (options?.validateKey && !options.validateKey(key)) {
+      const suffix = options.keyValidationMessage ?? 'contains an invalid key'
+      throw new Error(`Field "${fieldPath}.${key}" ${suffix}`)
+    }
+    if (typeof rawValue !== 'boolean') {
+      throw new Error(`Field "${fieldPath}.${key}" must be a boolean`)
+    }
+    normalized[key] = rawValue
+  }
+
+  return normalized
+}
+
+function parseSessionPolicyInput(policyValue: unknown): Nip46Policy | undefined {
+  if (policyValue === undefined) return undefined
+  if (!policyValue || typeof policyValue !== 'object' || Array.isArray(policyValue)) {
+    throw new Error('Field "policy" must be an object')
+  }
+
+  const policyObject = policyValue as Record<string, unknown>
+  const hasMethods = Object.prototype.hasOwnProperty.call(policyObject, 'methods')
+  const hasKinds = Object.prototype.hasOwnProperty.call(policyObject, 'kinds')
+  const parsed: Nip46Policy = {}
+
+  if (hasMethods) {
+    parsed.methods = parseBooleanPolicyMap(policyObject.methods, 'policy.methods')
+  }
+
+  if (hasKinds) {
+    parsed.kinds = parseBooleanPolicyMap(policyObject.kinds, 'policy.kinds', {
+      validateKey: (key: string) => key === '*' || /^\d+$/.test(key),
+      keyValidationMessage: 'must be numeric or "*"'
+    })
+  }
+
+  return hasMethods || hasKinds ? parsed : undefined
 }
 
 function applyPolicyPatch(current: Nip46Policy | null | undefined, patch: PolicyPatch): Nip46Policy {
@@ -196,11 +269,6 @@ export async function handleNip46Route(
 ): Promise<Response | null> {
   if (!url.pathname.startsWith('/api/nip46/')) return null
 
-  // Only available in non-headless (DB-backed) mode
-  if (HEADLESS) {
-    return Response.json({ error: 'NIP-46 persistence unavailable in headless mode' }, { status: 404 })
-  }
-
   const corsHeaders = getSecureCorsHeaders(req)
   const mergedVary = mergeVaryHeaders(corsHeaders)
   const headers = {
@@ -209,6 +277,14 @@ export async function handleNip46Route(
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
+  }
+
+  // Only available in non-headless (DB-backed) mode
+  if (HEADLESS) {
+    return Response.json(
+      { error: 'NIP-46 persistence unavailable in headless mode' },
+      { status: 404, headers }
+    )
   }
 
   if (req.method === 'OPTIONS') return new Response(null, { status: 200, headers })
@@ -253,7 +329,11 @@ export async function handleNip46Route(
   // PUT /api/nip46/transport – rotate or set transport key
   if (url.pathname === '/api/nip46/transport' && req.method === 'PUT') {
     try {
-      const body = await req.json().catch(() => null) as any
+      const parsedBody = await parseJsonWithLimit(req, NIP46_JSON_BODY_LIMIT_BYTES)
+      if (parsedBody === null) {
+        return Response.json({ error: 'Payload exceeds maximum size' }, { status: 413, headers })
+      }
+      const body = parsedBody as Record<string, any>
       const sk = typeof body?.transport_sk === 'string' ? body.transport_sk : ''
       const saved = setTransportKey(userId, sk)
       return Response.json({ ok: true, transport_sk: saved }, { headers })
@@ -499,7 +579,15 @@ export async function handleNip46Route(
   // POST /api/nip46/sessions
   if (url.pathname === '/api/nip46/sessions' && req.method === 'POST') {
     let body: any
-    try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers }) }
+    try {
+      const parsedBody = await parseJsonWithLimit(req, NIP46_JSON_BODY_LIMIT_BYTES)
+      if (parsedBody === null) {
+        return Response.json({ error: 'Payload exceeds maximum size' }, { status: 413, headers })
+      }
+      body = parsedBody
+    } catch {
+      return Response.json({ error: 'Invalid JSON' }, { status: 400, headers })
+    }
     const pubkey = typeof body?.pubkey === 'string' ? body.pubkey.trim().toLowerCase() : ''
     if (!pubkey || !isValidHex(pubkey)) {
       return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
@@ -542,16 +630,13 @@ export async function handleNip46Route(
     }
 
     const relays = Array.isArray(body?.relays) ? body.relays.filter((r: any) => typeof r === 'string') : null
-    const policyMethods = body?.policy?.methods && typeof body.policy.methods === 'object' && !Array.isArray(body.policy.methods)
-      ? body.policy.methods as Record<string, boolean>
-      : undefined
-    const policyKinds = body?.policy?.kinds && typeof body.policy.kinds === 'object' && !Array.isArray(body.policy.kinds)
-      ? body.policy.kinds as Record<string, boolean>
-      : undefined
-    const policy: Nip46Policy | undefined =
-      policyMethods !== undefined || policyKinds !== undefined
-        ? { methods: policyMethods, kinds: policyKinds }
-        : undefined
+    let policy: Nip46Policy | undefined
+    try {
+      policy = parseSessionPolicyInput(body?.policy)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid policy'
+      return Response.json({ error: message }, { status: 400, headers })
+    }
     try {
       const session = upsertSession({ userId, client_pubkey: pubkey, status, profile, relays, policy })
       try {
@@ -590,16 +675,36 @@ export async function handleNip46Route(
     const pubkey = parsePubkeyFromPath(url.pathname)
     if (!pubkey || !isValidHex(pubkey)) return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
     let body: any
-    try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers }) }
-    const methods = body?.methods && typeof body.methods === 'object' && !Array.isArray(body.methods)
-      ? body.methods as Record<string, boolean>
-      : undefined
-    const kinds = body?.kinds && typeof body.kinds === 'object' && !Array.isArray(body.kinds)
-      ? body.kinds as Record<string, boolean>
-      : undefined
-
-    if (methods === undefined && kinds === undefined) {
+    try {
+      const parsedBody = await parseJsonWithLimit(req, NIP46_JSON_BODY_LIMIT_BYTES)
+      if (parsedBody === null) {
+        return Response.json({ error: 'Payload exceeds maximum size' }, { status: 413, headers })
+      }
+      body = parsedBody
+    } catch {
+      return Response.json({ error: 'Invalid JSON' }, { status: 400, headers })
+    }
+    const hasMethods = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'methods')
+    const hasKinds = body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'kinds')
+    if (!hasMethods && !hasKinds) {
       return Response.json({ error: 'No policy changes provided' }, { status: 400, headers })
+    }
+
+    let methods: Record<string, boolean> | undefined
+    let kinds: Record<string, boolean> | undefined
+    try {
+      if (hasMethods) {
+        methods = parseBooleanPolicyMap((body as Record<string, unknown>).methods, 'methods')
+      }
+      if (hasKinds) {
+        kinds = parseBooleanPolicyMap((body as Record<string, unknown>).kinds, 'kinds', {
+          validateKey: (key: string) => key === '*' || /^\d+$/.test(key),
+          keyValidationMessage: 'must be numeric or "*"'
+        })
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Invalid policy update'
+      return Response.json({ error: message }, { status: 400, headers })
     }
 
     const session = updatePolicy(userId, pubkey.toLowerCase(), { methods, kinds })
@@ -612,7 +717,15 @@ export async function handleNip46Route(
     const pubkey = parsePubkeyFromPath(url.pathname)
     if (!pubkey || !isValidHex(pubkey)) return Response.json({ error: 'Invalid pubkey' }, { status: 400, headers })
     let body: any
-    try { body = await req.json() } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400, headers }) }
+    try {
+      const parsedBody = await parseJsonWithLimit(req, NIP46_JSON_BODY_LIMIT_BYTES)
+      if (parsedBody === null) {
+        return Response.json({ error: 'Payload exceeds maximum size' }, { status: 413, headers })
+      }
+      body = parsedBody
+    } catch {
+      return Response.json({ error: 'Invalid JSON' }, { status: 400, headers })
+    }
     const status = body?.status
     if (status !== 'pending' && status !== 'active' && status !== 'revoked') {
       return Response.json({ error: 'Invalid status' }, { status: 400, headers })

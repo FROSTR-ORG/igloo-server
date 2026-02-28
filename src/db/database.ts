@@ -8,11 +8,28 @@ import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '..
 
 // Database configuration
 const defaultDbDir = path.join(process.cwd(), 'data');
-const envPath = process.env.DB_PATH;
-const isEnvPathFile = !!envPath && (
-  envPath.endsWith('.db') ||
-  (path.extname(envPath) !== '' && !envPath.endsWith(path.sep))
-);
+const envPathRaw = process.env.DB_PATH;
+const envPath = typeof envPathRaw === 'string' ? envPathRaw.trim() : undefined;
+const DB_FILE_EXTENSIONS = ['.db', '.sqlite', '.sqlite3'];
+const isEnvPathFile = (() => {
+  if (!envPath) return false;
+
+  if (existsSync(envPath)) {
+    try {
+      return statSync(envPath).isFile();
+    } catch {
+      return false;
+    }
+  }
+
+  if (envPath.endsWith(path.sep) || envPath.endsWith('/') || envPath.endsWith('\\')) {
+    return false;
+  }
+
+  // Keep inference consistent with session-secret path handling in routes/auth.ts.
+  const normalizedBase = path.basename(path.normalize(envPath)).toLowerCase();
+  return DB_FILE_EXTENSIONS.some((ext) => normalizedBase.endsWith(ext));
+})();
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
 
@@ -374,31 +391,34 @@ export function cleanupExpiredSessionsDB(ttlMs: number): string[] {
     const nowSeconds = Math.floor(Date.now() / 1000);
     const ttlSeconds = Math.max(1, Math.floor(ttlMs / 1000));
     const cutoff = nowSeconds - ttlSeconds;
-    const rows = db
-      .prepare(
-        `SELECT id FROM sessions WHERE CAST(strftime('%s', last_access) AS INTEGER) <= ?`
-      )
-      .all(cutoff) as { id: string }[];
-    if (rows.length === 0) return [];
-    const ids = rows.map(r => r.id);
 
     // SQLite historically enforces a max bind parameter count (often 999).
     // Delete in safe batches within a single transaction for performance and atomicity.
     const CHUNK = 900; // stay under 999 to be robust across builds
-    db.exec('BEGIN');
+    db.exec('BEGIN IMMEDIATE');
     try {
+      const rows = db
+        .prepare(
+          `SELECT id FROM sessions WHERE CAST(strftime('%s', last_access) AS INTEGER) <= ?`
+        )
+        .all(cutoff) as { id: string }[];
+      if (rows.length === 0) {
+        db.exec('COMMIT');
+        return [];
+      }
+
+      const ids = rows.map(r => r.id);
       for (let i = 0; i < ids.length; i += CHUNK) {
         const chunk = ids.slice(i, i + CHUNK);
         const placeholders = chunk.map(() => '?').join(',');
         db.prepare(`DELETE FROM sessions WHERE id IN (${placeholders})`).run(...chunk);
       }
       db.exec('COMMIT');
+      return ids;
     } catch (err) {
       try { db.exec('ROLLBACK'); } catch {}
       throw err;
     }
-
-    return ids;
   } catch (e) {
     console.error('[db] cleanupExpiredSessionsDB failed:', e);
     return [];

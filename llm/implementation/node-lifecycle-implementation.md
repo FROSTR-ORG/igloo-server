@@ -42,7 +42,8 @@ DB user updates (`/api/user/credentials`):
 - GET: if stored credentials exist and the node is missing, the server auto-starts a node under the lock.
 - POST/PUT: credentials are saved, then self-echo + broadcast echo are fired (non-blocking). The node is started if missing; existing nodes are not force-restarted here.
 - DELETE: deletes credentials and cleans up the node under the lock.
-- Relay-only updates (`/api/user/relays`) update the DB but do not restart the node. The running node keeps its current relay set until a restart occurs.
+- Relay-only updates (`/api/user/relays`) update the DB but do not restart the node. The running node keeps its current relay set until a restart occurs, so clients should expect relay changes to take effect only after reloading/restarting the node.
+- Consider returning an explicit message from `/api/user/relays` so users know updates are persisted but not yet active (for example: "Relays saved; restart required to apply changes."), and document that clients should call the restart endpoint (for example `/api/node/restart`) to apply the new relays.
 
 ## Peer Policy Persistence and Application
 - `PEER_POLICIES` env is JSON-parsed and normalized via igloo-core's `normalizeNodePolicies`.

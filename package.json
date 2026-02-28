@@ -3,7 +3,7 @@
   "version": "1.1.1",
   "scripts": {
     "start": "bun run src/server.ts",
-    "start:headless": "if [ \"$HEADLESS\" = \"true\" ]; then echo 'Headless mode: skipping frontend build'; else bun run build; fi && bun run start",
+    "start:headless": "bun scripts/start-headless.js",
     "build:css": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --watch",
     "build:css:prod": "cd frontend && bunx tailwindcss -i ./styles.css -o ../static/styles.css --minify",
     "copy:qr-worker": "bun scripts/copy-qr-worker.mjs",
