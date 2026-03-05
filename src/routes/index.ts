@@ -126,6 +126,10 @@ export async function handleRequest(
     return Response.json(getAuthStatus(), { headers });
   }
 
+  if (url.pathname === '/api/events' && req.headers.get('upgrade') !== 'websocket') {
+    return Response.json({ error: 'Not Found' }, { status: 404, headers });
+  }
+
   // Handle API documentation (require auth in production for security)
   if (url.pathname.startsWith('/api/docs')) {
     // Require authentication for docs in production

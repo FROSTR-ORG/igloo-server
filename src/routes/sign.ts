@@ -223,7 +223,7 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     if (typeof signatureHex === 'string' && signatureHex.startsWith('0x')) {
       signatureHex = signatureHex.slice(2);
     }
-    if (!signatureHex || !/^[0-9a-fA-F]{128}$/.test(signatureHex)) {
+    if (!signatureHex || !/^[0-9a-fA-F]+$/.test(signatureHex)) {
       try {
         context.addServerLog('error', 'Invalid signature format', { id, signature: signatureHex });
       } catch {
