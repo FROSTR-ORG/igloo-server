@@ -37,7 +37,7 @@ export const EventLog = memo(({
 }: EventLogProps) => {
   const logEndRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, setIsExpanded] = useState<boolean>(hideHeader);
   const [activeFilters, setActiveFilters] = useState<Set<string>>(new Set());
   const [showFilters, setShowFilters] = useState(false);
   const previousLogIdsRef = useRef<string[] | null>(null);
@@ -55,6 +55,12 @@ export const EventLog = memo(({
     }
     return logs.filter(log => activeFilters.has(log.type));
   }, [logs, activeFilters]);
+
+  useEffect(() => {
+    if (hideHeader) {
+      setIsExpanded(true);
+    }
+  }, [hideHeader]);
 
   const scrollToBottom = useCallback(() => {
     if (!containerRef.current) return;

@@ -49,6 +49,14 @@ const DEFAULT_RELAY = "wss://relay.primal.net";
 const MAX_EVENT_LOG_IN_MEMORY = 10000;
 const AUTO_EXPAND_EVENT_TYPES: string[] = ['sign'];
 
+function areRelayListsEqual(left: string[], right: string[]): boolean {
+  if (left.length !== right.length) return false;
+  for (let i = 0; i < left.length; i += 1) {
+    if (left[i] !== right[i]) return false;
+  }
+  return true;
+}
+
 const sanitizeLogEntry = (entry: unknown): LogEntryData | null => {
   if (!entry || typeof entry !== "object") return null;
   const log = entry as Partial<LogEntryData>;
@@ -182,11 +190,14 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [downloadingLogs, setDownloadingLogs] = useState(false);
   const [realSelfPubkey, setRealSelfPubkey] = useState<string | null>(null);
+  const relayMutationIdRef = useRef(0);
+  const relayUrlsRef = useRef<string[]>([DEFAULT_RELAY]);
 
   // Reference for compatibility with parent component
   const nodeRef = useRef<any | null>(null);
   const authHeadersRef = useRef(authHeaders);
   useEffect(() => { authHeadersRef.current = authHeaders; }, [authHeaders]);
+  useEffect(() => { relayUrlsRef.current = relayUrls; }, [relayUrls]);
 
   // Expose methods to parent components through ref
   useImperativeHandle(ref, () => ({
@@ -274,7 +285,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   const checkServerStatus = useCallback(async () => {
     try {
       const response = await fetch('/api/status', {
-        headers: authHeaders
+        headers: authHeadersRef.current
       });
       const status = await response.json();
       setServerStatus(status);
@@ -331,8 +342,8 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
     const fetchSelfPubkey = async () => {
       try {
         const response = await fetch('/api/peers/self', {
-        headers: authHeaders
-      });
+          headers: authHeadersRef.current
+        });
         if (response.ok) {
           const data = await response.json();
           setRealSelfPubkey(data.pubkey);
@@ -382,27 +393,19 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
          const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
          let wsUrl = `${protocol}//${window.location.host}/api/events`;
          
-         // Add authentication parameters for WebSocket connection
-         // Since WebSocket doesn't support custom headers during upgrade,
-         // we need to pass auth info via URL parameters
-         const params = new URLSearchParams();
-         
-         // Check if we have auth headers and convert them to URL params
+         // Avoid exposing long-lived credentials in URL query params.
+         // Prefer WebSocket subprotocol auth hints supported by the backend.
+         const protocols: string[] = [];
          const currentAuth = authHeadersRef.current;
          if (currentAuth['X-API-Key']) {
-           params.set('apiKey', currentAuth['X-API-Key']);
+           protocols.push(`api-key.${currentAuth['X-API-Key']}`);
          } else if (currentAuth['X-Session-ID']) {
-           params.set('sessionId', currentAuth['X-Session-ID']);
+           protocols.push(`session.${currentAuth['X-Session-ID']}`);
          } else if (currentAuth['Authorization'] && currentAuth['Authorization'].startsWith('Basic ')) {
-           // For basic auth, we'll rely on cookies or handle it server-side
-           // The server should accept the connection if the user is already authenticated
+           // For basic auth, rely on existing browser credentials/cookies.
          }
-         
-         if (params.toString()) {
-           wsUrl += '?' + params.toString();
-         }
-         
-         ws = new WebSocket(wsUrl);
+
+         ws = protocols.length > 0 ? new WebSocket(wsUrl, protocols) : new WebSocket(wsUrl);
         
         ws.onopen = () => {
           isConnecting = false;
@@ -687,7 +690,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               setRelayUrls(relays);
             } else {
               // If no valid relays found, save default relays
-              saveRelaysToEnv([DEFAULT_RELAY]);
+              void saveRelaysToEnv([DEFAULT_RELAY]);
             }
       } catch (error) {
             console.warn('Failed to parse RELAYS from env:', error);
@@ -696,12 +699,12 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               setRelayUrls([envVars.RELAYS]);
             } else {
               // Save default relays if parsing failed
-              saveRelaysToEnv([DEFAULT_RELAY]);
+              void saveRelaysToEnv([DEFAULT_RELAY]);
             }
           }
         } else {
           // If no RELAYS environment variable exists, save the default
-          saveRelaysToEnv([DEFAULT_RELAY]);
+          void saveRelaysToEnv([DEFAULT_RELAY]);
         }
       } catch (error) {
         console.error('Error fetching environment variables:', error);
@@ -939,9 +942,9 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
   };
 
   // Save relay URLs to user credentials (database mode)
-  const saveRelaysToUserCredentials = async (relays: string[]) => {
+  const saveRelaysToUserCredentials = async (relays: string[]): Promise<boolean> => {
     try {
-      await fetch('/api/user/relays', {
+      const response = await fetch('/api/user/relays', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -951,15 +954,28 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           relays: relays
         })
       });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error('[Signer] Failed to save relays to user credentials:', {
+          status: response.status,
+          detail
+        });
+        setCredentialSaveError('Unable to save relays. Please try again.');
+        return false;
+      }
+      setCredentialSaveError(null);
+      return true;
     } catch (error) {
       console.error('Error saving relays to user credentials:', error);
+      setCredentialSaveError('Unable to save relays. Please try again.');
+      return false;
     }
   };
   
   // Save relay URLs to server .env file (headless mode)
-  const saveRelaysToServerEnv = async (relays: string[]) => {
+  const saveRelaysToServerEnv = async (relays: string[]): Promise<boolean> => {
     try {
-      await fetch('/api/env', {
+      const response = await fetch('/api/env', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -969,34 +985,75 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
           RELAYS: JSON.stringify(relays)
         })
       });
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        console.error('[Signer] Failed to save relays to env:', {
+          status: response.status,
+          detail
+        });
+        setCredentialSaveError('Unable to save relays. Please try again.');
+        return false;
+      }
+      setCredentialSaveError(null);
+      return true;
     } catch (error) {
       console.error('Error saving relays to env:', error);
+      setCredentialSaveError('Unable to save relays. Please try again.');
+      return false;
     }
   };
 
   // Save relay URLs (routes to appropriate endpoint based on mode)
-  const saveRelaysToEnv = async (relays: string[]) => {
+  const saveRelaysToEnv = async (relays: string[]): Promise<boolean> => {
     if (isDatabaseMode()) {
-      await saveRelaysToUserCredentials(relays);
+      return await saveRelaysToUserCredentials(relays);
     } else {
-      await saveRelaysToServerEnv(relays);
+      return await saveRelaysToServerEnv(relays);
     }
   };
 
-  const handleAddRelay = () => {
-    const isAlreadyAdded = relayUrls.indexOf(newRelayUrl) !== -1;
-    if (newRelayUrl && !isAlreadyAdded) {
-      const newRelays = [...relayUrls, newRelayUrl];
-      setRelayUrls(newRelays);
-      setNewRelayUrl("");
-      saveRelaysToEnv(newRelays);
-    }
-  };
+  const handleAddRelay = async () => {
+    const relayToAdd = newRelayUrl.trim();
+    const currentRelays = relayUrlsRef.current;
+    const isAlreadyAdded = currentRelays.indexOf(relayToAdd) !== -1;
+    if (!relayToAdd || isAlreadyAdded) return;
 
-  const handleRemoveRelay = (urlToRemove: string) => {
-    const newRelays = relayUrls.filter(url => url !== urlToRemove);
+    const previousRelays = currentRelays;
+    const newRelays = [...currentRelays, relayToAdd];
+    const mutationId = ++relayMutationIdRef.current;
+    relayUrlsRef.current = newRelays;
     setRelayUrls(newRelays);
-    saveRelaysToEnv(newRelays);
+    setNewRelayUrl("");
+
+    const saved = await saveRelaysToEnv(newRelays);
+    if (!saved) {
+      const isLatestMutation = mutationId === relayMutationIdRef.current;
+      const relaysStillMatchFailedAttempt = areRelayListsEqual(relayUrlsRef.current, newRelays);
+      if (isLatestMutation && relaysStillMatchFailedAttempt) {
+        relayUrlsRef.current = previousRelays;
+        setRelayUrls(previousRelays);
+        setNewRelayUrl(relayToAdd);
+      }
+    }
+  };
+
+  const handleRemoveRelay = async (urlToRemove: string) => {
+    const currentRelays = relayUrlsRef.current;
+    const newRelays = currentRelays.filter(url => url !== urlToRemove);
+    if (newRelays.length === currentRelays.length) return;
+    const previousRelays = currentRelays;
+    const mutationId = ++relayMutationIdRef.current;
+    relayUrlsRef.current = newRelays;
+    setRelayUrls(newRelays);
+    const saved = await saveRelaysToEnv(newRelays);
+    if (!saved) {
+      const isLatestMutation = mutationId === relayMutationIdRef.current;
+      const relaysStillMatchFailedAttempt = areRelayListsEqual(relayUrlsRef.current, newRelays);
+      if (isLatestMutation && relaysStillMatchFailedAttempt) {
+        relayUrlsRef.current = previousRelays;
+        setRelayUrls(previousRelays);
+      }
+    }
   };
 
   // Expose the stopSigner method for compatibility (server-managed, no action needed)
@@ -1285,7 +1342,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
               className="bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full"
             />
             <Button
-              onClick={handleAddRelay}
+              onClick={() => void handleAddRelay()}
               className="sm:ml-2 bg-blue-800/30 text-blue-400 hover:text-blue-300 hover:bg-blue-800/50"
               disabled={!newRelayUrl.trim()}
             >
@@ -1301,7 +1358,7 @@ const Signer = forwardRef<SignerHandle, SignerProps>(({ initialData, authHeaders
                   variant="destructive"
                   size="sm"
                   icon={<X className="h-4 w-4" />}
-                  onClick={() => handleRemoveRelay(relay)}
+                  onClick={() => void handleRemoveRelay(relay)}
                   tooltip="Remove relay"
                   disabled={relayUrls.length <= 1}
                 />

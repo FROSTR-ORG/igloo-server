@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Alert } from './ui/alert';
@@ -13,6 +13,10 @@ import OnboardingInstructions from './OnboardingInstructions';
 interface OnboardingProps {
   onComplete: () => void;
   initialSkipAdminValidation?: boolean;
+}
+
+interface OnboardingValidationResponse {
+  error?: string;
 }
 
 const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminValidation = false }) => {
@@ -35,7 +39,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
   // Match server-side password policy exactly (see src/routes/onboarding.ts)
   // - Minimum 8 characters
   // - At least one uppercase letter, one lowercase letter, one digit, and one special character
-  const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])[A-Za-z\d@$!%*?&]{8,}$/;
+  const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).{8,}$/;
 
   const parseRetryAfter = (retryAfterHeader: string | null): number | null => {
     if (!retryAfterHeader) return null;
@@ -59,17 +63,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     }
   }, [initialSkipAdminValidation]);
 
-  useEffect(() => {
-    checkStatus();
-    
-    // Cleanup timeout on unmount
-    return () => {
-      if (timeoutRef.current !== null) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, []);
-
   // Sync adminSecret with ref to ensure it's not lost during re-renders
   useEffect(() => {
     adminSecretRef.current = adminSecret;
@@ -83,7 +76,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     }
   }, [skipAdminValidation, step]);
 
-  const checkStatus = async () => {
+  const checkStatus = useCallback(async () => {
     setIsCheckingStatus(true);
     setNetworkError('');
 
@@ -110,7 +103,18 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
     } finally {
       setIsCheckingStatus(false);
     }
-  };
+  }, []);
+
+  useEffect(() => {
+    void checkStatus();
+    
+    // Cleanup timeout on unmount
+    return () => {
+      if (timeoutRef.current !== null) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [checkStatus]);
 
   const validateAdminSecret = async () => {
     if (!adminSecret.trim()) {
@@ -144,7 +148,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       }
 
       // Try to parse JSON response, but handle non-JSON gracefully
-      let data: any = {};
+      let data: OnboardingValidationResponse = {};
       try {
         data = await response.json();
       } catch (jsonError) {
@@ -168,12 +172,11 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
   };
 
   const createUser = async () => {
-    // Trim username and password for consistent validation and submission
+    // Trim username only; keep password exactly as entered.
     const trimmedUsername = username.trim();
-    const trimmedPassword = password.trim();
 
     // Validate inputs
-    if (!trimmedUsername || !trimmedPassword) {
+    if (!trimmedUsername || !password) {
       setError('Username and password are required');
       return;
     }
@@ -183,18 +186,18 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
       return;
     }
 
-    if (trimmedPassword.length < 8) {
+    if (password.length < 8) {
       setError('Password must be at least 8 characters long');
       return;
     }
 
     // Enforce same password rules as server (uppercase, lowercase, digit, special)
-    if (!PASSWORD_REGEX.test(trimmedPassword)) {
+    if (!PASSWORD_REGEX.test(password)) {
       setError('Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character');
       return;
     }
 
-    if (trimmedPassword !== confirmPassword.trim()) {
+    if (password !== confirmPassword) {
       setError('Passwords do not match');
       return;
     }
@@ -224,7 +227,7 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
         headers,
         body: JSON.stringify({
           username: trimmedUsername,
-          password: trimmedPassword,
+          password,
         }),
       });
 
@@ -557,7 +560,6 @@ const Onboarding: React.FC<OnboardingProps> = ({ onComplete, initialSkipAdminVal
                   onChange={(e) => setPassword(e.target.value)}
                   disabled={isLoading}
                   className="bg-gray-800/50 border-gray-700/50 text-blue-300 placeholder:text-gray-500"
-                  pattern={PASSWORD_REGEX.source}
                   title="Minimum 8 characters, with at least one uppercase letter, one lowercase letter, one number, and one special character"
                 />
               </div>

@@ -28,7 +28,9 @@ describe('admin whoami with DB-backed session', () => {
 
     const sessionId = auth.createSession(1, '203.0.113.7')
     expect(sessionId).toBeString()
-    database.default.exec("UPDATE sessions SET last_access = datetime('now', '-1 day') WHERE id = '" + sessionId + "'")
+    database.default
+      .prepare("UPDATE sessions SET last_access = datetime('now', '-1 day') WHERE id = ?")
+      .run(sessionId)
 
     const req = new Request('http://localhost/api/admin/whoami', {
       headers: {
@@ -40,9 +42,14 @@ describe('admin whoami with DB-backed session', () => {
 
     rmSync(tmpDir, { recursive: true, force: true })
   })
-})
 
-afterAll(async () => {
-  try { const auth = await import('../../src/routes/auth'); auth.stopAuthCleanup(); } catch {}
-  try { const db = await import('../../src/db/database'); await db.closeDatabase(); } catch {}
+  afterAll(async () => {
+    try {
+      const auth = await import('../../src/routes/auth')
+      auth.stopAuthCleanup()
+    } catch (error) {
+      console.error('admin.whoami.session teardown failed:', error)
+      throw error
+    }
+  })
 })

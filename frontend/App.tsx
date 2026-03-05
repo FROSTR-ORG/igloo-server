@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from "react"
+import React, { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import Configure from "./components/Configure"
 import Signer from "./components/Signer"
 import Recover from "./components/Recover"
@@ -86,18 +86,6 @@ const App: React.FC = () => {
       cancelled = true;
     };
   }, []);
-
-  // Global handler for authentication/credentials expiry from child components
-  useEffect(() => {
-    const onAuthExpired = () => {
-      // If already unauthenticated, ignore; otherwise trigger logout to show login screen
-      if (authState.isAuthenticated) {
-        handleLogout().catch(console.error);
-      }
-    };
-    window.addEventListener('authExpired', onAuthExpired as EventListener);
-    return () => window.removeEventListener('authExpired', onAuthExpired as EventListener);
-  }, [authState.isAuthenticated]);
 
   const initializeApp = async () => {
     try {
@@ -323,7 +311,9 @@ const App: React.FC = () => {
                 setSignerData(prev => prev ?? { share: '', groupCredential: '', name: 'Server credentials' });
               }
             }
-          } catch {}
+          } catch (error) {
+            console.error('Failed to fetch /api/status while checking headless fallback state:', error);
+          }
         }
       }
       // If no saved credentials, we'll show Configure page (default state)
@@ -333,7 +323,7 @@ const App: React.FC = () => {
     }
   };
 
-  const getAuthHeaders = (): Record<string, string> => {
+  const getAuthHeaders = useCallback((): Record<string, string> => {
     const headers: Record<string, string> = {};
     
     // Try session-based auth first
@@ -351,13 +341,13 @@ const App: React.FC = () => {
     }
     
     return headers;
-  };
+  }, [authState.sessionId, authState.apiKey, authState.basicAuth]);
 
   // Memoize auth headers to prevent unnecessary re-renders in child components
   // Only recreate when authentication state changes
   const memoizedAuthHeaders = useMemo(() => {
     return getAuthHeaders();
-  }, [authState.sessionId, authState.apiKey, authState.basicAuth]);
+  }, [getAuthHeaders]);
 
   const handleOnboardingComplete = () => {
     // After onboarding, reset state to show login
@@ -401,7 +391,7 @@ const App: React.FC = () => {
     }
   };
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     try {
       // Stop signer first
       await signerRef.current?.stopSigner().catch(console.error);
@@ -422,7 +412,19 @@ const App: React.FC = () => {
       });
       setSignerData(null);
     }
-  };
+  }, [getAuthHeaders]);
+
+  // Global handler for authentication/credentials expiry from child components
+  useEffect(() => {
+    const onAuthExpired = () => {
+      // If already unauthenticated, ignore; otherwise trigger logout to show login screen
+      if (authState.isAuthenticated) {
+        handleLogout().catch(console.error);
+      }
+    };
+    window.addEventListener('authExpired', onAuthExpired as EventListener);
+    return () => window.removeEventListener('authExpired', onAuthExpired as EventListener);
+  }, [authState.isAuthenticated, handleLogout]);
 
   const checkAdmin = async (headers?: Record<string, string>) => {
     try {

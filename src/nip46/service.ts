@@ -3,7 +3,7 @@ import type { ServerBifrostNode } from '../routes/types.js'
 import {
   createNip46Request,
   getSession,
-  getNip46RequestById,
+  getPendingNip46RequestByClientId,
   getNip46Relays,
   getTransportKey,
   mergeNip46Relays,
@@ -74,10 +74,9 @@ function normalizeRequestedPolicy(input: any): Nip46Policy | null {
       const [name, arg] = token.split(':')
       if (!name) continue
       if (name === 'sign_event') {
+        methods.sign_event = true
         if (arg && /^\d+$/.test(arg)) {
           kinds[arg] = true
-        } else {
-          methods[name] = true
         }
       } else {
         methods[name] = true
@@ -178,7 +177,7 @@ export class Nip46Service {
   private agent: any | null = null
   private activeUserId: number | bigint | null = null
   private currentRelays: string[] = []
-  private starting = false
+  private startingPromise: Promise<void> | null = null
   private stopping = false
   private started = false
   private readonly onRequestBound: (req: any) => void
@@ -215,15 +214,21 @@ export class Nip46Service {
 
   async ensureStarted(): Promise<void> {
     if (this.activeUserId == null) return
-    if (this.started || this.starting) return
-    this.starting = true
-    try {
-      await this.startInternal()
-    } catch (error) {
-      this.log('error', 'Failed to start NIP-46 service', { error: this.serializeError(error) })
-    } finally {
-      this.starting = false
+    if (this.started) return
+    if (this.startingPromise) {
+      await this.startingPromise
+      return
     }
+    this.startingPromise = (async () => {
+      try {
+        await this.startInternal()
+      } catch (error) {
+        this.log('error', 'Failed to start NIP-46 service', { error: this.serializeError(error) })
+      } finally {
+        this.startingPromise = null
+      }
+    })()
+    await this.startingPromise
   }
 
   async stop(): Promise<void> {
@@ -397,11 +402,23 @@ export class Nip46Service {
 
     this.agent = new SignerAgent(this.signer, config)
     this.registerAgentListeners()
-
-    await this.agent.connect(relays)
-    this.started = true
-    this.currentRelays = relays
-    this.log('info', 'NIP-46 service started', { relays })
+    try {
+      await this.agent.connect(relays)
+      this.started = true
+      this.currentRelays = relays
+      this.log('info', 'NIP-46 service started', { relays })
+    } catch (error) {
+      try {
+        await this.agent?.close?.()
+      } catch (closeError) {
+        this.log('warn', 'Error closing NIP-46 agent after failed start', { error: this.serializeError(closeError) })
+      }
+      this.removeAgentListeners()
+      this.agent = null
+      this.signer = null
+      this.started = false
+      throw error
+    }
   }
 
   private async loadRelays(userId: number | bigint): Promise<string[]> {
@@ -474,7 +491,7 @@ export class Nip46Service {
       return
     }
 
-    const existing = getNip46RequestById(String(req.id))
+    const existing = getPendingNip46RequestByClientId(this.activeUserId, pubkey, String(req.id))
     if (existing) {
       this.log('info', 'Ignoring duplicate NIP-46 request', { id: req.id })
       return

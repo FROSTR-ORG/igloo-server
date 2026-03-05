@@ -97,7 +97,11 @@ export class NostrRelay extends EventEmitter {
   }
 
   store (event : SignedEvent) {
-    this._cache = this._cache.concat(event).sort((a, b) => a > b ? -1 : 1)
+    this._cache = this._cache.concat(event).sort((a, b) => {
+      const createdAtDiff = (b.created_at ?? 0) - (a.created_at ?? 0)
+      if (createdAtDiff !== 0) return createdAtDiff
+      return b.id.localeCompare(a.id)
+    })
   }
 }
 
@@ -152,7 +156,23 @@ class RelaySession {
 
       switch (verb) {
         case 'REQ':
+          // Normalize nostr-tools 2.x format where filters are wrapped in an extra array:
+          // New format: ["REQ", "sub_id", [{filter1}, {filter2}]]
+          // NIP-01 format: ["REQ", "sub_id", {filter1}, {filter2}]
+          if (payload.length === 2 && Array.isArray(payload[1]) && payload[1].length === 0) {
+            this.log.info('ignoring REQ with empty filter array')
+            this.send(['NOTICE', String(payload[0] ?? ''), 'REQ requires at least one filter'])
+            return
+          }
+          if (payload.length === 2 && Array.isArray(payload[1])) {
+            payload = [payload[0], ...payload[1]]
+          }
           const [ id, ...filters ] = sub_schema.parse(payload)
+          if (filters.length === 0) {
+            this.log.info('ignoring REQ with no filters')
+            this.send(['NOTICE', id, 'REQ requires at least one filter'])
+            return
+          }
           return this._onreq(id, filters)
         case 'EVENT':
           const event = Nostr.parse_event(payload.at(0), this.relay.config.debug)
@@ -185,7 +205,7 @@ class RelaySession {
     this.log.debug('event:', event)
 
     if (!Nostr.verify_event(event)) {
-      this.log.debug('event failed validation:', event)
+      this.log.debug(`event failed validation (id=${event.id.slice(0, 8)} kind=${event.kind})`)
       this.send([ 'OK', event.id, false, 'event failed validation' ])
       return
     }
@@ -210,7 +230,7 @@ class RelaySession {
     this.log.client('received subscription request:', sub_id)
     this.log.debug('filters:', filters)
     // Add the subscription to our set.
-    this.addSub(sub_id, filters)
+    this.addSub(sub_id, ...filters)
     // For each filter:
     for (const filter of filters) {
       // Set the limit count, if any.
@@ -225,9 +245,12 @@ class RelaySession {
             this.send(['EVENT', sub_id, event])
             this.log.client(`event matched in cache: ${event.id}`)
             this.log.client(`event matched subscription: ${sub_id}`)
+            // Decrement only when we actually sent a matching event.
+            if (limit_count !== undefined) {
+              limit_count -= 1
+              if (limit_count === 0) break
+            }
           }
-          // Update the limit count.
-          if (limit_count !== undefined) limit_count -= 1
         } 
       }
     }
@@ -254,7 +277,7 @@ class RelaySession {
   }
 
   remSub (subId : string) {
-    this.relay.subs.delete(subId)
+    this.relay.subs.delete(`${this.sid}/${subId}`)
     this._subs.delete(subId)
   }
 

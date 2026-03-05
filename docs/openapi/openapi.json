@@ -85,6 +85,14 @@
     {
       "name": "Event Log",
       "description": "Persisted UI event log endpoints (database mode only)"
+    },
+    {
+      "name": "Crypto",
+      "description": "Cryptographic operations and key management"
+    },
+    {
+      "name": "NIP‑46",
+      "description": "NIP‑46 protocol and signing interactions"
     }
   ],
   "paths": {
@@ -419,22 +427,14 @@
             }
           },
           "400": {
-            "$ref": "#/components/responses/BadRequest",
+            "description": "Bad request",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/AuthStatus"
+                  "$ref": "#/components/schemas/ErrorResponse"
                 },
                 "example": {
-                  "enabled": true,
-                  "methods": [
-                    "api-key",
-                    "bearer",
-                    "basic-auth",
-                    "session"
-                  ],
-                  "rateLimiting": true,
-                  "sessionTimeout": 3600
+                  "error": "Invalid authentication status request"
                 }
               }
             }
@@ -450,6 +450,7 @@
         "tags": [
           "Authentication"
         ],
+        "security": [],
         "requestBody": {
           "required": true,
           "content": {
@@ -532,6 +533,7 @@
         "tags": [
           "Authentication"
         ],
+        "security": [],
         "responses": {
           "200": {
             "description": "Logout successful",
@@ -1392,15 +1394,36 @@
                     "$ref": "#/components/schemas/StoredShare"
                   }
                 },
-                "example": [
-                  {
-                    "shareCredential": "bfshare1qqsqp...",
-                    "groupCredential": "bfgroup1qqsqp...",
-                    "savedAt": "2025-01-20T12:00:00.000Z",
-                    "id": "env-stored-share",
-                    "source": "environment"
+                "examples": {
+                  "metadataOnly": {
+                    "summary": "Default response with credential presence flags only",
+                    "value": [
+                      {
+                        "hasShareCredential": true,
+                        "hasGroupCredential": true,
+                        "isValid": true,
+                        "savedAt": "2025-01-20T12:00:00.000Z",
+                        "id": "env-stored-share",
+                        "source": "environment"
+                      }
+                    ]
+                  },
+                  "includesRaw": {
+                    "summary": "Debug response with raw credentials included",
+                    "value": [
+                      {
+                        "hasShareCredential": true,
+                        "hasGroupCredential": true,
+                        "isValid": true,
+                        "shareCredential": "bfshare1qqsqp...",
+                        "groupCredential": "bfgroup1qqsqp...",
+                        "savedAt": "2025-01-20T12:00:00.000Z",
+                        "id": "env-stored-share",
+                        "source": "environment"
+                      }
+                    ]
                   }
-                ]
+                }
               }
             }
           },
@@ -2076,6 +2099,426 @@
                 }
               }
             }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/nip46/requests": {
+      "get": {
+        "operationId": "listNip46Requests",
+        "summary": "List persisted NIP‑46 requests",
+        "tags": [
+          "NIP‑46"
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated request statuses (pending, approved, denied, completed, failed, expired)"
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500
+            },
+            "description": "Number of requests to return (default 100)"
+          },
+          {
+            "in": "query",
+            "name": "beforeCreatedAt",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor created_at value for pagination (must be paired with beforeId)"
+          },
+          {
+            "in": "query",
+            "name": "beforeId",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Cursor id value for pagination (must be paired with beforeCreatedAt)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Requests",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "requests": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Nip46Request"
+                      }
+                    },
+                    "nextCursor": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "properties": {
+                            "createdAt": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "type": "string"
+                            }
+                          }
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "updateNip46Request",
+        "summary": "Update a NIP‑46 request status",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46RequestActionInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "request": {
+                      "$ref": "#/components/schemas/Nip46Request"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "operationId": "deleteNip46Request",
+        "summary": "Delete a persisted NIP‑46 request",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46RequestDeleteInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Request deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/nip46/connect": {
+      "post": {
+        "operationId": "createNip46Connect",
+        "summary": "Process a nostrconnect invite string",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46ConnectInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session created/updated from invite",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Nip46ConnectResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/nip46/relays": {
+      "get": {
+        "operationId": "listNip46Relays",
+        "summary": "Get NIP‑46 relay pool",
+        "tags": [
+          "NIP‑46"
+        ],
+        "responses": {
+          "200": {
+            "description": "Relay list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relays": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateNip46Relays",
+        "summary": "Replace NIP‑46 relay pool",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46RelaysInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated relays",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relays": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "operationId": "mergeNip46Relays",
+        "summary": "Merge relays into NIP‑46 relay pool",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46RelaysInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated relays",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "relays": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/nip46/transport": {
+      "get": {
+        "operationId": "getNip46Transport",
+        "summary": "Get NIP‑46 transport key",
+        "tags": [
+          "NIP‑46"
+        ],
+        "responses": {
+          "200": {
+            "description": "Transport key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Nip46Transport"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "put": {
+        "operationId": "updateNip46Transport",
+        "summary": "Set or rotate NIP‑46 transport key",
+        "tags": [
+          "NIP‑46"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Nip46Transport"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated transport key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "transport_sk": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
           "401": {
             "$ref": "#/components/responses/Unauthorized"
@@ -3011,7 +3454,6 @@
               "type": "string",
               "enum": [
                 "api-key",
-                "bearer",
                 "basic-auth",
                 "session"
               ]
@@ -3219,16 +3661,37 @@
       "StoredShare": {
         "type": "object",
         "properties": {
+          "hasShareCredential": {
+            "type": "boolean",
+            "description": "Whether a share credential is currently stored"
+          },
+          "hasGroupCredential": {
+            "type": "boolean",
+            "description": "Whether a group credential is currently stored"
+          },
+          "isValid": {
+            "type": "boolean",
+            "description": "Whether both credentials are present and usable together"
+          },
           "shareCredential": {
-            "type": "string",
-            "description": "The share credential"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional raw share credential (only returned in explicit debug mode)"
           },
           "groupCredential": {
-            "type": "string",
-            "description": "The group credential"
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional raw group credential (only returned in explicit debug mode)"
           },
           "savedAt": {
-            "type": "string",
+            "type": [
+              "string",
+              "null"
+            ],
             "format": "date-time",
             "description": "When the share was saved"
           },
@@ -3242,8 +3705,9 @@
           }
         },
         "required": [
-          "shareCredential",
-          "groupCredential",
+          "hasShareCredential",
+          "hasGroupCredential",
+          "isValid",
           "savedAt",
           "id",
           "source"
@@ -3526,7 +3990,7 @@
         "type": "object",
         "description": "Client-supplied fields when creating or updating a NIP‑46 session",
         "properties": {
-          "client_pubkey": {
+          "pubkey": {
             "type": "string",
             "description": "Client public key (hex encoded)"
           },
@@ -3554,7 +4018,7 @@
           }
         },
         "required": [
-          "client_pubkey"
+          "pubkey"
         ]
       },
       "Nip46Session": {
@@ -3634,6 +4098,176 @@
             }
           }
         }
+      },
+      "Nip46Request": {
+        "type": "object",
+        "description": "Persisted NIP‑46 request payload and lifecycle status",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "user_id": {
+            "oneOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "session_pubkey": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "params": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "approved",
+              "denied",
+              "completed",
+              "failed",
+              "expired"
+            ]
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "updated_at": {
+            "type": "string"
+          },
+          "expires_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "user_id",
+          "session_pubkey",
+          "method",
+          "params",
+          "status",
+          "created_at",
+          "updated_at"
+        ]
+      },
+      "Nip46RequestActionInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Persisted request identifier"
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "deny",
+              "fail",
+              "complete"
+            ]
+          },
+          "policy": {
+            "$ref": "#/components/schemas/Nip46Policy"
+          },
+          "result": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "id",
+          "action"
+        ]
+      },
+      "Nip46RequestDeleteInput": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ]
+      },
+      "Nip46ConnectInput": {
+        "type": "object",
+        "properties": {
+          "uri": {
+            "type": "string",
+            "description": "nostrconnect:// invite URI"
+          }
+        },
+        "required": [
+          "uri"
+        ]
+      },
+      "Nip46ConnectResponse": {
+        "type": "object",
+        "properties": {
+          "session": {
+            "$ref": "#/components/schemas/Nip46Session"
+          }
+        }
+      },
+      "Nip46RelaysInput": {
+        "type": "object",
+        "properties": {
+          "relays": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "relays"
+        ]
+      },
+      "Nip46Transport": {
+        "type": "object",
+        "properties": {
+          "transport_sk": {
+            "type": "string",
+            "description": "32-byte transport secret key encoded as hex"
+          }
+        },
+        "required": [
+          "transport_sk"
+        ]
       },
       "AdminApiKey": {
         "type": "object",
@@ -4076,7 +4710,6 @@
               "error": "Authentication required",
               "authMethods": [
                 "api-key",
-                "bearer",
                 "basic-auth",
                 "session"
               ]

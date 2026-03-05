@@ -32,14 +32,14 @@ sudo chmod +x /usr/local/bin/docker-compose
 ```
 2) Pull and run (pin a release tag for reproducibility, e.g., `1.1.1` or `umbrel-1.1.1`):
 ```bash
-docker pull ghcr.io/frostr-org/igloo-server:latest
+docker pull ghcr.io/frostr-org/igloo-server:1.1.1
 docker run -d --name igloo-server -p 8002:8002 \
   -v $PWD/data:/app/data \
   -e ADMIN_SECRET=$(openssl rand -hex 32) \
   -e AUTH_ENABLED=true \
   -e TRUST_PROXY=true \
   -e ALLOWED_ORIGINS=https://yourdomain.com \
-  ghcr.io/frostr-org/igloo-server:latest
+  ghcr.io/frostr-org/igloo-server:1.1.1
 ```
 3) Docker Compose option (create `docker-compose.yml`):
 ```yaml
@@ -62,7 +62,9 @@ Note: `env_file: .env` injects values only at container start. If you also bind-
 
 4) Firewall (UFW):
 ```bash
-sudo ufw allow 80 443 22
+sudo ufw allow 22
+sudo ufw allow 80
+sudo ufw allow 443
 sudo ufw allow 8002   # only if accessing without reverse proxy
 sudo ufw enable
 ```

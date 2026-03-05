@@ -74,15 +74,16 @@ export class PersistentRateLimiter {
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(db?: Database, fallbackState?: Map<string, MemoryEntry>) {
-    // Only initialize if not in headless mode and DB provided
-    if (!HEADLESS && db) {
-      this.db = db;
-      this.startCleanup();
-    }
-
-    if (fallbackState && fallbackState.size > 0) {
+    if (fallbackState) {
       // Preserve any in-memory state so new instances retain prior counts if needed
       this.fallbackStore = new Map(fallbackState);
+    }
+
+    if (!HEADLESS) {
+      if (db) {
+        this.db = db;
+      }
+      this.startCleanup();
     }
   }
 
@@ -182,7 +183,8 @@ export class PersistentRateLimiter {
       }
     }
 
-    throw new RateLimiterUnavailableError();
+    // Defensive fallback for type completeness; loop paths above should always return or throw.
+    return this.checkMemoryLimit(identifier, config, Date.now());
   }
 
   /**
@@ -247,8 +249,11 @@ export class PersistentRateLimiter {
       this.fallbackStore.delete(`${bucket}:${identifier}`);
     } else {
       // Clear all buckets for this identifier
-      for (const key of this.fallbackStore.keys()) {
-        if (key.endsWith(`:${identifier}`)) {
+      const keys = Array.from(this.fallbackStore.keys());
+      for (const key of keys) {
+        const separatorIndex = key.indexOf(':');
+        const keyIdentifier = separatorIndex === -1 ? key : key.slice(separatorIndex + 1);
+        if (keyIdentifier === identifier) {
           this.fallbackStore.delete(key);
         }
       }
@@ -264,14 +269,13 @@ export class PersistentRateLimiter {
 
     if (this.db) {
       try {
-        this.db
+        const result = this.db
           .prepare('DELETE FROM rate_limits WHERE last_attempt < ?')
           .run(cutoff);
 
         // Only log if entries were deleted
-        const changes = this.db.query('SELECT changes() as c').get() as { c: number } | null;
-        if (changes && changes.c > 0) {
-          console.log(`[RateLimiter] Cleaned up ${changes.c} expired entries`);
+        if (result.changes > 0) {
+          console.log(`[RateLimiter] Cleaned up ${result.changes} expired entries`);
         }
       } catch (error) {
         console.error('[RateLimiter] Cleanup failed:', error);

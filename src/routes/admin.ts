@@ -24,6 +24,15 @@ interface RevokeApiKeyRequest {
   reason?: unknown;
 }
 
+const KNOWN_ADMIN_PATHS = new Set([
+  '/api/admin/whoami',
+  '/api/admin/users',
+  '/api/admin/users/delete',
+  '/api/admin/api-keys',
+  '/api/admin/api-keys/revoke',
+  '/api/admin/status',
+]);
+
 /**
  * Convert various input types into a normalized positive integer (number or bigint).
  * Accepts number, numeric string (e.g. "1", "42"), and bigint (e.g. 1n).
@@ -76,6 +85,7 @@ function normalizeAuthUserId(auth?: RequestAuth | null): number | bigint | null 
   if (typeof id === 'string' && /^\d+$/.test(id)) {
     try {
       const asBigInt = BigInt(id);
+      if (asBigInt <= 0n) return null;
       return asBigInt <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(asBigInt) : asBigInt;
     } catch {
       return null;
@@ -126,13 +136,19 @@ export async function handleAdminRoute(
   // Check rate limit before admin authentication to prevent brute force attacks
   const rate = await checkRateLimit(req, 'auth', { clientIp: _context.clientIp });
   if (!rate.allowed) {
+    const windowSecondsRaw = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '900', 10);
+    const validatedWindowSeconds = Number.isFinite(windowSecondsRaw) ? windowSecondsRaw : 900;
+    const fallbackRetryAfterSeconds = Math.ceil(validatedWindowSeconds).toString();
+    const retryAfterSeconds = typeof rate.resetAt === 'number'
+      ? Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)).toString()
+      : fallbackRetryAfterSeconds;
     return Response.json(
       { error: 'Rate limit exceeded. Try again later.' },
       {
         status: 429,
         headers: {
           ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+          'Retry-After': retryAfterSeconds
         }
       }
     );
@@ -159,7 +175,7 @@ export async function handleAdminRoute(
   // All admin routes require ADMIN_SECRET authentication
   const authHeader = req.headers.get('Authorization');
   let adminSecret: string | undefined;
-  if (authHeader && authHeader.startsWith('Bearer ')) {
+  if (authHeader && authHeader.toLowerCase().startsWith('bearer ')) {
     adminSecret = authHeader.substring(7).trim();
     if (adminSecret.length === 0) {
       adminSecret = undefined;
@@ -272,7 +288,7 @@ export async function handleAdminRoute(
             createdAt: key.createdAt,
             updatedAt: key.updatedAt,
             lastUsedAt: key.lastUsedAt,
-            lastUsedIp: key.lastUsedIp,
+            lastUsedIp: null,
             revokedAt: key.revokedAt,
             revokedReason: key.revokedReason,
             createdByUserId: key.createdByUserId,
@@ -329,9 +345,7 @@ export async function handleAdminRoute(
             );
           }
 
-          const createdByAdminFlag = sessionAdmin || (typeof body.createdByAdmin === 'boolean'
-            ? body.createdByAdmin
-            : normalizedUserId == null);
+          const createdByAdminFlag = Boolean(sessionAdmin) || normalizedUserId == null;
 
           try {
             const result = createApiKey({
@@ -448,9 +462,10 @@ export async function handleAdminRoute(
         break;
     }
 
+    const isKnownPath = KNOWN_ADMIN_PATHS.has(url.pathname);
     return Response.json(
-      { error: 'Method not allowed' },
-      { status: 405, headers }
+      { error: isKnownPath ? 'Method not allowed' : 'Not found' },
+      { status: isKnownPath ? 405 : 404, headers }
     );
   } catch (error) {
     console.error('Admin API Error:', error);

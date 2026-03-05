@@ -125,6 +125,22 @@ const CONNECTIVITY_PING_TIMEOUT = (() => {
   return 10000; // default 10s
 })();
 
+let simplePoolSubscribeManyLock: Promise<void> = Promise.resolve();
+
+async function withSimplePoolSubscribeManyLock<T>(fn: () => Promise<T>): Promise<T> {
+  const previous = simplePoolSubscribeManyLock;
+  let release: (() => void) | undefined;
+  simplePoolSubscribeManyLock = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await previous;
+  try {
+    return await fn();
+  } finally {
+    release?.();
+  }
+}
+
 async function respondToEchoRequest(node: ServerBifrostNode, msg: any): Promise<boolean> {
   const requesterPubkey = msg?.env?.pubkey;
   if (typeof requesterPubkey !== 'string' || requesterPubkey.trim().length === 0) {
@@ -635,6 +651,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
 interface NodeHealth {
   lastActivity: Date;
   lastConnectivityCheck: Date;
+  connectivityMonitoringStart: number;
   isConnected: boolean;
   consecutiveConnectivityFailures: number;
 }
@@ -642,6 +659,7 @@ interface NodeHealth {
 let nodeHealth: NodeHealth = {
   lastActivity: new Date(),
   lastConnectivityCheck: new Date(),
+  connectivityMonitoringStart: Date.now(),
   isConnected: true,
   consecutiveConnectivityFailures: 0
 };
@@ -796,6 +814,7 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>,
 
   // Reset connectivity failures on real activity (not keepalive)
   if (!isKeepalive && nodeHealth.consecutiveConnectivityFailures > 0) {
+    nodeHealth.connectivityMonitoringStart = now.getTime();
     nodeHealth.consecutiveConnectivityFailures = 0;
     nodeHealth.isConnected = true;
     addServerLog('info', 'Node activity detected - connectivity restored');
@@ -804,6 +823,14 @@ function updateNodeActivity(addServerLog: ReturnType<typeof createAddServerLog>,
     nodeHealth.isConnected = true;
     addServerLog('info', 'Node activity detected - connection active');
   }
+}
+
+function markConnectivityHealthy(now: Date): void {
+  if (nodeHealth.consecutiveConnectivityFailures > 0) {
+    nodeHealth.connectivityMonitoringStart = now.getTime();
+  }
+  nodeHealth.isConnected = true;
+  nodeHealth.consecutiveConnectivityFailures = 0;
 }
 
 // Helper function to check if node and client are valid
@@ -974,120 +1001,108 @@ async function checkRelayConnectivity(
 ): Promise<boolean> {
   const now = new Date();
   nodeHealth.lastConnectivityCheck = now;
+  let requestRecreate = false;
+  let nodeValidation: { valid: boolean; client: any; shouldRecreate: boolean } = { valid: false, client: null, shouldRecreate: false };
 
   try {
     // Step 1: Validate node and client
-    const nodeValidation = await checkNodeValidity(node, addServerLog);
+    nodeValidation = await checkNodeValidity(node, addServerLog);
     if (!nodeValidation.valid) {
       nodeHealth.isConnected = false;
       nodeHealth.consecutiveConnectivityFailures++;
+      requestRecreate = nodeValidation.shouldRecreate;
+    } else {
+      const { client } = nodeValidation;
+      const pool = client._pool || client.pool;
 
-      if (nodeValidation.shouldRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-        addServerLog('info', 'Recreating node after 3 failed checks');
-        await nodeRecreateCallback();
+      // Step 2: Check activity timeout
+      const activityCheck = checkActivityTimeout(now, addServerLog);
+      if (activityCheck.shouldRecreate) {
+        requestRecreate = true;
+        nodeHealth.consecutiveConnectivityFailures++;
+        nodeHealth.isConnected = false;
       }
-      return false;
+
+      // Step 3: Check and handle relay connections
+      const relayStatus = checkRelayConnectionStatus(pool, addServerLog);
+
+      if (relayStatus.disconnectedRelays.length > 0) {
+        // Check if it's been too long since real activity with relay issues
+        const timeSinceRealActivity = now.getTime() - nodeHealth.lastActivity.getTime();
+        const tooLongWithoutActivity = timeSinceRealActivity > 300000; // 5 minutes
+
+        if (tooLongWithoutActivity) {
+          addServerLog('warning', `No real activity for ${Math.round(timeSinceRealActivity / 60000)} minutes and relays disconnected`);
+          nodeHealth.consecutiveConnectivityFailures++;
+          requestRecreate = true;
+        }
+
+        // Attempt to reconnect disconnected relays
+        const stillDisconnected = await reconnectDisconnectedRelays(pool, relayStatus.disconnectedRelays, addServerLog);
+
+        if (stillDisconnected > 0) {
+          nodeHealth.consecutiveConnectivityFailures++;
+          requestRecreate = true;
+        } else {
+          // Successfully reconnected
+          markConnectivityHealthy(now);
+        }
+
+        if (activityCheck.isIdle && nodeHealth.consecutiveConnectivityFailures > 0) {
+          nodeHealth.isConnected = false;
+        }
+      }
+
+      // Step 4: Handle idle state with keep-alive ping
+      if (activityCheck.isIdle) {
+        const pingResult = await performKeepAlivePing(node, addServerLog);
+
+        if (!pingResult.hadPingCapability) {
+          // No ping capability - check if we have connected relays
+          if (relayStatus.hasConnectedRelays) {
+            markConnectivityHealthy(now);
+            return true;
+          }
+
+          // No connected relays and no ping capability
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          requestRecreate = true;
+        } else if (pingResult.success) {
+          markConnectivityHealthy(now);
+          return true;
+        } else {
+          // Ping failed
+          nodeHealth.isConnected = false;
+          nodeHealth.consecutiveConnectivityFailures++;
+          requestRecreate = true;
+        }
+      }
+
+      // Everything looks good
+      if (!requestRecreate && nodeHealth.consecutiveConnectivityFailures === 0) {
+        markConnectivityHealthy(now);
+        return true;
+      }
     }
 
-    const { client } = nodeValidation;
-    const pool = client._pool || client.pool;
-
-    // Step 2: Check activity timeout
-    const activityCheck = checkActivityTimeout(now, addServerLog);
-    if (activityCheck.shouldRecreate && nodeRecreateCallback) {
+    if (requestRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+      addServerLog('info', 'Recreating node after sustained connectivity failures');
+      nodeHealth.consecutiveConnectivityFailures = 0;
       await nodeRecreateCallback();
       return false;
     }
 
-    // Step 3: Check and handle relay connections
-    const relayStatus = checkRelayConnectionStatus(pool, addServerLog);
-
-    if (relayStatus.disconnectedRelays.length > 0) {
-      // Check if it's been too long since real activity with relay issues
-      const timeSinceRealActivity = now.getTime() - nodeHealth.lastActivity.getTime();
-      const tooLongWithoutActivity = timeSinceRealActivity > 300000; // 5 minutes
-
-      if (tooLongWithoutActivity) {
-        addServerLog('warning', `No real activity for ${Math.round(timeSinceRealActivity / 60000)} minutes and relays disconnected`);
-        nodeHealth.consecutiveConnectivityFailures++;
-
-        if (nodeRecreateCallback) {
-          addServerLog('info', 'Recreating node due to prolonged inactivity with relay issues');
-          await nodeRecreateCallback();
-          return false;
-        }
-      }
-
-      // Attempt to reconnect disconnected relays
-      const stillDisconnected = await reconnectDisconnectedRelays(pool, relayStatus.disconnectedRelays, addServerLog);
-
-      if (stillDisconnected > 0) {
-        nodeHealth.consecutiveConnectivityFailures++;
-
-        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-          addServerLog('error', 'Unable to reconnect to relays after 3 attempts, recreating node');
-          await nodeRecreateCallback();
-          return false;
-        }
-
-        return false;
-      } else {
-        // Successfully reconnected
-        nodeHealth.consecutiveConnectivityFailures = 0;
-      }
-    }
-
-    // Step 4: Handle idle state with keep-alive ping
-    if (activityCheck.isIdle) {
-      const pingResult = await performKeepAlivePing(node, addServerLog);
-
-      if (!pingResult.hadPingCapability) {
-        // No ping capability - check if we have connected relays
-        if (relayStatus.hasConnectedRelays) {
-          nodeHealth.isConnected = true;
-          nodeHealth.consecutiveConnectivityFailures = 0;
-          return true;
-        }
-
-        // No connected relays and no ping capability
-        nodeHealth.isConnected = false;
-        nodeHealth.consecutiveConnectivityFailures++;
-
-        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-          addServerLog('info', 'No connected relays and no ping capability, recreating node');
-          await nodeRecreateCallback();
-        }
-        return false;
-      }
-
-      if (pingResult.success) {
-        nodeHealth.isConnected = true;
-        nodeHealth.consecutiveConnectivityFailures = 0;
-        return true;
-      } else {
-        // Ping failed
-        nodeHealth.isConnected = false;
-        nodeHealth.consecutiveConnectivityFailures++;
-
-        if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
-          addServerLog('info', 'Persistent ping failures, recreating node');
-          await nodeRecreateCallback();
-        }
-        return false;
-      }
-    }
-
-    // Everything looks good
-    nodeHealth.isConnected = true;
-    nodeHealth.consecutiveConnectivityFailures = 0;
-    return true;
+    return false;
 
   } catch (error) {
     addServerLog('error', 'Connectivity check error', error);
     nodeHealth.consecutiveConnectivityFailures++;
+    requestRecreate = true;
 
-    if (nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+    if (requestRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
       addServerLog('info', 'Connectivity errors exceeded threshold, recreating node');
+      nodeHealth.consecutiveConnectivityFailures = 0;
       await nodeRecreateCallback();
     }
     return false;
@@ -1154,7 +1169,7 @@ function startConnectivityMonitoring(
         }
       } else if (isConnected && nodeHealth.consecutiveConnectivityFailures === 0) {
         // Log every 10 successful checks (10 minutes)
-        const timeSinceStart = Date.now() - nodeHealth.lastConnectivityCheck.getTime();
+        const timeSinceStart = Date.now() - nodeHealth.connectivityMonitoringStart;
         const checkCount = Math.floor(timeSinceStart / CONNECTIVITY_CHECK_INTERVAL);
         if (checkCount % 10 === 0 && checkCount > 0) {
           addServerLog('debug', `Connectivity maintained for ${Math.round(timeSinceStart / 60000)} minutes`);
@@ -1209,6 +1224,7 @@ function startConnectivityMonitoring(
     nodeHealth = {
       lastActivity: new Date(),
       lastConnectivityCheck: new Date(),
+      connectivityMonitoringStart: Date.now(),
       isConnected: true,
       consecutiveConnectivityFailures: 0
     };
@@ -1707,6 +1723,7 @@ export function setupNodeEventListeners(
 
   // Catch-all for any other events - but exclude ping events since they're handled by message handler
   node.on('*', (event: any) => {
+    const isStringEvent = typeof event === 'string';
     // Only log events that aren't already handled above, and exclude ping events to avoid duplicates
     if (event !== 'message' && 
         event !== 'closed' && 
@@ -1717,11 +1734,13 @@ export function setupNodeEventListeners(
         event !== 'disconnect' &&
         event !== 'reconnect' &&
         event !== 'reconnecting' &&
-        !event.startsWith('/ping/') &&
-        !event.startsWith('/sign/') &&
-        !event.startsWith('/ecdh/')) {
+        (!isStringEvent || (
+          !event.startsWith('/ping/') &&
+          !event.startsWith('/sign/') &&
+          !event.startsWith('/ecdh/')
+        ))) {
       updateNodeActivity(addServerLog);
-      addServerLog('bifrost', `Bifrost event: ${event}`);
+      addServerLog('bifrost', `Bifrost event: ${String(event)}`);
     }
   });
 
@@ -2163,32 +2182,55 @@ export async function createNodeWithCredentials(
           autoReconnect: true        // Enable auto-reconnection
         };
 
-        // Normalize nostr-tools subscribeMany inputs so single-filter arrays are treated as plain objects.
-        try {
-          const poolProto: any = SimplePool?.prototype;
-          if (poolProto && !poolProto.__iglooFilterNormalizePatched) {
-            const originalSubscribeMany = poolProto.subscribeMany;
-            if (typeof originalSubscribeMany === 'function') {
-              poolProto.subscribeMany = function normalizedSubscribeMany(this: any, relays: any, filters: any, params: any) {
+        const result = await withSimplePoolSubscribeManyLock(async () => {
+          let restoreSubscribeMany: (() => void) | null = null;
+          try {
+            const poolProtoUnknown: unknown = SimplePool?.prototype;
+            const poolProto = poolProtoUnknown && typeof poolProtoUnknown === 'object'
+              ? poolProtoUnknown as { subscribeMany?: unknown }
+              : null;
+            const originalSubscribeMany: unknown = poolProto?.subscribeMany;
+            if (poolProto && typeof originalSubscribeMany === 'function') {
+              const originalSubscribeManyFn = originalSubscribeMany as (
+                this: unknown,
+                relays: unknown,
+                filters: unknown,
+                params: unknown
+              ) => unknown;
+              // Scope filter normalization to this node-creation attempt only.
+              poolProto.subscribeMany = function normalizedSubscribeMany(
+                this: unknown,
+                relays: unknown,
+                filters: unknown,
+                params: unknown
+              ) {
                 const normalizedFilters = Array.isArray(filters) && filters.length === 1 && filters[0] && typeof filters[0] === 'object' && !Array.isArray(filters[0])
                   ? filters[0]
                   : filters;
-                return originalSubscribeMany.call(this, relays, normalizedFilters, params);
+                return originalSubscribeManyFn.call(this, relays, normalizedFilters, params);
               };
-              poolProto.__iglooFilterNormalizePatched = true;
+              restoreSubscribeMany = () => {
+                poolProto.subscribeMany = originalSubscribeMany;
+              };
+            }
+          } catch (patchError) {
+            if (addServerLog) {
+              addServerLog('warn', 'Failed to prepare SimplePool filter normalization', {
+                error: patchError instanceof Error ? patchError.message : String(patchError)
+              });
             }
           }
-        } catch (patchError) {
-          if (addServerLog) {
-            addServerLog('warn', 'Failed to normalize SimplePool filters', {
-              error: patchError instanceof Error ? patchError.message : String(patchError)
-            });
-          }
-        }
 
-        const result = await createConnectedNode(enhancedConfig, {
-          enableLogging: false,      // Disable internal logging to avoid duplication
-          logLevel: 'error'          // Only log errors from igloo-core
+          try {
+            return await createConnectedNode(enhancedConfig, {
+              enableLogging: false,      // Disable internal logging to avoid duplication
+              logLevel: 'error'          // Only log errors from igloo-core
+            });
+          } finally {
+            try {
+              restoreSubscribeMany?.();
+            } catch {}
+          }
         });
         
         if (result.node) {
@@ -2415,6 +2457,7 @@ export function resetHealthMonitoring() {
   nodeHealth = {
     lastActivity: new Date(),
     lastConnectivityCheck: new Date(),
+    connectivityMonitoringStart: Date.now(),
     isConnected: true,
     consecutiveConnectivityFailures: 0
   };

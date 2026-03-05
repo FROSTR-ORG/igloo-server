@@ -29,6 +29,7 @@ interface ParsedRequest {
   eventKind: number | null
   eventTemplate: Record<string, any> | null
   contentPreview: string | null
+  contentTruncated: boolean
 }
 
 const DEFAULT_POLICY: PermissionPolicy = { methods: {}, kinds: {} }
@@ -41,6 +42,24 @@ const truncate = (hex?: string | null, size = 8) => {
 const formatTimestamp = (value: string) => {
   const date = new Date(value)
   return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleString()
+}
+
+const isPreviewCodePointAllowed = (codePoint: number): boolean => {
+  const isC0Control = codePoint <= 0x1f
+  const isDeleteOrC1Control = codePoint >= 0x7f && codePoint <= 0x9f
+  const isBidiIsolate = codePoint >= 0x202a && codePoint <= 0x202e
+  const isDirectionalIsolate = codePoint >= 0x2066 && codePoint <= 0x2069
+  return !(isC0Control || isDeleteOrC1Control || isBidiIsolate || isDirectionalIsolate)
+}
+
+const sanitizePreview = (value: string): string => {
+  const filtered = Array.from(value).filter((char) => {
+    const codePoint = char.codePointAt(0)
+    return codePoint !== undefined && isPreviewCodePointAllowed(codePoint)
+  }).join('')
+  return filtered
+    .replace(/\s+/g, ' ')
+    .trim()
 }
 
 const parseRequest = (record: Nip46RequestApi): ParsedRequest => {
@@ -82,9 +101,11 @@ const parseRequest = (record: Nip46RequestApi): ParsedRequest => {
     }
   }
 
-  const contentPreview = eventTemplate && typeof eventTemplate.content === 'string'
-    ? eventTemplate.content.trim().slice(0, 160)
+  const sanitizedContent = eventTemplate && typeof eventTemplate.content === 'string'
+    ? sanitizePreview(eventTemplate.content)
     : null
+  const contentPreview = sanitizedContent ? sanitizedContent.slice(0, 160) : null
+  const contentTruncated = !!sanitizedContent && sanitizedContent.length > 160
 
   return {
     record,
@@ -96,7 +117,8 @@ const parseRequest = (record: Nip46RequestApi): ParsedRequest => {
     sessionUrl,
     eventKind,
     eventTemplate,
-    contentPreview
+    contentPreview,
+    contentTruncated
   }
 }
 
@@ -197,7 +219,7 @@ export function Requests({
       </div>
 
       {parsedRequests.map(entry => {
-        const { record, method, sessionName, sessionImage, sessionUrl, eventKind, eventTemplate, params, contentPreview } = entry
+        const { record, method, sessionName, sessionImage, sessionUrl, eventKind, eventTemplate, params, contentPreview, contentTruncated } = entry
         const policy = policies[record.session_pubkey] ?? DEFAULT_POLICY
         const methodAllowed = policy.methods?.[method] === true
         const wildcardKind = policy.kinds?.['*'] === true
@@ -276,7 +298,7 @@ export function Requests({
                 </div>
 
                 {contentPreview ? (
-                  <div className="text-xs italic text-gray-300">{contentPreview}{eventTemplate?.content && eventTemplate.content.length > 160 ? '…' : ''}</div>
+                  <div className="text-xs italic text-gray-300">{contentPreview}{contentTruncated ? '…' : ''}</div>
                 ) : null}
               </div>
 

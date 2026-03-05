@@ -40,6 +40,7 @@ interface UpdateResponse {
 const UPDATE_CHECK_TIMEOUT_MS = parseInt(process.env['UPDATE_CHECK_TIMEOUT_MS'] ?? '5000', 10) || 5000;
 const UPDATE_CHECK_TTL_MS = parseInt(process.env['UPDATE_CHECK_TTL_MS'] ?? '21600000', 10) || 21_600_000; // 6 hours
 const UPDATE_CHECK_FAILURE_TTL_MS = parseInt(process.env['UPDATE_CHECK_FAILURE_TTL_MS'] ?? '900000', 10) || 900_000; // 15 minutes
+const ALLOW_PRERELEASE_UPDATES = parseBoolean(process.env['ALLOW_PRERELEASE_UPDATES']);
 
 const GITHUB_OWNER = 'FROSTR-ORG';
 const GITHUB_REPO = 'igloo-server';
@@ -154,7 +155,7 @@ async function fetchLatestVersion(): Promise<UpdateResult> {
   if (releaseResponse.ok) {
     const payload = await releaseResponse.json() as { tag_name?: string; html_url?: string };
     const tagName = typeof payload.tag_name === 'string' ? payload.tag_name : '';
-    const parsed = parseVersion(tagName, true);
+    const parsed = parseVersion(tagName, ALLOW_PRERELEASE_UPDATES);
     if (parsed) {
       return {
         latestVersion: parsed.normalized,
@@ -175,7 +176,7 @@ async function fetchLatestVersion(): Promise<UpdateResult> {
 
   for (const tag of tags) {
     if (!tag?.name) continue;
-    const parsed = parseVersion(tag.name, false);
+    const parsed = parseVersion(tag.name, ALLOW_PRERELEASE_UPDATES);
     if (!parsed) continue;
     if (!latest || compareVersions(parsed, latest) > 0) {
       latest = parsed;

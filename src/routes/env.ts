@@ -21,7 +21,7 @@ import { validateShare, validateGroup } from '@frostr/igloo-core';
 import { AUTH_CONFIG, checkRateLimit } from './auth.js';
 import { validateAdminSecret } from './onboarding.js';
 import { getUserCredentials, getUserById } from '../db/database.js';
-import { timingSafeEqual } from 'crypto';
+import { createHash, timingSafeEqual } from 'crypto';
 
 // Wrapper function to use shared node creation with env variables
 async function createAndConnectServerNode(env: any, context: PrivilegedRouteContext): Promise<void> {
@@ -92,9 +92,17 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   // but we keep the broader classification for clarity.
   const isWrite = req.method === 'POST' || req.method === 'PUT' || req.method === 'DELETE';
   // Resolve authenticated DB user id (database mode only)
-  const authenticatedNumericUserId = (!HEADLESS && auth?.authenticated && (
-    typeof auth.userId === 'number' || (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId))
-  )) ? BigInt(auth!.userId as any) : null;
+  const authenticatedNumericUserId = (() => {
+    if (HEADLESS || !auth?.authenticated) return null;
+    if (typeof auth.userId === 'number') {
+      if (!Number.isInteger(auth.userId) || auth.userId <= 0) return null;
+      return BigInt(auth.userId);
+    }
+    if (typeof auth.userId === 'string' && /^[1-9]\d*$/.test(auth.userId)) {
+      return BigInt(auth.userId);
+    }
+    return null;
+  })();
   const isRoleAdmin = await (async () => {
     try {
       if (authenticatedNumericUserId === null) return false;
@@ -121,10 +129,13 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
     if (!AUTH_CONFIG.API_KEY) return false;
     const provided = extractApiKeyFromHeaders(r);
     if (!provided) return false;
-    const a = Buffer.from(provided);
-    const b = Buffer.from(AUTH_CONFIG.API_KEY);
-    if (a.length !== b.length) return false;
-    try { return timingSafeEqual(a, b); } catch { return false; }
+    try {
+      const a = createHash('sha256').update(provided).digest();
+      const b = createHash('sha256').update(AUTH_CONFIG.API_KEY).digest();
+      return timingSafeEqual(a, b);
+    } catch {
+      return false;
+    }
   };
 
   const hasValidHeadlessBasic = (r: Request): boolean => {
@@ -147,6 +158,18 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
   const hasHeadlessWriteAuthorization = (r: Request): boolean => (
     hasValidHeadlessApiKey(r) || hasValidHeadlessBasic(r)
   );
+
+  const extractNonEmptyAdminSecret = (r: Request): string | undefined => {
+    const headerSecret = r.headers.get('X-Admin-Secret')?.trim();
+    if (headerSecret && headerSecret.length > 0) return headerSecret;
+
+    const authHeader = r.headers.get('Authorization');
+    if (!authHeader) return undefined;
+    const bearerMatch = authHeader.match(/^Bearer\s+(.+)$/i);
+    if (!bearerMatch) return undefined;
+    const bearerToken = bearerMatch[1]?.trim();
+    return bearerToken && bearerToken.length > 0 ? bearerToken : undefined;
+  };
 
   const isHeadlessReadAuthorized = (r: Request, a?: RequestAuth | null): boolean => {
     // If global auth is enabled and a session is present, allow; otherwise require API key or Basic.
@@ -276,24 +299,41 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             const env = await readEnvFile();
             const { validKeys, invalidKeys: rejectedKeys } = validateEnvKeys(Object.keys(body));
 
-            if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
-              const relayValidation = validateRelayUrls(body.RELAYS);
-              if (!relayValidation.valid) {
-                return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
-              }
-            }
-
             // DB mode privilege gate for env writes (no legacy fallback):
             // - allow with valid ADMIN_SECRET (header: X-Admin-Secret or Bearer token), or
             // - allow when the authenticated DB user has role=admin.
             // validateAdminSecret() returns false when the header is missing; there is no bypass.
-            const adminSecret = req.headers.get('X-Admin-Secret') ?? req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+            const adminSecret = extractNonEmptyAdminSecret(req);
             const isAdminSecret = await validateAdminSecret(adminSecret);
             if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
                 { error: 'Admin privileges required for environment modifications' },
                 { status: 403, headers }
               );
+            }
+
+            if (validKeys.includes('RELAYS') && body.RELAYS !== undefined) {
+              const relayValidation = validateRelayUrls(body.RELAYS);
+              if (!relayValidation.valid) {
+                return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
+              }
+              if (!relayValidation.urls || relayValidation.urls.length === 0) {
+                return Response.json({ success: false, error: 'At least one relay URL is required' }, { status: 400, headers });
+              }
+            }
+
+            if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED !== undefined) {
+              const groupValidation = validateGroup(body.GROUP_CRED);
+              if (!groupValidation.isValid) {
+                return Response.json({ success: false, error: 'Invalid GROUP_CRED' }, { status: 400, headers });
+              }
+            }
+
+            if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED !== undefined) {
+              const shareValidation = validateShare(body.SHARE_CRED);
+              if (!shareValidation.isValid) {
+                return Response.json({ success: false, error: 'Invalid SHARE_CRED' }, { status: 400, headers });
+              }
             }
 
             for (const key of validKeys) {
@@ -322,14 +362,6 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
           }
 
-          // Headless writes must be authorized by API key or Basic (sessions are not sufficient)
-          if (HEADLESS && !hasHeadlessWriteAuthorization(req)) {
-            return Response.json(
-              { error: 'Authentication required' },
-              { status: 401, headers }
-            );
-          }
-
           let body;
           try {
             body = await parseJsonRequestBody(req);
@@ -348,6 +380,23 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             if (!relayValidation.valid) {
               return Response.json({ success: false, error: relayValidation.error }, { status: 400, headers });
             }
+            if (!relayValidation.urls || relayValidation.urls.length === 0) {
+              return Response.json({ success: false, error: 'At least one relay URL is required' }, { status: 400, headers });
+            }
+          }
+
+          if (validKeys.includes('GROUP_CRED') && body.GROUP_CRED !== undefined) {
+            const groupValidation = validateGroup(body.GROUP_CRED);
+            if (!groupValidation.isValid) {
+              return Response.json({ success: false, error: 'Invalid GROUP_CRED' }, { status: 400, headers });
+            }
+          }
+
+          if (validKeys.includes('SHARE_CRED') && body.SHARE_CRED !== undefined) {
+            const shareValidation = validateShare(body.SHARE_CRED);
+            if (!shareValidation.isValid) {
+              return Response.json({ success: false, error: 'Invalid SHARE_CRED' }, { status: 400, headers });
+            }
           }
 
           for (const key of validKeys) {
@@ -361,92 +410,103 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           if (updatingCredentials) {
             // Set the timestamp explicitly here to avoid relying on downstream helpers
             // for correctness, then perform a single write.
-            (env as any).CREDENTIALS_SAVED_AT = new Date().toISOString();
+            env.CREDENTIALS_SAVED_AT = new Date().toISOString();
           }
+
           const writeOk = await writeEnvFile(env);
+          if (!writeOk) {
+            return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+          }
 
-          if (writeOk) {
-            try {
-              if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
-                process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
-              }
-              if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
-                process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
-              }
-              if (updatingRelays) {
-                const relaysVal = (env as any).RELAYS;
-                if (Array.isArray(relaysVal)) {
-                  process.env.RELAYS = relaysVal.join(',');
-                } else if (typeof relaysVal === 'string') {
-                  process.env.RELAYS = relaysVal;
-                }
-              }
-            } catch {}
-
-            if (updatingCredentials || updatingRelays) {
-              try {
-                // Make restart intent explicit for observability and reviews
-                context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
-                  updatingCredentials,
-                  updatingRelays
-                });
-
-                const echoPayload = (() => {
-                  if (!updatingCredentials) return null;
-                  const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
-                  const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
-                  if (!groupCred || !shareCred) return null;
-                  const relaysArray = normalizeRelayListForEcho(env.RELAYS);
-                  const relaysEnvValue = Array.isArray(env.RELAYS)
-                    ? env.RELAYS.join(',')
-                    : typeof env.RELAYS === 'string'
-                      ? env.RELAYS
-                      : undefined;
-                  return {
-                    groupCred,
-                    shareCred,
-                    relaysArray,
-                    relaysEnvValue,
-                    contextLabel: HEADLESS ? 'headless env credential update' : 'env credential update'
-                  };
-                })();
-
-                // Serialize node restart under the global node lock. createAndConnectServerNode()
-                // calls context.updateNode(newNode), which performs prior-node cleanup and
-                // listener re-wiring atomically to avoid resource leaks or races.
-                await executeUnderNodeLock(async () => {
-                  await createAndConnectServerNode(env, context);
-                }, context);
-
-                if (echoPayload) {
-                  const echoOptions = {
-                    relays: echoPayload.relaysArray,
-                    relaysEnv: echoPayload.relaysEnvValue,
-                    addServerLog: context.addServerLog,
-                    contextLabel: echoPayload.contextLabel,
-                    timeoutMs: 30000
-                  } as const;
-                  sendSelfEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
-                    try { context.addServerLog('warn', 'Self-echo failed after env credential update', error); } catch {}
-                  });
-                  broadcastShareEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
-                    try { context.addServerLog('warn', 'Credential echo broadcast failed after env credential update', error); } catch {}
-                  });
-                }
-              } catch (error) {
-                context.addServerLog('error', 'Error recreating Bifrost node', error);
-                throw (error instanceof Error) ? error : new Error(String(error));
+          try {
+            if (validKeys.includes('FROSTR_SIGN_TIMEOUT') && typeof env.FROSTR_SIGN_TIMEOUT === 'string') {
+              process.env.FROSTR_SIGN_TIMEOUT = env.FROSTR_SIGN_TIMEOUT;
+            }
+            if (validKeys.includes('ALLOWED_ORIGINS') && typeof env.ALLOWED_ORIGINS === 'string') {
+              process.env.ALLOWED_ORIGINS = env.ALLOWED_ORIGINS;
+            }
+            if (validKeys.includes('GROUP_CRED')) {
+              if (typeof env.GROUP_CRED === 'string') process.env.GROUP_CRED = env.GROUP_CRED;
+              else delete process.env.GROUP_CRED;
+            }
+            if (validKeys.includes('SHARE_CRED')) {
+              if (typeof env.SHARE_CRED === 'string') process.env.SHARE_CRED = env.SHARE_CRED;
+              else delete process.env.SHARE_CRED;
+            }
+            if (updatingRelays) {
+              const relaysVal = (env as any).RELAYS;
+              if (Array.isArray(relaysVal)) {
+                process.env.RELAYS = relaysVal.join(',');
+              } else if (typeof relaysVal === 'string') {
+                process.env.RELAYS = relaysVal;
+              } else {
+                delete process.env.RELAYS;
               }
             }
+          } catch {}
 
-            const responseMessage = rejectedKeys.length > 0
-              ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
-              : 'Environment variables updated';
+          if (updatingCredentials || updatingRelays) {
+            try {
+              // Make restart intent explicit for observability and reviews
+              context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
+                updatingCredentials,
+                updatingRelays
+              });
 
-            return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
+              // Serialize node restart under the global node lock.
+              // createAndConnectServerNode() updates the active node from the new env.
+              await executeUnderNodeLock(async () => {
+                await createAndConnectServerNode(env, context);
+              }, context);
+            } catch (error) {
+              context.addServerLog('error', 'Error recreating Bifrost node', error);
+              return Response.json({ success: false, message: 'Failed to recreate Bifrost node' }, { status: 500, headers });
+            }
           }
 
-          return Response.json({ success: false, message: 'Failed to update .env file' }, { status: 500, headers });
+          if (updatingCredentials || updatingRelays) {
+            const echoPayload = (() => {
+              if (!updatingCredentials) return null;
+              const groupCred = typeof env.GROUP_CRED === 'string' ? env.GROUP_CRED : null;
+              const shareCred = typeof env.SHARE_CRED === 'string' ? env.SHARE_CRED : null;
+              if (!groupCred || !shareCred) return null;
+              const relaysArray = normalizeRelayListForEcho(env.RELAYS);
+              const relaysEnvValue = Array.isArray(env.RELAYS)
+                ? env.RELAYS.join(',')
+                : typeof env.RELAYS === 'string'
+                  ? env.RELAYS
+                  : undefined;
+              return {
+                groupCred,
+                shareCred,
+                relaysArray,
+                relaysEnvValue,
+                contextLabel: HEADLESS ? 'headless env credential update' : 'env credential update'
+              };
+            })();
+
+            if (echoPayload) {
+              const echoOptions = {
+                relays: echoPayload.relaysArray,
+                relaysEnv: echoPayload.relaysEnvValue,
+                addServerLog: context.addServerLog,
+                contextLabel: echoPayload.contextLabel,
+                timeoutMs: 30000
+              } as const;
+              sendSelfEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Self-echo failed after env credential update', error); } catch {}
+              });
+              broadcastShareEcho(echoPayload.groupCred, echoPayload.shareCred, echoOptions).catch((error) => {
+                try { context.addServerLog('warn', 'Credential echo broadcast failed after env credential update', error); } catch {}
+              });
+            }
+          }
+
+          const responseMessage = rejectedKeys.length > 0
+            ? `Environment variables updated. Rejected unauthorized keys: ${rejectedKeys.join(', ')}`
+            : 'Environment variables updated';
+
+          return Response.json({ success: true, message: responseMessage, rejectedKeys: rejectedKeys.length > 0 ? rejectedKeys : undefined }, { headers });
         }
         break;
 
@@ -552,6 +612,10 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
 
           if (await writeEnvFileWithTimestamp(env)) {
             try {
+              process.env.SHARE_CRED = shareCredential;
+              process.env.GROUP_CRED = groupCredential;
+            } catch {}
+            try {
               // Serialize node restart under the global node lock; updateNode inside
               // createAndConnectServerNode() handles teardown of any existing node.
               await executeUnderNodeLock(async () => {
@@ -629,8 +693,7 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             );
           }
           if (!HEADLESS) {
-            const adminSecret = req.headers.get('X-Admin-Secret') ??
-              req.headers.get('Authorization')?.replace(/^Bearer\s+/i, '');
+            const adminSecret = extractNonEmptyAdminSecret(req);
             const isAdminSecret = await validateAdminSecret(adminSecret);
             if (!isAdminSecret && !isRoleAdmin) {
               return Response.json(
@@ -670,6 +733,15 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
           }
           
           if (await writeEnvFile(env)) {
+            try {
+              for (const key of validKeys) {
+                if (key === 'GROUP_CRED') delete process.env.GROUP_CRED;
+                if (key === 'SHARE_CRED') delete process.env.SHARE_CRED;
+                if (key === 'RELAYS') delete process.env.RELAYS;
+                if (key === 'ALLOWED_ORIGINS') delete process.env.ALLOWED_ORIGINS;
+                if (key === 'FROSTR_SIGN_TIMEOUT') delete process.env.FROSTR_SIGN_TIMEOUT;
+              }
+            } catch {}
             // If credentials were deleted, clean up the node
             if (deletingCredentials) {
               try {

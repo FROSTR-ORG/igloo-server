@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useId } from 'react';
 import { Button } from './button';
 import { IconButton } from './icon-button';
 import { Badge, type BadgeProps } from './badge';
@@ -150,8 +150,8 @@ const derivePolicyState = (
 };
 
 const hasCustomPolicy = (policy: PeerPolicy): boolean => {
-  const sendOverride = typeof policy.allowSend === 'boolean' && policy.allowSend === false;
-  const receiveOverride = typeof policy.allowReceive === 'boolean' && policy.allowReceive === false;
+  const sendOverride = typeof policy.allowSend === 'boolean';
+  const receiveOverride = typeof policy.allowReceive === 'boolean';
   return sendOverride || receiveOverride;
 };
 
@@ -166,6 +166,7 @@ const PeerList: React.FC<PeerListProps> = ({
   defaultExpanded = false
 }) => {
   const [isExpanded, setIsExpanded] = useState(defaultExpanded);
+  const [shouldRenderContent, setShouldRenderContent] = useState(defaultExpanded);
   const [peers, setPeers] = useState<PeerStatus[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -177,12 +178,34 @@ const PeerList: React.FC<PeerListProps> = ({
   const [policySavingPeers, setPolicySavingPeers] = useState<Set<string>>(new Set());
   const [policyPeerErrors, setPolicyPeerErrors] = useState<Map<string, string>>(new Map());
   const hasUserToggledRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelId = useId();
 
   useEffect(() => {
     if (defaultExpanded && !hasUserToggledRef.current) {
       setIsExpanded(true);
     }
   }, [defaultExpanded]);
+
+  useEffect(() => {
+    if (isExpanded) {
+      setShouldRenderContent(true);
+    }
+  }, [isExpanded]);
+
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!panel) return;
+    if (isExpanded) panel.removeAttribute('inert');
+    else panel.setAttribute('inert', '');
+  }, [isExpanded]);
+
+  const handleCollapseTransitionEnd = useCallback((event: React.TransitionEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget) return;
+    if (!isExpanded) {
+      setShouldRenderContent(false);
+    }
+  }, [isExpanded]);
 
   const setPolicyBusyState = useCallback((key: string, busy: boolean) => {
     setPolicySavingPeers(prev => {
@@ -307,7 +330,7 @@ const PeerList: React.FC<PeerListProps> = ({
         // Perform initial ping sweep
         setIsInitialPingSweep(true);
         try {
-          await fetch('/api/peers/ping', {
+          const pingResponse = await fetch('/api/peers/ping', {
             method: 'POST',
             headers: { 
               'Content-Type': 'application/json',
@@ -315,9 +338,13 @@ const PeerList: React.FC<PeerListProps> = ({
             },
             body: JSON.stringify({ target: 'all' })
           });
-          
-          // Refresh peer list after ping sweep
-          await fetchPeers();
+          if (!pingResponse.ok) {
+            const detail = await pingResponse.text().catch(() => '(unreadable)');
+            console.debug(`[PeerList] Initial ping sweep failed (${pingResponse.status}): ${detail}`);
+          } else {
+            // Refresh peer list after ping sweep
+            await fetchPeers();
+          }
         } catch (pingError) {
           console.debug('Initial ping sweep failed:', pingError);
           // Don't set error state for ping failures
@@ -344,40 +371,50 @@ const PeerList: React.FC<PeerListProps> = ({
     return () => {
       isActive = false;
     };
-  }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers]);
+  }, [isSignerRunning, groupCredential, shareCredential, disabled, fetchSelfPubkey, fetchPeers, authHeaders]);
 
   // Unified handler for peer status and ping updates
-  const handlePeerUpdate = (event: CustomEvent) => {
+  const handlePeerUpdate = useCallback((event: CustomEvent) => {
     const { pubkey, status } = event.detail;
     setPeers(prev => {
       const updated = prev.map(peer => {
         // Try exact match first
         if (peer.pubkey === pubkey) {
+          const hasLatency = status.latency !== undefined && status.latency !== null;
+          const parsedLatency = Number(status.latency);
+          const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : peer.latency;
+          const parsedLastSeen = parseDate(status.lastSeen);
+          const parsedLastPingAttempt = parseDate(status.lastPingAttempt);
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
-            latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
+            lastSeen: parsedLastSeen ?? peer.lastSeen,
+            latency,
+            lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
           } as PeerStatus;
         }
-        // Try match without 02 prefix
-        const peerWithout02 = peer.pubkey.startsWith('02') ? peer.pubkey.slice(2) : peer.pubkey;
-        const pingWithout02 = pubkey.startsWith('02') ? pubkey.slice(2) : pubkey;
-        if (peerWithout02 === pingWithout02) {
+        // Try match with compressed-prefix normalization (02/03)
+        const peerNormalized = toPolicyKey(peer.pubkey);
+        const pingNormalized = toPolicyKey(pubkey);
+        if (peerNormalized !== '' && peerNormalized === pingNormalized) {
+          const hasLatency = status.latency !== undefined && status.latency !== null;
+          const parsedLatency = Number(status.latency);
+          const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : peer.latency;
+          const parsedLastSeen = parseDate(status.lastSeen);
+          const parsedLastPingAttempt = parseDate(status.lastPingAttempt);
           return {
             ...peer,
             online: Boolean(status.online),
-            lastSeen: parseDate(status.lastSeen) ?? peer.lastSeen,
-            latency: status.latency ? Number(status.latency) : peer.latency,
-            lastPingAttempt: parseDate(status.lastPingAttempt) ?? peer.lastPingAttempt
+            lastSeen: parsedLastSeen ?? peer.lastSeen,
+            latency,
+            lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
           } as PeerStatus;
         }
         return peer;
       });
       return updated;
     });
-  };
+  }, []);
 
   // Listen for peer status and ping updates via custom events from the main SSE connection
   useEffect(() => {
@@ -390,7 +427,7 @@ const PeerList: React.FC<PeerListProps> = ({
       window.removeEventListener('peerStatusUpdate', handlePeerUpdate as EventListener);
       window.removeEventListener('peerPingUpdate', handlePeerUpdate as EventListener);
     };
-  }, [isSignerRunning]);
+  }, [isSignerRunning, handlePeerUpdate]);
 
   // Ping individual peer
   const handlePingPeer = useCallback(async (peerPubkey: string) => {
@@ -412,15 +449,20 @@ const PeerList: React.FC<PeerListProps> = ({
       const result = await response.json();
       
       if (result.status) {
+        const hasLatency = result.status.latency !== undefined && result.status.latency !== null;
+        const parsedLatency = Number(result.status.latency);
+        const latency = hasLatency && Number.isFinite(parsedLatency) ? parsedLatency : null;
+        const parsedLastSeen = parseDate(result.status.lastSeen);
+        const parsedLastPingAttempt = parseDate(result.status.lastPingAttempt);
         // Update peer status immediately
         setPeers(prev => prev.map(peer => 
           peer.pubkey === peerPubkey 
             ? {
                 ...peer,
                 online: Boolean(result.status.online),
-                lastSeen: parseDate(result.status.lastSeen) ?? peer.lastSeen,
-                latency: result.status.latency ? Number(result.status.latency) : peer.latency,
-                lastPingAttempt: parseDate(result.status.lastPingAttempt) ?? peer.lastPingAttempt
+                lastSeen: parsedLastSeen ?? peer.lastSeen,
+                latency: latency ?? peer.latency,
+                lastPingAttempt: parsedLastPingAttempt ?? peer.lastPingAttempt
               } as PeerStatus
             : peer
         ));
@@ -434,7 +476,7 @@ const PeerList: React.FC<PeerListProps> = ({
         return newSet;
       });
     }
-  }, [isSignerRunning]);
+  }, [authHeaders, isSignerRunning]);
 
   const updatePeerPolicy = useCallback(async (peer: PeerStatus, changes: { allowSend?: boolean; allowReceive?: boolean }) => {
     if (!isSignerRunning || disabled) {
@@ -533,15 +575,18 @@ const PeerList: React.FC<PeerListProps> = ({
         },
         body: JSON.stringify({ target: 'all' })
       });
-      
-      const result = await response.json();
-      
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '(unreadable)');
+        console.warn(`[PeerList] Ping all failed (${response.status}): ${detail}`);
+        return;
+      }
+
       // Refresh peer list after pinging all
       await fetchPeers();
     } catch (error) {
       console.warn('[PeerList] Ping all failed:', error);
     }
-  }, [isSignerRunning, peers.length, fetchPeers]);
+  }, [authHeaders, isSignerRunning, peers.length, fetchPeers]);
 
   // Enhanced refresh that includes pinging
   const handleRefresh = useCallback(async () => {
@@ -597,6 +642,8 @@ const PeerList: React.FC<PeerListProps> = ({
         className="flex flex-col sm:flex-row sm:items-center justify-between bg-gray-800/50 p-2.5 rounded cursor-pointer hover:bg-gray-800/70 transition-colors gap-2 sm:gap-0"
         onClick={handleToggle}
         role="button"
+        aria-expanded={isExpanded}
+        aria-controls={panelId}
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
@@ -611,11 +658,17 @@ const PeerList: React.FC<PeerListProps> = ({
             <ChevronDown className="h-4 w-4 text-blue-400 flex-shrink-0" />
           }
           <span className="text-blue-200 text-sm font-medium select-none">Peer List</span>
-          <div onClick={e => e.stopPropagation()}>
+          <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
             <Tooltip
               position="right"
               width="w-64"
-              trigger={<HelpCircle size={16} className="text-blue-400 cursor-pointer" />}
+              focusable
+              ariaLabel="Peer list help"
+              trigger={(
+                <span className="inline-flex items-center text-blue-400 cursor-pointer" aria-hidden="true">
+                  <HelpCircle size={16} />
+                </span>
+              )}
               content={
                 <p>Shows the signing peers in your FROSTR group with online/offline status and ping latency. Use the refresh button to ping all peers and update their status.</p>
               }
@@ -654,18 +707,25 @@ const PeerList: React.FC<PeerListProps> = ({
             )}
           </div>
         </div>
-        <div onClick={e => e.stopPropagation()} className="flex-shrink-0">
+        <div onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()} className="flex-shrink-0">
           {actions}
         </div>
       </div>
 
       {/* Collapsible Content */}
       <div 
+        ref={panelRef}
+        id={panelId}
+        role="region"
+        aria-label="Peer list panel"
         className={cn(
           "transition-all duration-300 ease-in-out overflow-hidden",
           isExpanded ? "max-h-[400px] opacity-100" : "max-h-0 opacity-0"
         )}
+        aria-hidden={!isExpanded}
+        onTransitionEnd={handleCollapseTransitionEnd}
       >
+        {shouldRenderContent && (
         <div className="bg-gray-900/30 rounded border border-gray-800/30 p-4 space-y-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
@@ -770,10 +830,7 @@ const PeerList: React.FC<PeerListProps> = ({
                             </div>
                             <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-gray-400">
                               <span className="whitespace-nowrap">Policy: out {outboundPolicy.statusLabel}, in {inboundPolicy.statusLabel}</span>
-                              <Badge
-                                variant={policyBadgeVariant as any}
-                                className="text-xs px-2 py-0.5 whitespace-nowrap"
-                              >
+                              <Badge variant={policyBadgeVariant} className="text-xs px-2 py-0.5 whitespace-nowrap">
                                 {policyBadgeLabel}
                               </Badge>
                             </div>
@@ -816,6 +873,7 @@ const PeerList: React.FC<PeerListProps> = ({
                                     width="w-72"
                                     triggerClassName="cursor-help"
                                     focusable
+                                    ariaLabel="Policy controls help"
                                     trigger={<HelpCircle className="h-3.5 w-3.5 text-blue-300" />}
                                     content={
                                       <div className="space-y-1 text-blue-100">
@@ -896,6 +954,7 @@ const PeerList: React.FC<PeerListProps> = ({
             </div>
           )}
         </div>
+        )}
       </div>
     </div>
   );

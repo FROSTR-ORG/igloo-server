@@ -97,6 +97,35 @@ function isTimeoutReason(reason: string): boolean {
   return value.includes('timeout');
 }
 
+async function readTextBodyWithLimit(req: Request, maxBytes: number): Promise<string | null> {
+  if (!req.body) return '';
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(chunk);
+  }
+
+  const bodyBytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(bodyBytes);
+}
+
 export async function handleSignRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {
   if (url.pathname !== '/api/sign') return null;
 
@@ -127,20 +156,40 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
   // Use a separate bucket so signing traffic doesn't compete with auth/login
   const rate = await checkRateLimit(req, 'sign', { clientIp: context.clientIp });
   if (!rate.allowed) {
+    const resetAt = typeof rate.resetAt === 'number' && Number.isFinite(rate.resetAt) ? rate.resetAt : null;
+    const retryAfterFromReset = resetAt !== null
+      ? Math.max(0, Math.ceil((resetAt - Date.now()) / 1000))
+      : null;
+    const retryAfterWindow = Number.parseInt(process.env.RATE_LIMIT_WINDOW || '900', 10);
+    const retryAfterFallback = Number.isFinite(retryAfterWindow) && retryAfterWindow > 0 ? retryAfterWindow : 900;
+    const retryAfterSeconds = retryAfterFromReset !== null ? retryAfterFromReset : retryAfterFallback;
     return Response.json({ code: 'RATE_LIMITED', error: 'Rate limit exceeded. Try again later.' }, {
       status: 429,
-      headers: { ...headers, 'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString() }
+      headers: { ...headers, 'Retry-After': retryAfterSeconds.toString() }
     });
   }
 
+  const maxBodyBytes = 1024 * 100;
   const contentLength = req.headers.get('content-length');
-  if (contentLength && parseInt(contentLength) > 1024 * 100) { // 100KB limit
+  const declaredLength = contentLength ? Number.parseInt(contentLength, 10) : null;
+  if (declaredLength !== null && Number.isFinite(declaredLength) && declaredLength > maxBodyBytes) {
     return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
+  }
+
+  let rawBody = '';
+  try {
+    const bodyText = await readTextBodyWithLimit(req, maxBodyBytes);
+    if (bodyText === null) {
+      return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
+    }
+    rawBody = bodyText;
+  } catch {
+    return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
   }
 
   let body: SignRequestBody;
   try {
-    body = await req.json();
+    body = JSON.parse(rawBody) as SignRequestBody;
   } catch {
     return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
   }
@@ -199,7 +248,19 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
       }
     }
 
-    if (!signatureHex || typeof signatureHex !== 'string') {
+    if (typeof signatureHex === 'string' && signatureHex.startsWith('0x')) {
+      signatureHex = signatureHex.slice(2);
+    }
+    if (!signatureHex || !/^[0-9a-fA-F]{128}$/.test(signatureHex)) {
+      try {
+        context.addServerLog('error', 'Invalid signature format', { id, signature: signatureHex });
+      } catch {
+        try { console.error('Invalid signature format', id, signatureHex); } catch {}
+      }
+      signatureHex = null;
+    }
+
+    if (!signatureHex) {
       return Response.json({ code: 'INVALID_NODE_RESPONSE', error: 'invalid signature response from node' }, { status: 502, headers });
     }
 

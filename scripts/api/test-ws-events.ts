@@ -23,7 +23,9 @@ async function main() {
   console.log('\n== WS /api/events test ==');
   console.log(`Base URL: ${BASE_URL}`);
   const url = wsUrl();
-  console.log(`Connecting: ${url}`);
+  const safeUrl = new URL(url);
+  safeUrl.search = '';
+  console.log(`Connecting: ${safeUrl.toString()}`);
 
   let gotMessage = false;
   let closedEarly = false;
@@ -77,4 +79,3 @@ async function main() {
 }
 
 main();
-

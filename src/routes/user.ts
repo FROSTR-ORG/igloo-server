@@ -110,13 +110,7 @@ export async function handleUserRoute(
   }
 
   // Database users have numeric IDs (number or string representation of bigint)
-  let userId: number | bigint | null = null;
-  if (typeof auth.userId === 'number') {
-    userId = auth.userId;
-  } else if (typeof auth.userId === 'string' && /^\d+$/.test(auth.userId)) {
-    // Convert string representation back to bigint for database
-    userId = BigInt(auth.userId);
-  }
+  const userId = resolveUserId(auth.userId);
   
   // Require a valid database user
   // Note: Environment auth users (API Key/Basic Auth) have string userIds and
@@ -283,13 +277,16 @@ export async function handleUserRoute(
           
           if ('relays' in body) {
             // Validate relays format
-            if (body.relays === null || 
-                (Array.isArray(body.relays) && 
-                 body.relays.every((r: any) => typeof r === 'string'))) {
-              updates.relays = body.relays;
+            if (body.relays === null) {
+              updates.relays = null;
+            } else if (
+              Array.isArray(body.relays) &&
+              body.relays.every((r: unknown): r is string => typeof r === 'string' && isValidWebSocketUrl(r))
+            ) {
+              updates.relays = body.relays.map((relay: string) => relay.trim());
             } else {
               return Response.json(
-                { error: 'Invalid relays format. Must be an array of strings or null.' },
+                { error: 'Invalid relay URLs. Must use ws:// or wss://' },
                 { status: 400, headers }
               );
             }
@@ -365,13 +362,24 @@ export async function handleUserRoute(
             // Start the node under the shared lock to avoid races
             try {
               await executeUnderNodeLock(async () => {
-                if (!context.node && credentials) {
+                let latestCredentials: UserCredentials | null = null;
+                try {
+                  latestCredentials = getUserCredentials(
+                    userId,
+                    authSecret.secret,
+                    authSecret.isDerivedKey
+                  );
+                } catch (error) {
+                  context.addServerLog('warn', 'Failed to re-read credentials inside node lock', error);
+                }
+
+                if (!context.node && latestCredentials?.group_cred && latestCredentials?.share_cred) {
                   context.addServerLog('info', 'Starting Bifrost node with saved credentials...');
                   const peerPolicies = getUserPeerPolicies(userId!);
                   const peerPoliciesJson = peerPolicies.length > 0 ? JSON.stringify(peerPolicies) : undefined;
-                  const groupCred = credentials.group_cred!;
-                  const shareCred = credentials.share_cred!;
-                  const relays = credentials.relays;
+                  const groupCred = latestCredentials.group_cred;
+                  const shareCred = latestCredentials.share_cred;
+                  const relays = latestCredentials.relays;
                   const relaysEnv = relays?.length ? relays.join(',') : undefined;
 
                   const node = await createNodeWithCredentials(
@@ -481,6 +489,7 @@ export async function handleUserRoute(
           }
 
           const relays = (body as any).relays;
+          let normalizedRelays: string[] | null = null;
 
           if (relays !== null) {
             if (!Array.isArray(relays)) {
@@ -496,13 +505,14 @@ export async function handleUserRoute(
                 { status: 400, headers }
               );
             }
+            normalizedRelays = relays.map((relay: string) => relay.trim());
           }
 
           // Relays are stored as plain JSON, so no auth secret needed for relay-only updates
           // Pass empty string and false to indicate no encryption needed
           const success = updateUserCredentials(
             userId,
-            { relays },
+            { relays: normalizedRelays },
             '',  // No password/key needed for unencrypted fields
             false // Not a derived key
           );

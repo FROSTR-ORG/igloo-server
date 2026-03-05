@@ -23,7 +23,11 @@ export const RELAYS: string[] = (() => {
 })();
 
 export const HOST_NAME = process.env['HOST_NAME'] ?? 'localhost'
-export const HOST_PORT = parseInt(process.env['HOST_PORT'] ?? '8002', 10)
+const rawHostPort = process.env['HOST_PORT']?.trim()
+const parsedHostPort = rawHostPort && /^\d+$/.test(rawHostPort) ? Number(rawHostPort) : NaN
+export const HOST_PORT = Number.isInteger(parsedHostPort) && parsedHostPort >= 1 && parsedHostPort <= 65535
+  ? parsedHostPort
+  : 8002
 
 // Raw credential strings for igloo-core functions - treat empty/whitespace as absent
 export const GROUP_CRED = (() => {
@@ -56,7 +60,6 @@ export const ADMIN_SECRET = (() => {
 
   if (isUnset && shouldAutoGenerateAdminSecret) {
     const fallback = 'ci-auto-admin-secret';
-    process.env['ADMIN_SECRET'] = fallback;
     console.warn('[init] ADMIN_SECRET was unset. Generated ephemeral secret for CI/test environment.');
     return fallback;
   }

@@ -2,7 +2,7 @@ import React, { useId } from 'react';
 import { Input } from "./input";
 import { cn } from "../../lib/utils";
 
-interface InputWithValidationProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange'> {
+interface InputWithValidationProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'onChange' | 'required'> {
   label?: string | React.ReactNode;
   value: string;
   onChange: (value: string) => void;
@@ -37,6 +37,7 @@ const InputWithValidation: React.FC<InputWithValidationProps> = ({
         id={inputId}
         value={value}
         onChange={(e) => onChange(e.target.value)}
+        required={isRequired}
         className={cn(
           "bg-gray-800/50 border-gray-700/50 text-blue-300 py-2 text-sm w-full",
           hasError && "border-red-500",

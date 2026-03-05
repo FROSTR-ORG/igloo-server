@@ -34,6 +34,14 @@ export function RelaySettings({ relays, onAdd, onRemove, loading = false, saving
     }
   }
 
+  const handleRemove = async (relay: string) => {
+    try {
+      await onRemove(relay)
+    } catch {
+      // error surface handled via parent `error`
+    }
+  }
+
   return (
     <div className="rounded-md border border-blue-900/30 bg-gray-900/30 p-4 space-y-3">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
@@ -75,7 +83,7 @@ export function RelaySettings({ relays, onAdd, onRemove, loading = false, saving
                 size="sm"
                 icon={<X className="h-3 w-3" />}
                 tooltip="Remove relay"
-                onClick={() => onRemove(relay)}
+                onClick={() => void handleRemove(relay)}
                 disabled={saving}
               />
             </span>

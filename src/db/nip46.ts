@@ -34,19 +34,28 @@ let initializationPromise: Promise<void> | null = null
 
 export async function initializeNip46DB(): Promise<void> {
   if (!initializationPromise) {
-    initializationPromise = Promise.resolve().then(() => {
-      // runMigrations is synchronous, returns array of applied migrations
-      const applied = runMigrations('src/db/migrations')
-      if (applied.length > 0) {
-        console.log(`[nip46] Applied ${applied.length} migration(s):`, applied.join(', '))
-      }
+    initializationPromise = (async () => {
+      try {
+        // runMigrations is synchronous, returns array of applied migrations
+        const applied = runMigrations('src/db/migrations')
+        if (applied.length > 0) {
+          console.log(`[nip46] Applied ${applied.length} migration(s):`, applied.join(', '))
+        }
 
-      // Defensive check: Verify critical tables exist and recreate if missing
-      // This handles cases where migrations partially failed
-      verifyAndCreateMissingTables()
-    })
+        // Defensive check: Verify critical tables exist and recreate if missing
+        // This handles cases where migrations partially failed
+        verifyAndCreateMissingTables()
+      } catch (error) {
+        initializationPromise = null
+        throw error
+      }
+    })()
   }
   return initializationPromise
+}
+
+function normalizeClientPubkey(clientPubkey: string): string {
+  return (clientPubkey || '').trim().toLowerCase()
 }
 
 // Defensive function to ensure critical NIP46 tables exist
@@ -168,6 +177,36 @@ export interface Nip46RequestRecord {
   expires_at?: string | null
 }
 
+function parseRelayArray(raw: string): string[] {
+  const parsed = JSON.parse(raw)
+  if (!Array.isArray(parsed)) {
+    throw new Error('[nip46] Data integrity violation: relays must be an array')
+  }
+  const relays: string[] = []
+  for (const value of parsed) {
+    if (typeof value !== 'string') {
+      throw new Error('[nip46] Data integrity violation: relay entries must be strings')
+    }
+    relays.push(value)
+  }
+  return relays
+}
+
+function parseBooleanMap(raw: string, label: string): Record<string, boolean> {
+  const parsed = JSON.parse(raw)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error(`[nip46] Data integrity violation: ${label} must be an object`)
+  }
+  const normalized: Record<string, boolean> = {}
+  for (const [key, value] of Object.entries(parsed)) {
+    if (typeof value !== 'boolean') {
+      throw new Error(`[nip46] Data integrity violation: ${label}.${key} must be a boolean`)
+    }
+    normalized[key] = value
+  }
+  return normalized
+}
+
 function rowToSession(row: any): Nip46Session {
   let relays: string[] | null = null
 
@@ -178,8 +217,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Relay data exceeds maximum size')
     }
     try {
-      relays = JSON.parse(row.relays)
+      relays = parseRelayArray(row.relays)
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse relays JSON, using null:', e)
       relays = null
@@ -196,8 +238,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Policy methods data exceeds maximum size')
     }
     try {
-      methods = JSON.parse(row.policy_methods)
+      methods = parseBooleanMap(row.policy_methods, 'policy_methods')
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse policy_methods JSON, using empty:', e)
       methods = {}
@@ -211,8 +256,11 @@ function rowToSession(row: any): Nip46Session {
       throw new Error('[nip46] Data integrity violation: Policy kinds data exceeds maximum size')
     }
     try {
-      kinds = JSON.parse(row.policy_kinds)
+      kinds = parseBooleanMap(row.policy_kinds, 'policy_kinds')
     } catch (e) {
+      if (e instanceof Error && e.message.includes('Data integrity violation')) {
+        throw e
+      }
       // Log for debugging but don't expose error details to client
       console.error('[nip46] Failed to parse policy_kinds JSON, using empty:', e)
       kinds = {}
@@ -244,7 +292,7 @@ export function listSessions(userId: number | bigint, opts?: { includeRevoked?: 
 }
 
 export function getSession(userId: number | bigint, client_pubkey: string): Nip46Session | null {
-  const key = (client_pubkey || '').trim().toLowerCase()
+  const key = normalizeClientPubkey(client_pubkey)
   if (!key || !/^[0-9a-f]{64}$/.test(key)) return null
   const row = db
     .prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?')
@@ -334,6 +382,40 @@ export function createNip46Request(params: {
 export function getNip46RequestById(id: string): Nip46RequestRecord | null {
   const row = db.prepare('SELECT * FROM nip46_requests WHERE id = ?').get(id) as Nip46RequestRecord | undefined
   return row ?? null
+}
+
+export function getPendingNip46RequestByClientId(
+  userId: number | bigint,
+  sessionPubkey: string,
+  clientRequestId: string
+): Nip46RequestRecord | null {
+  const normalizedPubkey = normalizeClientPubkey(sessionPubkey)
+  const normalizedClientRequestId = clientRequestId.trim()
+  if (!normalizedPubkey || !/^[0-9a-f]{64}$/.test(normalizedPubkey) || !normalizedClientRequestId) {
+    return null
+  }
+
+  const rows = db
+    .prepare(
+      `SELECT * FROM nip46_requests
+       WHERE user_id = ? AND session_pubkey = ? AND status = 'pending'
+       ORDER BY created_at DESC, id DESC
+       LIMIT 500`
+    )
+    .all(userId, normalizedPubkey) as Nip46RequestRecord[]
+
+  for (const row of rows) {
+    try {
+      const payload = JSON.parse(row.params)
+      const payloadId = payload?.id
+      if (payloadId !== undefined && String(payloadId) === normalizedClientRequestId) {
+        return row
+      }
+    } catch {
+      continue
+    }
+  }
+  return null
 }
 
 export function listNip46Requests(
@@ -503,11 +585,12 @@ export function upsertSession(params: {
 }
 
 export function updatePolicy(userId: number | bigint, client_pubkey: string, policy: Nip46Policy): Nip46Session | null {
+  const normalizedKey = normalizeClientPubkey(client_pubkey)
   // Use transaction to ensure atomicity between UPDATE and SELECT
   db.exec('BEGIN')
   try {
     // Diff against existing to record grants/revocations
-    const existing = db.prepare('SELECT policy_methods, policy_kinds FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey) as { policy_methods: string | null, policy_kinds: string | null } | undefined
+    const existing = db.prepare('SELECT policy_methods, policy_kinds FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, normalizedKey) as { policy_methods: string | null, policy_kinds: string | null } | undefined
 
     // Return early if session doesn't exist (prevents orphan audit records)
     if (!existing) {
@@ -540,10 +623,10 @@ export function updatePolicy(userId: number | bigint, client_pubkey: string, pol
         policy_kinds = COALESCE(?, policy_kinds),
         updated_at = CURRENT_TIMESTAMP
       WHERE user_id = ? AND client_pubkey = ?
-    `).run(methodsValue, kindsValue, userId, client_pubkey)
+    `).run(methodsValue, kindsValue, userId, normalizedKey)
 
     // Fetch the updated session within the transaction to ensure consistency
-    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, normalizedKey)
     const session = row ? rowToSession(row) : null
 
     // Commit the transaction
@@ -555,12 +638,12 @@ export function updatePolicy(userId: number | bigint, client_pubkey: string, pol
       for (const k of Object.keys({ ...prevMethods, ...nextMethods })) {
         const before = !!prevMethods[k]
         const after = !!nextMethods[k]
-        if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_method' : 'revoke_method', k)
+        if (before !== after) logSessionEvent(userId, normalizedKey, after ? 'grant_method' : 'revoke_method', k)
       }
       for (const k of Object.keys({ ...prevKinds, ...nextKinds })) {
         const before = !!prevKinds[k]
         const after = !!nextKinds[k]
-        if (before !== after) logSessionEvent(userId, client_pubkey, after ? 'grant_kind' : 'revoke_kind', k)
+        if (before !== after) logSessionEvent(userId, normalizedKey, after ? 'grant_kind' : 'revoke_kind', k)
       }
     } catch {}
 
@@ -572,6 +655,7 @@ export function updatePolicy(userId: number | bigint, client_pubkey: string, pol
 }
 
 export function updateStatus(userId: number | bigint, client_pubkey: string, status: Nip46Status, touchActive = false): Nip46Session | null {
+  const normalizedKey = normalizeClientPubkey(client_pubkey)
   // Use transaction to ensure atomicity between UPDATE and SELECT
   db.exec('BEGIN')
   try {
@@ -580,7 +664,7 @@ export function updateStatus(userId: number | bigint, client_pubkey: string, sta
       UPDATE nip46_sessions
       SET status = ?, updated_at = CURRENT_TIMESTAMP, last_active_at = CASE WHEN ? THEN CURRENT_TIMESTAMP ELSE last_active_at END
       WHERE user_id = ? AND client_pubkey = ?
-    `).run(status, touchActive ? 1 : 0, userId, client_pubkey)
+    `).run(status, touchActive ? 1 : 0, userId, normalizedKey)
 
     // Check if UPDATE affected any rows before logging events
     const changed = db.query('SELECT changes() as c').get() as { c: number } | null
@@ -590,14 +674,14 @@ export function updateStatus(userId: number | bigint, client_pubkey: string, sta
     }
 
     // Fetch the updated session within the transaction to ensure consistency
-    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, client_pubkey)
+    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, normalizedKey)
     const session = row ? rowToSession(row) : null
 
     // Commit the transaction
     db.exec('COMMIT')
 
     // Log the status change after successful commit (non-critical)
-    try { logSessionEvent(userId, client_pubkey, 'status_change', undefined, status) } catch {}
+    try { logSessionEvent(userId, normalizedKey, 'status_change', undefined, status) } catch {}
 
     return session
   } catch (e) {
@@ -607,7 +691,8 @@ export function updateStatus(userId: number | bigint, client_pubkey: string, sta
 }
 
 export function deleteSession(userId: number | bigint, client_pubkey: string): boolean {
-  db.prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').run(userId, client_pubkey)
+  const normalizedKey = normalizeClientPubkey(client_pubkey)
+  db.prepare('DELETE FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').run(userId, normalizedKey)
   const changed = db.query('SELECT changes() as c').get() as { c: number } | null
   return !!changed && changed.c > 0
 }
@@ -619,10 +704,10 @@ export function deleteSession(userId: number | bigint, client_pubkey: string): b
  * @returns Number of sessions created in the window
  */
 export function countUserSessionsInWindow(userId: number | bigint, windowMs: number): number {
-  const cutoff = new Date(Date.now() - windowMs).toISOString()
+  const cutoffEpochSeconds = Math.floor((Date.now() - windowMs) / 1000)
   const row = db.prepare(
-    'SELECT COUNT(*) as count FROM nip46_sessions WHERE user_id = ? AND created_at >= ?'
-  ).get(userId, cutoff) as { count: number } | undefined
+    'SELECT COUNT(*) as count FROM nip46_sessions WHERE user_id = ? AND CAST(strftime(\'%s\', created_at) AS INTEGER) >= ?'
+  ).get(userId, cutoffEpochSeconds) as { count: number } | undefined
   return row?.count || 0
 }
 
@@ -644,14 +729,15 @@ export interface Nip46SessionEvent {
 }
 
 export function logSessionEvent(userId: number | bigint, client_pubkey: string, event_type: string, detail?: string, value?: string) {
+  const normalizedKey = normalizeClientPubkey(client_pubkey)
   db.prepare(`
     INSERT INTO nip46_session_events (user_id, client_pubkey, event_type, detail, value)
     VALUES (?, ?, ?, ?, ?)
-  `).run(userId, client_pubkey, event_type, detail ?? null, value ?? null)
+  `).run(userId, normalizedKey, event_type, detail ?? null, value ?? null)
 }
 
 export function listSessionEvents(userId: number | bigint, client_pubkey: string, limit = 50): Nip46SessionEvent[] {
-  const key = (client_pubkey || '').trim().toLowerCase()
+  const key = normalizeClientPubkey(client_pubkey)
   const rows = db.prepare(
     'SELECT * FROM nip46_session_events WHERE user_id = ? AND client_pubkey = ? ORDER BY created_at DESC, id DESC LIMIT ?'
   ).all(userId, key, limit) as any[]

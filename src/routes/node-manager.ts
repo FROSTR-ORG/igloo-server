@@ -91,6 +91,7 @@ export async function createAndStartNode(
     } catch (enhancedError) {
       // Fall back to basic node creation
       context.addServerLog('info', 'Enhanced node creation failed, using basic connection...');
+      let basicFailure: unknown = null;
       
       try {
         const fallbackConfig: BasicNodeConfig = {
@@ -114,6 +115,12 @@ export async function createAndStartNode(
         }
       } catch (basicError) {
         context.addServerLog('error', 'Failed to create node with basic connection', basicError);
+        basicFailure = basicError;
+      }
+
+      if (!newNode && basicFailure) {
+        const detail = basicFailure instanceof Error ? basicFailure.message : String(basicFailure);
+        throw new Error(`Failed to create node with basic connection: ${detail}`);
       }
     }
     

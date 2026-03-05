@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'crypto';
 import { hmac } from '@noble/hashes/hmac';
 import { sha256 } from '@noble/hashes/sha256';
 import { ADMIN_SECRET, HEADLESS, SKIP_ADMIN_SECRET_VALIDATION } from '../const.js';
@@ -25,8 +25,11 @@ const MAX_ATTEMPTS_PER_WINDOW = 5;
 // Stable client identifier cache (maps canonical fingerprint input -> stable ID)
 const clientIdCache = new Map<string, { id: string; expiresAt: number }>();
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
-const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, parseInt(process.env.CLIENT_ID_TTL_MS || '86400000')));
+const parsedClientIdTtl = Number.parseInt(process.env.CLIENT_ID_TTL_MS ?? '', 10);
+const clientIdTtlBase = Number.isFinite(parsedClientIdTtl) && parsedClientIdTtl > 0 ? parsedClientIdTtl : 86400000;
+const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, clientIdTtlBase));
 const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
+const FALLBACK_FINGERPRINT_SECRET = FINGERPRINT_SECRET || process.env.SESSION_SECRET || ADMIN_SECRET || randomBytes(32).toString('hex');
 const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
 let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -226,9 +229,7 @@ function getClientIp(req: Request, fallbackFromServer?: string | null): string {
   const cached = clientIdCache.get(canonical);
   if (cached && cached.expiresAt > now) return cached.id;
   const encoder = new TextEncoder();
-  const digest = FINGERPRINT_SECRET
-    ? hmac(sha256, encoder.encode(FINGERPRINT_SECRET), encoder.encode(canonical))
-    : sha256(encoder.encode(canonical));
+  const digest = hmac(sha256, encoder.encode(FALLBACK_FINGERPRINT_SECRET), encoder.encode(canonical));
   const hex = Buffer.from(digest).toString('hex');
   const id = `fp_${hex.slice(0, 32)}`;
   clientIdCache.set(canonical, { id, expiresAt: now + CLIENT_ID_TTL_MS });
@@ -266,9 +267,10 @@ const UNIFORM_AUTH_ERROR = { error: 'Authentication failed' };
 // - Uppercase letter
 // - Lowercase letter
 // - Digit
-// - Special character (at least one of @$!%*?&, but allows any special chars)
-// Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH
-const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[@$!%*?&])\S*$/;
+// - Special character (any non-alphanumeric, excluding whitespace)
+// Note: Length validation is handled by VALIDATION.MIN_PASSWORD_LENGTH and VALIDATION.MAX_PASSWORD_LENGTH.
+// Whitespace is allowed and preserved by policy.
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[^A-Za-z0-9\s]).*$/;
 
 /**
  * Validates the admin secret in a timing-safe manner
@@ -289,21 +291,15 @@ export async function validateAdminSecret(adminSecret: string | undefined): Prom
   try {
     // Coerce to string to prevent type errors
     const adminSecretStr = String(adminSecret);
-    const providedSecret = Buffer.from(adminSecretStr);
-    const expectedSecret = Buffer.from(ADMIN_SECRET);
-
-    // Timing-safe comparison
-    if (providedSecret.length !== expectedSecret.length) {
-      return false;
-    }
-    
-    return timingSafeEqual(providedSecret, expectedSecret);
+    const providedDigest = createHash('sha256').update(adminSecretStr).digest();
+    const expectedDigest = createHash('sha256').update(String(ADMIN_SECRET)).digest();
+    return timingSafeEqual(providedDigest, expectedDigest);
   } catch {
     // On any error, perform dummy comparison to maintain consistent timing
-    const expectedSecret = Buffer.from(String(ADMIN_SECRET));
-    const dummySecret = Buffer.alloc(expectedSecret.length);
+    const expectedDigest = createHash('sha256').update(String(ADMIN_SECRET)).digest();
+    const dummyDigest = Buffer.alloc(expectedDigest.length);
     try {
-      timingSafeEqual(dummySecret, expectedSecret);
+      timingSafeEqual(dummyDigest, expectedDigest);
     } catch {}
     return false;
   }
@@ -349,7 +345,7 @@ function validatePasswordStrength(password: string, username?: string): string |
   }
 
   if (!PASSWORD_REGEX.test(password)) {
-    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (must include at least one of @$!%*?&)';
+    return 'Password must contain at least one uppercase letter, one lowercase letter, one digit, and one special character (any non-alphanumeric character, excluding whitespace).';
   }
 
   // Check for sequential or repeated characters

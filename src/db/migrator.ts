@@ -1,6 +1,13 @@
 import path from 'path'
-import { existsSync, readdirSync, readFileSync } from 'fs'
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs'
 import db from './database.js'
+
+class MigrationDirSecurityError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'MigrationDirSecurityError'
+  }
+}
 
 function ensureMigrationsTable() {
   db.exec(`
@@ -26,14 +33,25 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
     path.isAbsolute(migrationsDirRel) ? migrationsDirRel : path.join(process.cwd(), migrationsDirRel)
   )
 
+  if (!existsSync(dir)) return []
+
   // Security: Ensure migrations directory is within project boundaries
   const projectRoot = path.resolve(process.cwd())
-  if (!dir.startsWith(projectRoot + path.sep) && dir !== projectRoot) {
-    throw new Error(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+  let resolvedDir = dir
+  try {
+    resolvedDir = realpathSync(dir)
+    const resolvedProjectRoot = realpathSync(projectRoot)
+    if (resolvedDir !== resolvedProjectRoot && !resolvedDir.startsWith(resolvedProjectRoot + path.sep)) {
+      throw new MigrationDirSecurityError(`Security: Migration directory must be within project root. Attempted: ${dir}`)
+    }
+  } catch (error) {
+    if (error instanceof MigrationDirSecurityError) {
+      throw error
+    }
+    const detail = error instanceof Error ? error.message : String(error)
+    throw new Error(`Security: Failed to validate migration directory path: ${detail}`)
   }
-
-  if (!existsSync(dir)) return []
-  const files = readdirSync(dir)
+  const files = readdirSync(resolvedDir)
     .filter(f => f.toLowerCase().endsWith('.sql'))
     .sort()
 
@@ -41,7 +59,7 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
   const stopOnError = opts?.stopOnError ?? true
   for (const file of files) {
     if (applied.has(file)) continue
-    const full = path.join(dir, file)
+    const full = path.join(resolvedDir, file)
     const sql = readFileSync(full, 'utf-8')
     // Basic sanity checks for managed SQL files
     if (sql.length > 1_000_000) {

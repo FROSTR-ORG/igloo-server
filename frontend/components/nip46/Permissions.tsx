@@ -163,12 +163,12 @@ export function PermissionsDropdown({
   }
 
   const addEventKind = (kind: number) => {
+    if (!Number.isFinite(kind)) return
     applyPolicy(next => {
-      next.methods.sign_event = true
-      if (!Number.isFinite(kind)) return
       const key = String(kind)
       if (next.kinds[key]) return
       next.kinds[key] = true
+      next.methods.sign_event = true
     })
   }
 

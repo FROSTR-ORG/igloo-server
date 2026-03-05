@@ -2,30 +2,49 @@ import React, { useState, ReactNode, useRef, useEffect, useCallback, useId } fro
 import { createPortal } from 'react-dom';
 import { cn } from "../../lib/utils";
 
-interface TooltipProps {
+interface TooltipSharedProps {
   trigger: ReactNode;
   content: ReactNode;
   className?: string;
   position?: 'top' | 'right' | 'bottom' | 'left';
   width?: string;
   triggerClassName?: string;
-  focusable?: boolean;
 }
 
-const Tooltip: React.FC<TooltipProps> = ({
-  trigger,
-  content,
-  className,
-  position = 'left',
-  width = 'w-72',
-  triggerClassName,
-  focusable = false,
-}) => {
+type TooltipProps =
+  | (TooltipSharedProps & {
+      focusable: true;
+      ariaLabel: string;
+    })
+  | (TooltipSharedProps & {
+      focusable?: false;
+      ariaLabel?: string;
+    });
+
+const Tooltip: React.FC<TooltipProps> = (props) => {
+  const {
+    trigger,
+    content,
+    className,
+    position = 'left',
+    width = 'w-72',
+    triggerClassName,
+  } = props;
+  const focusable = props.focusable ?? false;
+  const ariaLabel = props.ariaLabel;
+  const ariaLabelFallback = typeof content === 'string' && content.trim().length > 0 ? content.trim() : 'Tooltip';
+  const resolvedAriaLabel = ariaLabel || ariaLabelFallback;
   const [isVisible, setIsVisible] = useState(false);
   const [coords, setCoords] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
   const tooltipId = useId();
   const triggerRef = useRef<HTMLDivElement | HTMLButtonElement | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (focusable && !ariaLabel) {
+      console.error('[Tooltip] focusable tooltips require ariaLabel for accessibility.');
+    }
+  }, [focusable, ariaLabel]);
 
   const updatePosition = useCallback(() => {
     if (typeof window === 'undefined' || !triggerRef.current || !tooltipRef.current) {
@@ -58,7 +77,7 @@ const Tooltip: React.FC<TooltipProps> = ({
         break;
     }
 
-    const clampedTop = Math.max(8, top);
+    const clampedTop = Math.max(8, Math.min(top, window.innerHeight - tooltipRect.height - 8));
     const clampedLeft = Math.max(8, Math.min(left, window.innerWidth - tooltipRect.width - 8));
 
     setCoords({ top: clampedTop, left: clampedLeft });
@@ -102,7 +121,6 @@ const Tooltip: React.FC<TooltipProps> = ({
 
   const commonProps = {
     ref: triggerRef,
-    className: cn('inline-flex align-middle', triggerClassName),
     onMouseEnter: () => setIsVisible(true),
     onMouseLeave: () => setIsVisible(false),
     onFocus: focusable ? () => setIsVisible(true) : undefined,
@@ -123,6 +141,7 @@ const Tooltip: React.FC<TooltipProps> = ({
         type="button"
         {...commonProps}
         className={cn('inline-flex align-middle', triggerClassName)}
+        aria-label={resolvedAriaLabel}
       >
         {triggerContent}
       </button>
@@ -130,7 +149,7 @@ const Tooltip: React.FC<TooltipProps> = ({
   }
 
   return (
-    <div {...commonProps}>
+    <div {...commonProps} className={cn('inline-flex align-middle', triggerClassName)}>
       {triggerContent}
     </div>
   );

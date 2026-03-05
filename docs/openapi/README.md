@@ -4,8 +4,8 @@ This directory contains the comprehensive OpenAPI 3.1 specification for the Iglo
 
 ## Files
 
-- **`openapi/openapi.yaml`** - Complete OpenAPI 3.1 specification in YAML format
-- **`openapi/openapi.json`** - Bundled JSON representation generated from the YAML spec
+- **`docs/openapi/openapi.yaml`** - Complete OpenAPI 3.1 specification in YAML format
+- **`docs/openapi/openapi.json`** - Bundled JSON representation generated from the YAML spec
 - **`README.md`** - This documentation file
 
 ## Accessing the Documentation
@@ -39,8 +39,9 @@ Mode and auth nuance:
 
 ### Authentication for API Documentation
 
-- **Development**: No authentication required for easy testing
-- **Production**: Authentication required for security (enforced by the server)
+Authentication behavior is configuration-dependent:
+- **Development**: authentication is commonly disabled by default for local testing, but controlled by environment variables (see `AUTH_ENABLED` in `env.example`)
+- **Production**: authentication should be enabled and enforced by server configuration
 
 To authenticate in Swagger UI:
 1. Use the "Authorize" button in Swagger UI
@@ -102,7 +103,7 @@ This ensures the YAML syntax is correct and the specification is well-formed.
 
 When adding or modifying API endpoints:
 
-1. Update the corresponding section in `openapi/openapi.yaml`
+1. Update the corresponding section in `docs/openapi/openapi.yaml`
 2. Add/update request and response schemas
 3. Include relevant examples
 4. Validate the specification: `bun run docs:validate`

@@ -3,7 +3,7 @@ name: Umbrel Dev Image
 on:
   push:
     branches:
-      - master
+      - main
       - dev
   workflow_dispatch:
 
@@ -39,6 +39,12 @@ jobs:
 
       - name: Smoke test Umbrel image
         run: |
+          set -e
+          cleanup() {
+            docker rm -f umbrel-dev-test >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
           docker run -d --name umbrel-dev-test -p 8003:8002 \
             -e ADMIN_SECRET=ci-admin-secret \
             -e ALLOWED_ORIGINS=http://localhost:8003 \
@@ -46,4 +52,3 @@ jobs:
             igloo-server-umbrel:dev-ci
           sleep 12
           curl -f http://localhost:8003/api/status
-          docker rm -f umbrel-dev-test

@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual, pbkdf2Sync } from 'crypto';
+import { randomBytes, timingSafeEqual, pbkdf2Sync, createHash } from 'crypto';
 import { existsSync, mkdirSync, readFileSync, statSync, openSync, writeSync, fsyncSync, renameSync, unlinkSync, closeSync, chmodSync } from 'fs';
 import path from 'path';
 import { HEADLESS } from '../const.js';
@@ -230,6 +230,10 @@ function validateSessionSecret(): string | null {
 }
 
 const DEFAULT_RATE_LIMIT_MAX = HEADLESS ? 300 : 600;
+const parsePositiveIntEnv = (value: string | undefined, fallback: number): number => {
+  const parsed = Number.parseInt(value ?? '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
 
 // Authentication configuration from environment variables
 export const AUTH_CONFIG = {
@@ -243,13 +247,13 @@ export const AUTH_CONFIG = {
   
   // Session configuration
   SESSION_SECRET: validateSessionSecret(),
-  SESSION_TIMEOUT: parseInt(process.env.SESSION_TIMEOUT || '3600') * 1000, // Default 1 hour
+  SESSION_TIMEOUT: parsePositiveIntEnv(process.env.SESSION_TIMEOUT, 3600) * 1000, // Default 1 hour
   
   // Rate limiting
   RATE_LIMIT_ENABLED: process.env.RATE_LIMIT_ENABLED !== 'false',
-  RATE_LIMIT_WINDOW: parseInt(process.env.RATE_LIMIT_WINDOW || '900') * 1000, // 15 minutes
+  RATE_LIMIT_WINDOW: parsePositiveIntEnv(process.env.RATE_LIMIT_WINDOW, 900) * 1000, // 15 minutes
   // Default is 300 per 15m in headless mode, 600 per 15m when backed by the database; override for production
-  RATE_LIMIT_MAX: parseInt(process.env.RATE_LIMIT_MAX || String(DEFAULT_RATE_LIMIT_MAX)),
+  RATE_LIMIT_MAX: parsePositiveIntEnv(process.env.RATE_LIMIT_MAX, DEFAULT_RATE_LIMIT_MAX),
 };
 
 // Use centralized crypto constants for consistency
@@ -306,9 +310,27 @@ const sessionStore = new Map<string, {
 // Values are kept in-memory only for the lifespan of the session and wiped on cleanup/logout
 const sessionDerivedKeyCache = new Map<string, Uint8Array>();
 
+function parseEnvInt(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function compareConstantTime(a: string, b: string): boolean {
+  const digestA = createHash('sha256').update(a).digest();
+  const digestB = createHash('sha256').update(b).digest();
+  return timingSafeEqual(digestA, digestB);
+}
+
 // Ephemeral derived key vault: TTL + bounded reads; zeroizes on removal
-const AUTH_DERIVED_KEY_TTL_MS = Math.max(10_000, Math.min(10 * 60_000, parseInt(process.env.AUTH_DERIVED_KEY_TTL_MS || '120000')));
-const AUTH_DERIVED_KEY_MAX_READS = Math.max(1, Math.min(1000, parseInt(process.env.AUTH_DERIVED_KEY_MAX_READS || '100')));
+const AUTH_DERIVED_KEY_TTL_MS = Math.max(
+  10_000,
+  Math.min(10 * 60_000, parseEnvInt(process.env.AUTH_DERIVED_KEY_TTL_MS, 120_000))
+);
+const AUTH_DERIVED_KEY_MAX_READS = Math.max(
+  1,
+  Math.min(1000, parseEnvInt(process.env.AUTH_DERIVED_KEY_MAX_READS, 100))
+);
 
 function getAuthDerivedKeyMaxRehydrations(): number {
   const fallback = 3;
@@ -323,7 +345,7 @@ const VAULT_CLEANUP_INTERVAL_MS = Math.max(
   30_000,  // minimum 30 seconds
   Math.min(
     10 * 60_000,  // maximum 10 minutes
-    parseInt(process.env.VAULT_CLEANUP_INTERVAL_MS || '120000')  // default 2 minutes
+    parseEnvInt(process.env.VAULT_CLEANUP_INTERVAL_MS, 120_000)  // default 2 minutes
   )
 );
 
@@ -437,6 +459,8 @@ export interface AuthResult {
   userId?: string | number; // Only JSON-serializable types
   error?: string;
   rateLimited?: boolean;
+  retryAfter?: number;
+  resetAt?: number;
   derivedKey?: Uint8Array; // Derived key for decryption operations (ephemeral - cleared after extraction)
   sessionId?: string; // Session ID for lazy vault retrieval
   hasPassword?: boolean; // Flag indicating if password-based derived key is available
@@ -453,7 +477,7 @@ export async function checkRateLimit(
   req: Request,
   bucket: string = 'auth',
   opts?: { windowMs?: number; max?: number; clientIp?: string }
-): Promise<{ allowed: boolean; remaining: number }> {
+): Promise<{ allowed: boolean; remaining: number; resetAt?: number }> {
   if (!AUTH_CONFIG.RATE_LIMIT_ENABLED) {
     return { allowed: true, remaining: AUTH_CONFIG.RATE_LIMIT_MAX };
   }
@@ -469,7 +493,8 @@ export async function checkRateLimit(
 
   return {
     allowed: result.allowed,
-    remaining: result.remaining
+    remaining: result.remaining,
+    resetAt: result.resetAt
   };
 }
 
@@ -553,16 +578,15 @@ function authenticateBasicAuth(req: Request): AuthResult {
 
   try {
     const credentials = atob(authHeader.slice(6));
-    const [username, password] = credentials.split(':');
+    const separatorIndex = credentials.indexOf(':');
+    if (separatorIndex === -1) {
+      return { authenticated: false, error: 'Invalid authorization header' };
+    }
+    const username = credentials.slice(0, separatorIndex);
+    const password = credentials.slice(separatorIndex + 1);
     
-    const userValid = timingSafeEqual(
-      Buffer.from(username || ''),
-      Buffer.from(AUTH_CONFIG.BASIC_AUTH_USER)
-    );
-    const passValid = timingSafeEqual(
-      Buffer.from(password || ''),
-      Buffer.from(AUTH_CONFIG.BASIC_AUTH_PASS)
-    );
+    const userValid = compareConstantTime(username || '', AUTH_CONFIG.BASIC_AUTH_USER);
+    const passValid = compareConstantTime(password || '', AUTH_CONFIG.BASIC_AUTH_PASS);
     
     if (userValid && passValid) {
       return { authenticated: true, userId: username };
@@ -831,7 +855,14 @@ export async function authenticate(req: Request): Promise<AuthResult> {
   } else {
     // In non-headless mode, check if database is initialized
     // If not initialized, allow access to onboarding routes only
-    const isOnboardingRoute = req.url.includes('/api/onboarding');
+    const onboardingPath = (() => {
+      try {
+        return new URL(req.url).pathname;
+      } catch {
+        return '';
+      }
+    })();
+    const isOnboardingRoute = onboardingPath === '/api/onboarding' || onboardingPath.startsWith('/api/onboarding/');
     try {
       const initialized = isDatabaseInitialized();
       if (!initialized && !isOnboardingRoute) {
@@ -848,7 +879,16 @@ export async function authenticate(req: Request): Promise<AuthResult> {
 
   const rateLimit = await checkRateLimit(req);
   if (!rateLimit.allowed) {
-    return { authenticated: false, error: 'Rate limit exceeded', rateLimited: true };
+    const retryAfter = typeof rateLimit.resetAt === 'number' && Number.isFinite(rateLimit.resetAt)
+      ? Math.max(0, Math.ceil((rateLimit.resetAt - Date.now()) / 1000))
+      : undefined;
+    return {
+      authenticated: false,
+      error: 'Rate limit exceeded',
+      rateLimited: true,
+      retryAfter,
+      resetAt: rateLimit.resetAt
+    };
   }
 
   // Try API Key first
@@ -924,6 +964,21 @@ export async function handleLogin(req: Request): Promise<Response> {
     
     const { username, password, apiKey } = body;
 
+    const rate = await checkRateLimit(req);
+    if (!rate.allowed) {
+      return Response.json(
+        { error: 'Too many login attempts. Please try again later.' },
+        {
+          status: 429,
+          headers: {
+            ...baseHeaders,
+            'Retry-After': Math.ceil(AUTH_CONFIG.RATE_LIMIT_WINDOW / 1000).toString(),
+            'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
+          }
+        }
+      );
+    }
+
     let authenticated = false;
     let userId: string | number | bigint = '';
     let userPassword: string | undefined; // Store for database users
@@ -962,22 +1017,6 @@ export async function handleLogin(req: Request): Promise<Response> {
       }
     }
     if (!authenticated && !HEADLESS && username && password && dbInitialized) {
-      // Check rate limit for database authentication attempts
-      const rate = await checkRateLimit(req);
-      if (!rate.allowed) {
-        return Response.json(
-          { error: 'Too many login attempts. Please try again later.' },
-          {
-            status: 429,
-            headers: {
-              ...baseHeaders,
-              'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString(),
-              'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
-            }
-          }
-        );
-      }
-
       try {
         const dbResult = await authenticateUser(username, password);
         // authenticateUser returns a structured result, not throwing for auth failures
@@ -1009,7 +1048,7 @@ export async function handleLogin(req: Request): Promise<Response> {
           return Response.json({ 
             success: false, 
             error: 'Database temporarily unavailable. Please try again.' 
-          }, { status: 503 }); // 503 Service Unavailable
+          }, { status: 503, headers: baseHeaders }); // 503 Service Unavailable
         }
         
         // For unexpected errors, log but don't expose details
@@ -1025,14 +1064,8 @@ export async function handleLogin(req: Request): Promise<Response> {
     
     // Try env-based basic auth (headless mode or fallback)
     if (!authenticated && username && password && AUTH_CONFIG.BASIC_AUTH_USER && AUTH_CONFIG.BASIC_AUTH_PASS) {
-      const userValid = timingSafeEqual(
-        Buffer.from(username),
-        Buffer.from(AUTH_CONFIG.BASIC_AUTH_USER)
-      );
-      const passValid = timingSafeEqual(
-        Buffer.from(password),
-        Buffer.from(AUTH_CONFIG.BASIC_AUTH_PASS)
-      );
+      const userValid = compareConstantTime(username, AUTH_CONFIG.BASIC_AUTH_USER);
+      const passValid = compareConstantTime(password, AUTH_CONFIG.BASIC_AUTH_PASS);
       
       if (userValid && passValid) {
         authenticated = true;
@@ -1093,11 +1126,28 @@ export function handleLogout(req: Request): Response {
     'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-Session-ID',
+  };
+
+  const logoutHeaders = {
+    ...headers,
     'Set-Cookie': `session=; HttpOnly; Path=/; ${process.env.NODE_ENV === 'production' ? 'Secure; ' : ''}SameSite=Strict; Max-Age=0`
   };
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { status: 204, headers });
+  }
+
+  if (req.method !== 'POST') {
+    return Response.json(
+      { error: 'Method not allowed' },
+      {
+        status: 405,
+        headers: {
+          ...headers,
+          'Allow': 'POST, OPTIONS'
+        }
+      }
+    );
   }
   
   const sessionId = req.headers.get('x-session-id') || extractSessionFromCookie(req);
@@ -1113,7 +1163,7 @@ export function handleLogout(req: Request): Response {
     try { zeroizeVaultEntryAndDelete(sessionId) } catch {}
   }
 
-  return Response.json({ success: true }, { headers });
+  return Response.json({ success: true }, { headers: logoutHeaders });
 }
 
 // Authentication middleware wrapper (deprecated - use explicit auth parameters instead)
@@ -1184,7 +1234,12 @@ function getAvailableAuthMethods(): string[] {
 }
 
 // Status endpoint for authentication info
-export function getAuthStatus(): object {
+export function getAuthStatus(): {
+  enabled: boolean;
+  methods: string[];
+  rateLimiting: boolean;
+  sessionTimeout: number;
+} {
   return {
     enabled: AUTH_CONFIG.ENABLED,
     methods: getAvailableAuthMethods(),

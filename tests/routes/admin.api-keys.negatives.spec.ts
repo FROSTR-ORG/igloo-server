@@ -109,18 +109,21 @@ describe('admin API negatives and session create', () => {
       }
     `
 
-    const out = runScript(script, {
-      HEADLESS: 'false',
-      DB_PATH: dbPath,
-      ADMIN_SECRET: 'test-admin-secret',
-      SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      RATE_LIMIT_ENABLED: 'false'
-    })
+    try {
+      const out = runScript(script, {
+        HEADLESS: 'false',
+        DB_PATH: dbPath,
+        ADMIN_SECRET: 'test-admin-secret',
+        SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        RATE_LIMIT_ENABLED: 'false'
+      })
 
-    expect(out.badLabel).toBe(400)
-    expect(out.badUserId).toBe(400)
-    expect(out.badRevoke).toBe(400)
-    rmSync(tmpDataDir, { recursive: true, force: true })
+      expect(out.badLabel).toBe(400)
+      expect(out.badUserId).toBe(400)
+      expect(out.badRevoke).toBe(400)
+    } finally {
+      rmSync(tmpDataDir, { recursive: true, force: true })
+    }
   })
 
   test('session-admin can create keys without ADMIN_SECRET', () => {
@@ -160,15 +163,18 @@ describe('admin API negatives and session create', () => {
         process.exit(0);
       }
     `
-    const out = runScript(script, {
-      HEADLESS: 'false',
-      DB_PATH: dbPath,
-      ADMIN_SECRET: 'test-admin-secret',
-      SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      RATE_LIMIT_ENABLED: 'false'
-    })
+    try {
+      const out = runScript(script, {
+        HEADLESS: 'false',
+        DB_PATH: dbPath,
+        ADMIN_SECRET: 'test-admin-secret',
+        SESSION_SECRET: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        RATE_LIMIT_ENABLED: 'false'
+      })
 
-    expect(out.status).toBe(201)
-    rmSync(tmpDataDir, { recursive: true, force: true })
+      expect(out.status).toBe(201)
+    } finally {
+      rmSync(tmpDataDir, { recursive: true, force: true })
+    }
   })
 })

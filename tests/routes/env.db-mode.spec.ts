@@ -1,6 +1,17 @@
 import { describe, expect, test } from 'bun:test';
 import { runRouteScript, PROJECT_ROOT } from './helpers/script-runner';
 
+function normalizeOptionalEnv(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+const TEST_KEYSET_SECRET =
+  normalizeOptionalEnv(process.env.TEST_KEYSET_SECRET) ??
+  normalizeOptionalEnv(process.env.TEST_NSEC_HEX) ??
+  'deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+
 describe('DB-mode /api/env behavior', () => {
   test('rejects non-admin session without ADMIN_SECRET (403)', () => {
     const script = `
@@ -47,6 +58,7 @@ describe('DB-mode /api/env behavior', () => {
       import { mkdtempSync, writeFileSync, readFileSync } from 'fs';
       import os from 'os';
       import path from 'path';
+      import fs from 'fs';
       const root = ${JSON.stringify(PROJECT_ROOT)};
 
       // DB mode; provide ADMIN_SECRET to authorize write
@@ -58,49 +70,61 @@ describe('DB-mode /api/env behavior', () => {
       // Isolate .env operations to a temp directory
       const tmp = mkdtempSync(path.join(os.tmpdir(), 'env-db-mode-'));
       const originalCwd = process.cwd();
-      process.chdir(tmp);
-      // Provide a minimal .env to start from
-      writeFileSync('.env', '', 'utf8');
+      try {
+        process.chdir(tmp);
+        // Provide a minimal .env to start from
+        writeFileSync('.env', '', 'utf8');
 
-      const { handleEnvRoute } = await import(root + 'src/routes/env.ts');
+        const { handleEnvRoute } = await import(root + 'src/routes/env.ts');
 
-      const logs: string[] = [];
-      const context = {
-        node: null,
-        addServerLog: (...args: any[]) => { try { logs.push(args.map(String).join(' ')); } catch {} },
-        broadcastEvent: () => {},
-        peerStatuses: new Map(),
-        eventStreams: new Set(),
-        restartState: { blockedByCredentials: false },
-        clientIp: '127.0.0.1',
-        requestId: 'env-db-stamp',
-        updateNode: () => {}
-      };
+        const logs: string[] = [];
+        const context = {
+          node: null,
+          addServerLog: (...args: any[]) => { try { logs.push(args.map(String).join(' ')); } catch {} },
+          broadcastEvent: () => {},
+          peerStatuses: new Map(),
+          eventStreams: new Set(),
+          restartState: { blockedByCredentials: false },
+          clientIp: '127.0.0.1',
+          requestId: 'env-db-stamp',
+          updateNode: () => {}
+        };
 
-      const headers = new Headers({
-        'Content-Type': 'application/json',
-        'X-Admin-Secret': 'test-admin-secret'
-      });
-      const body = { GROUP_CRED: 'group-cred-stub', SHARE_CRED: 'share-cred-stub' };
-      const req = new Request('http://localhost/api/env', { method: 'POST', headers, body: JSON.stringify(body) });
+        // Generate real FROSTR credentials so validateGroup/validateShare pass.
+        // Resolve from project root because this script runs from a temp directory.
+        const { createRequire } = await import('module');
+        const requireFromRoot = createRequire(root + 'package.json');
+        const iglooCorePath = requireFromRoot.resolve('@frostr/igloo-core');
+        const { generateKeysetWithSecret } = await import(iglooCorePath);
+        const { groupCredential, shareCredentials } = generateKeysetWithSecret(2, 2, ${JSON.stringify(TEST_KEYSET_SECRET)});
 
-      const res = await handleEnvRoute(req, new URL(req.url), context, { authenticated: true, userId: 2 });
-      const status = res?.status ?? null;
+        const headers = new Headers({
+          'Content-Type': 'application/json',
+          'X-Admin-Secret': 'test-admin-secret'
+        });
+        const body = { GROUP_CRED: groupCredential, SHARE_CRED: shareCredentials[0] };
+        const req = new Request('http://localhost/api/env', { method: 'POST', headers, body: JSON.stringify(body) });
 
-      // Verify timestamp via route utils (supports both explicit var and mtime fallback)
-      const utils = await import(root + 'src/routes/utils.ts');
-      const stamp = await utils.getCredentialsSavedAt();
-      const hasStamp = !!stamp;
+        const res = await handleEnvRoute(req, new URL(req.url), context, { authenticated: true, userId: 2 });
+        const status = res?.status ?? null;
 
-      process.chdir(originalCwd);
+        // Verify timestamp via route utils (supports both explicit var and mtime fallback)
+        const utils = await import(root + 'src/routes/utils.ts');
+        const stamp = await utils.getCredentialsSavedAt();
+        const hasStamp = !!stamp;
 
-      console.log('@@RESULT@@' + JSON.stringify({ status, hasStamp }));
-      process.exit(0);
+        console.log('@@RESULT@@' + JSON.stringify({ status, hasStamp }));
+        process.exit(0);
+      } finally {
+        try {
+          process.chdir(originalCwd);
+        } catch {}
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
     `;
 
     const out = runRouteScript(script);
     expect(out.hasStamp).toBeTrue();
-    // Status may be 200 on success or 500 if restart failed; accept either
-    expect([200, 500]).toContain(out.status);
+    expect(out.status).toBe(200);
   }, { timeout: 10000 });
 });

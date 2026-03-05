@@ -75,7 +75,7 @@ const tests: TestCase[] = [
   {
     name: 'Docs UI',
     path: '/api/docs',
-    expectStatus: s => s === 200 || s === 500, // 500 if swagger assets weren’t vendored
+    expectStatus: s => s === 200,
     expectContentType: /^text\/html/i,
   },
   {
@@ -142,4 +142,3 @@ async function main() {
 }
 
 main();
-

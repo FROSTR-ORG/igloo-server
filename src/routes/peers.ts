@@ -22,6 +22,10 @@ type StoredPeerPolicy = import('../db/database.js').StoredPeerPolicy;
 
 // Constants - use igloo-core default
 const PING_TIMEOUT_MS = DEFAULT_PING_TIMEOUT;
+const parsedPingConcurrency = Number.parseInt(process.env.PING_CONCURRENCY ?? '', 10);
+const MAX_CONCURRENT_PINGS = Number.isFinite(parsedPingConcurrency) && parsedPingConcurrency > 0
+  ? Math.min(parsedPingConcurrency, 64)
+  : 8;
 
 function safeNormalizePubkey(pubkey: string): string | null {
   try {
@@ -107,15 +111,16 @@ async function persistUserPeerPolicies(
   }));
   const sanitizedPolicies = sanitizePeerPolicyEntries(rawPolicies) as StoredPeerPolicy[];
   const hasPolicies = sanitizedPolicies.length > 0;
+  const fallbackPolicies = hasPolicies ? sanitizedPolicies : null;
 
   if (HEADLESS) {
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    await saveFallbackPeerPolicies(fallbackPolicies);
     return;
   }
 
   const userId = resolveDatabaseUserId(auth);
   if (userId === null) {
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    await saveFallbackPeerPolicies(fallbackPolicies);
     return;
   }
 
@@ -123,22 +128,159 @@ async function persistUserPeerPolicies(
     const { updateUserPeerPolicies } = await import('../db/database.js');
 
     if (!context.node || summaries.length === 0) {
-      updateUserPeerPolicies(userId, null);
-      await saveFallbackPeerPolicies(null);
+      const success = updateUserPeerPolicies(userId, null);
+      if (!success) {
+        console.warn('Failed to clear peer policies for user', userId);
+        throw new Error('Failed to persist peer policies');
+      }
+      try {
+        await saveFallbackPeerPolicies(null);
+      } catch (fallbackError) {
+        console.warn('Peer policies saved to DB, but failed to clear fallback cache:', fallbackError);
+      }
       return;
     }
 
     const success = updateUserPeerPolicies(userId, sanitizedPolicies);
     if (!success) {
       console.warn('Failed to persist peer policies for user', userId);
-      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
-    } else {
-      await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+      throw new Error('Failed to persist peer policies');
+    }
+    try {
+      await saveFallbackPeerPolicies(fallbackPolicies);
+    } catch (fallbackError) {
+      console.warn('Peer policies saved to DB, but failed to update fallback cache:', fallbackError);
     }
   } catch (error) {
     console.error('Failed to persist peer policies:', error);
-    await saveFallbackPeerPolicies(hasPolicies ? sanitizedPolicies : null);
+    throw error;
   }
+}
+
+async function persistUserPeerPoliciesWithRetry(
+  context: RouteContext,
+  auth: RequestAuth | null | undefined,
+  details: { pubkey: string; previousPolicy: NodePolicyInput | null }
+): Promise<void> {
+  const maxAttempts = 3;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await persistUserPeerPolicies(context, auth);
+      return;
+    } catch (error) {
+      lastError = error;
+      try {
+        context.addServerLog('warning', 'Peer policy persistence attempt failed', {
+          pubkey: details.pubkey,
+          previousPolicy: summarizePolicyForLog(details.previousPolicy),
+          attempt,
+          maxAttempts,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      } catch {}
+      if (attempt < maxAttempts) {
+        const delayMs = 100 * (2 ** (attempt - 1));
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Failed to persist peer policies');
+}
+
+function clonePolicyMetadata(
+  metadata: unknown
+): Record<string, unknown> | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return undefined;
+  }
+  try {
+    return structuredClone(metadata as Record<string, unknown>);
+  } catch {
+    return { ...(metadata as Record<string, unknown>) };
+  }
+}
+
+function summarizePolicyForLog(policy: NodePolicyInput | null | undefined): Record<string, unknown> | null {
+  if (!policy || typeof policy !== 'object') {
+    return null;
+  }
+  const summary = structuredClone ? structuredClone(policy) : { ...policy };
+  if ('note' in summary) {
+    delete (summary as { [key: string]: unknown }).note;
+  }
+  if ('metadata' in summary) {
+    delete (summary as { [key: string]: unknown }).metadata;
+  }
+  return summary;
+}
+
+function getPingFailureMessage(result: unknown): string {
+  if (!result || typeof result !== 'object') {
+    return 'Timeout';
+  }
+
+  const record = result as { error?: unknown; reason?: unknown; message?: unknown };
+  if (typeof record.error === 'string' && record.error.length > 0) {
+    return record.error;
+  }
+  if (typeof record.reason === 'string' && record.reason.length > 0) {
+    return record.reason;
+  }
+  if (typeof record.message === 'string' && record.message.length > 0) {
+    return record.message;
+  }
+  return 'Timeout';
+}
+
+function toPolicyInput(summary: NodePolicySummary): NodePolicyInput {
+  const input: NodePolicyInput = {
+    pubkey: summary.pubkey,
+    allowSend: summary.allowSend,
+    allowReceive: summary.allowReceive
+  };
+
+  if (typeof summary.label === 'string') {
+    input.label = summary.label;
+  }
+  if (Array.isArray(summary.roles)) {
+    input.roles = summary.roles.filter((role): role is string => typeof role === 'string');
+  }
+  const metadata = clonePolicyMetadata(summary.metadata);
+  if (metadata) {
+    input.metadata = metadata;
+  }
+  if (typeof summary.note === 'string') {
+    input.note = summary.note;
+  }
+  if (summary.source === 'config' || summary.source === 'runtime') {
+    input.source = summary.source;
+  }
+
+  return input;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) return [];
+  const results = new Array<R>(items.length);
+  let cursor = 0;
+  const concurrency = Math.max(1, Math.min(limit, items.length));
+
+  const runWorker = async () => {
+    while (true) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await worker(items[index]);
+    }
+  };
+
+  await Promise.all(Array.from({ length: concurrency }, () => runWorker()));
+  return results;
 }
 
 // Helper function to get credentials based on mode
@@ -354,17 +496,22 @@ export async function handlePeersRoute(req: Request, url: URL, context: RouteCon
             return Response.json({ error: 'Missing credentials' }, { status: statusCode, headers });
           }
           
-          const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
-          if (selfPubkeyResult.pubkey) {
-            return Response.json({ 
-              pubkey: selfPubkeyResult.pubkey,
-              warnings: selfPubkeyResult.warnings 
-            }, { headers });
-          } else {
-            return Response.json({ 
-              error: 'Could not extract self pubkey',
-              warnings: selfPubkeyResult.warnings 
-            }, { status: 400, headers });
+          try {
+            const selfPubkeyResult = extractSelfPubkeyFromCredentials(credentials.group_cred, credentials.share_cred);
+            if (selfPubkeyResult.pubkey) {
+              return Response.json({ 
+                pubkey: selfPubkeyResult.pubkey,
+                warnings: selfPubkeyResult.warnings 
+              }, { headers });
+            } else {
+              return Response.json({ 
+                error: 'Could not extract self pubkey',
+                warnings: selfPubkeyResult.warnings 
+              }, { status: 400, headers });
+            }
+          } catch (error) {
+            console.error('Failed to extract self pubkey from credentials:', error);
+            return Response.json({ error: 'Malformed credentials', warnings: ['Invalid credentials format'] }, { status: 400, headers });
           }
         }
         break;
@@ -500,6 +647,7 @@ async function handlePeerPolicyRoute(
     const currentSummary = getNodePolicy(context.node, normalized);
     const nextAllowSend = allowSend ?? currentSummary?.allowSend ?? false;
     const nextAllowReceive = allowReceive ?? currentSummary?.allowReceive ?? false;
+    const previousPolicy = currentSummary ? toPolicyInput(currentSummary) : null;
 
     const policyInput: NodePolicyInput = {
       pubkey: normalized,
@@ -518,29 +666,60 @@ async function handlePeerPolicyRoute(
           allowReceive: policy.allowReceive
         });
       } catch {}
-      await persistUserPeerPolicies(context, auth);
+      await persistUserPeerPoliciesWithRetry(context, auth, { pubkey: normalized, previousPolicy });
       return Response.json({ policy }, { headers });
     } catch (error) {
-      console.error('Failed to update peer policy:', error);
+      let rollbackSucceeded = false;
+      let rollbackSkipped = false;
+      try {
+        const latestSummary = getNodePolicy(context.node, normalized);
+        const stillMatchesAttempt =
+          latestSummary &&
+          latestSummary.allowSend === policyInput.allowSend &&
+          latestSummary.allowReceive === policyInput.allowReceive;
+
+        if (stillMatchesAttempt) {
+          if (previousPolicy) {
+            setNodePolicies(context.node, [previousPolicy], { merge: true });
+          } else {
+            const remainingInputs = getNodePolicies(context.node)
+              .filter(summary => !comparePubkeys(summary.pubkey, normalized))
+              .map(toPolicyInput);
+            setNodePolicies(context.node, remainingInputs, { merge: false });
+          }
+          rollbackSucceeded = true;
+        } else {
+          rollbackSkipped = true;
+        }
+      } catch (rollbackError) {
+        console.error('Failed to roll back peer policy update:', rollbackError);
+      }
+      const errorDetails = {
+        pubkey: normalized,
+        previousPolicy: summarizePolicyForLog(previousPolicy),
+        attemptedPolicy: summarizePolicyForLog(policyInput),
+        persistError: error instanceof Error ? error.message : String(error),
+        rollbackSucceeded,
+        rollbackSkipped
+      };
+      try {
+        context.addServerLog('error', 'Failed to update peer policy', errorDetails);
+      } catch {}
+      console.error('Failed to update peer policy:', errorDetails);
       return Response.json({ error: 'Failed to update peer policy' }, { status: 500, headers });
     }
   }
 
   if (req.method === 'DELETE') {
+    const summaries = getNodePolicies(context.node);
+    const previousSummary = summaries.find(summary => comparePubkeys(summary.pubkey, normalized));
+    const previousPolicy = previousSummary ? toPolicyInput(previousSummary) : null;
     try {
-      const summaries = getNodePolicies(context.node);
       const remainingInputs = summaries
         .filter(summary => !comparePubkeys(summary.pubkey, normalized))
-        .map(summary => ({
-          pubkey: summary.pubkey,
-          allowSend: summary.allowSend,
-          allowReceive: summary.allowReceive,
-          label: summary.label,
-          note: summary.note,
-          source: summary.source
-        }));
+        .map(toPolicyInput);
 
-      if (remainingInputs.length === summaries.length) {
+      if (!previousSummary) {
         return Response.json({ error: 'Policy not found' }, { status: 404, headers });
       }
 
@@ -550,10 +729,35 @@ async function handlePeerPolicyRoute(
       try {
         context.addServerLog('info', 'Peer policy removed', { pubkey: normalized });
       } catch {}
-      await persistUserPeerPolicies(context, auth);
+      await persistUserPeerPoliciesWithRetry(context, auth, { pubkey: normalized, previousPolicy });
       return Response.json({ removed: true, policy }, { headers });
     } catch (error) {
-      console.error('Failed to remove peer policy:', error);
+      let rollbackSucceeded = false;
+      let rollbackSkipped = false;
+      try {
+        const latestSummary = getNodePolicy(context.node, normalized);
+        // Restore only when target is still absent; if another request already set it,
+        // avoid clobbering newer state.
+        if (!latestSummary && previousPolicy) {
+          setNodePolicies(context.node, [previousPolicy], { merge: true });
+          rollbackSucceeded = true;
+        } else {
+          rollbackSkipped = true;
+        }
+      } catch (rollbackError) {
+        console.error('Failed to roll back peer policy removal:', rollbackError);
+      }
+      const errorDetails = {
+        pubkey: normalized,
+        previousPolicy: summarizePolicyForLog(previousPolicy),
+        persistError: error instanceof Error ? error.message : String(error),
+        rollbackSucceeded,
+        rollbackSkipped
+      };
+      try {
+        context.addServerLog('error', 'Failed to remove peer policy', errorDetails);
+      } catch {}
+      console.error('Failed to remove peer policy:', errorDetails);
       return Response.json({ error: 'Failed to remove peer policy' }, { status: 500, headers });
     }
   }
@@ -587,9 +791,9 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
       }
     }
     
-    const pingPromises = allPeers.map(async (pubkey) => {
-       const normalizedPubkey = normalizePubkey(pubkey);
+    const results = await mapWithConcurrency(allPeers, MAX_CONCURRENT_PINGS, async (pubkey) => {
        try {
+         const normalizedPubkey = normalizePubkey(pubkey);
          const startTime = Date.now();
          let result;
          if (context.node) {
@@ -603,12 +807,12 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
          
          const latency = Date.now() - startTime;
          
-         if ((result as any).ok) {
-           const updatedStatus: PeerStatus = {
-             pubkey,
-             online: true,
-             lastSeen: new Date(),
-             latency
+        if ((result as any).ok) {
+          const updatedStatus: PeerStatus = {
+            pubkey,
+            online: true,
+            lastSeen: new Date(),
+            latency
            };
            context.peerStatuses.set(normalizedPubkey, updatedStatus);
            
@@ -622,15 +826,15 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
            });
            
            return { pubkey, success: true, latency };
-         } else {
-           const updatedStatus: PeerStatus = {
-             pubkey,
-             online: false,
-             lastPingAttempt: new Date()
-           };
-           context.peerStatuses.set(normalizedPubkey, updatedStatus);
-           return { pubkey, success: false, error: 'Timeout' };
-         }
+        } else {
+          const updatedStatus: PeerStatus = {
+            pubkey,
+            online: false,
+            lastPingAttempt: new Date()
+          };
+          context.peerStatuses.set(normalizedPubkey, updatedStatus);
+          return { pubkey, success: false, error: getPingFailureMessage(result) };
+        }
          } catch (error) {
          const errorMessage = error instanceof Error ? error.message : 'Unknown error';
          const updatedStatus: PeerStatus = {
@@ -638,12 +842,14 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
            online: false,
            lastPingAttempt: new Date()
          };
-         context.peerStatuses.set(normalizedPubkey, updatedStatus);
+         const safePubkey = safeNormalizePubkey(pubkey);
+         if (safePubkey) {
+           context.peerStatuses.set(safePubkey, updatedStatus);
+         }
          return { pubkey, success: false, error: errorMessage };
        }
     });
-    
-    const results = await Promise.all(pingPromises);
+
     return Response.json({ results }, { headers });
   } catch (error) {
     return Response.json({ error: 'Failed to ping peers' }, { status: 500, headers });
@@ -651,10 +857,9 @@ async function handlePingAllPeers(context: RouteContext, headers: Record<string,
 }
 
 async function handlePingSinglePeer(target: string, context: RouteContext, headers: Record<string, string>): Promise<Response> {
-  // Ping specific peer
-  const normalizedPubkey = normalizePubkey(target);
-  
   try {
+    // Ping specific peer
+    const normalizedPubkey = normalizePubkey(target);
     const startTime = Date.now();
     let result;
     if (context.node) {
@@ -703,7 +908,7 @@ async function handlePingSinglePeer(target: string, context: RouteContext, heade
       return Response.json({ 
         pubkey: target, 
         success: false, 
-        error: 'Timeout',
+        error: getPingFailureMessage(result),
         status: updatedStatus 
       }, { headers });
     }
@@ -714,7 +919,10 @@ async function handlePingSinglePeer(target: string, context: RouteContext, heade
       online: false,
       lastPingAttempt: new Date()
     };
-    context.peerStatuses.set(normalizedPubkey, updatedStatus);
+    const safePubkey = safeNormalizePubkey(target);
+    if (safePubkey) {
+      context.peerStatuses.set(safePubkey, updatedStatus);
+    }
     
     return Response.json({ 
       pubkey: target, 

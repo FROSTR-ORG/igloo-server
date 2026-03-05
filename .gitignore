@@ -40,6 +40,8 @@ dist
 static/app.js
 static/app.css
 static/styles.css
+static/docs/swagger-ui-bundle.js
+static/docs/swagger-ui-bundle.js.map
 static/qr-scanner-worker.min.js
 
 # VSCode
@@ -64,7 +66,7 @@ data/.session-secret
 test-*.sh
 debug-*.js
 verify-*.md
-.DS_Store
+test-results/
 
 # LLM files
 .claude

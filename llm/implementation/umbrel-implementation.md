@@ -66,11 +66,11 @@ These values are set in the store compose and expected by the UI flow:
 
 ## Operational Notes
 - Healthcheck uses `curl http://localhost:8002/api/status` with retries and start period.
-- The Umbrel store uses a pinned digest to avoid tag caching issues; update the digest on each new release.
-- `packages/umbrel/igloo/docker-compose.yml` remains a sideload/dev bundle and still points at `:umbrel-dev` without a digest.
+- `igloo-server/docker-compose.yml` (Umbrel store artifact) intentionally uses the `:umbrel-dev` tag pinned to a digest (e.g. `ghcr.io/frostr-org/igloo-server:umbrel-dev@sha256:...`). The tag stays `:umbrel-dev` on every release; only the digest is updated. This avoids Umbrel app-store tag-caching issues.
+- `packages/umbrel/igloo/docker-compose.yml` is a sideload/dev bundle and also points at `:umbrel-dev` but without a pinned digest.
 
 ## Update Checklist for Future Releases
 1. Build and push the new Umbrel image (`:umbrel-<version>` and `:umbrel-latest`).
-2. Update `igloo-server-store/igloo-server/docker-compose.yml` to the new image digest.
-3. Update `igloo-server-store/igloo-server/umbrel-app.yml` version and release notes.
+2. Bump the digest in `igloo-server/docker-compose.yml` (keep the `:umbrel-dev` tag; only the `@sha256:...` digest changes).
+3. Revise `igloo-server/umbrel-app.yml` version and release notes.
 4. Refresh gallery assets if the UI has changed.

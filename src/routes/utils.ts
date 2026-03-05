@@ -32,6 +32,56 @@ export function binaryToHex(data: Uint8Array | Buffer): string | null {
   return hex.toLowerCase();
 }
 
+function isValidIpv4Address(hostname: string): boolean {
+  const octets = hostname.split('.');
+  if (octets.length !== 4) return false;
+  return octets.every((octet) => /^\d+$/.test(octet) && Number(octet) >= 0 && Number(octet) <= 255);
+}
+
+function decodeMappedIpv4(segment: string): string | null {
+  if (isValidIpv4Address(segment)) return segment;
+  const mappedHex = segment.match(/^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!mappedHex) return null;
+  const hi = Number.parseInt(mappedHex[1], 16);
+  const lo = Number.parseInt(mappedHex[2], 16);
+  const decoded = `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`;
+  return isValidIpv4Address(decoded) ? decoded : null;
+}
+
+function extractIpv4MappedIpv6(hostname: string): string | null {
+  const mappedPrefixes = [
+    /^::ffff:(.+)$/i,
+    /^::ffff:0:(.+)$/i,
+  ];
+  for (const pattern of mappedPrefixes) {
+    const match = hostname.match(pattern);
+    if (!match) continue;
+    const decoded = decodeMappedIpv4(match[1]);
+    if (decoded) return decoded;
+  }
+  return null;
+}
+
+function isLoopbackRelayHost(hostname: string): boolean {
+  let normalized = hostname.replace(/\.+$/, '').replace(/^\[(.*)\]$/, '$1').toLowerCase();
+  if (
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized === '::1' ||
+    normalized === '0:0:0:0:0:0:0:1'
+  ) return true;
+
+  const mappedIpv4 = extractIpv4MappedIpv6(normalized);
+  if (mappedIpv4) {
+    normalized = mappedIpv4;
+  }
+
+  const octets = normalized.split('.');
+  if (octets.length !== 4) return false;
+  if (octets[0] !== '127') return false;
+  return isValidIpv4Address(normalized);
+}
+
 // Helper function to get valid relay URLs
 export function getValidRelays(
   envRelays?: string,
@@ -60,11 +110,13 @@ export function getValidRelays(
     }
     
     // Validate each relay URL and exclude localhost to avoid conflicts
+    const allowLocalhost = process.env['ALLOW_LOCALHOST_RELAY'] === 'true';
     const validRelays = relayList.filter(relay => {
       try {
         const url = new URL(relay);
         // Exclude localhost relays to avoid conflicts with our server
-        if (url.hostname === 'localhost' || url.hostname === '127.0.0.1') {
+        // (unless explicitly allowed, e.g. for testing)
+        if (!allowLocalhost && isLoopbackRelayHost(url.hostname)) {
           console.warn(`Excluding localhost relay to avoid conflicts: ${relay}`);
           return false;
         }
@@ -96,7 +148,9 @@ export function getValidRelays(
 }
 
 // Helper functions for .env file management
-const ENV_FILE_PATH = '.env';
+function getEnvFilePath(): string {
+  return process.env.ENV_FILE_PATH?.trim() || '.env';
+}
 
 // Security: Whitelist of allowed environment variable keys (for write/validation)
 // IMPORTANT: SESSION_SECRET must NEVER be included here - it's strictly server-only
@@ -246,8 +300,9 @@ function stringifyEnvFile(env: Record<string, string>): string {
 
 export async function readEnvFile(): Promise<Record<string, string>> {
   try {
-    await fs.access(ENV_FILE_PATH);
-    const content = await fs.readFile(ENV_FILE_PATH, 'utf-8');
+    const envFilePath = getEnvFilePath();
+    await fs.access(envFilePath);
+    const content = await fs.readFile(envFilePath, 'utf-8');
     const fileEnv = parseEnvFile(content);
     
     // Merge with actual environment variables as fallback
@@ -290,7 +345,7 @@ function getEnvVarsFromProcess(): Record<string, string> {
 // Get the modification time of the environment file
 export async function getEnvFileModTime(): Promise<string | null> {
   try {
-    const stats = await fs.stat(ENV_FILE_PATH);
+    const stats = await fs.stat(getEnvFilePath());
     return stats.mtime.toISOString();
   } catch (error) {
     // File doesn't exist or error accessing it
@@ -354,7 +409,7 @@ export async function writeEnvFileWithTimestamp(env: Record<string, string>): Pr
     }
     
     const content = stringifyEnvFile(env);
-    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
+    await fs.writeFile(getEnvFilePath(), content, 'utf-8');
     return true;
   } catch (error) {
     console.error('Error writing .env file:', error);
@@ -365,7 +420,7 @@ export async function writeEnvFileWithTimestamp(env: Record<string, string>): Pr
 export async function writeEnvFile(env: Record<string, string>): Promise<boolean> {
   try {
     const content = stringifyEnvFile(env);
-    await fs.writeFile(ENV_FILE_PATH, content, 'utf-8');
+    await fs.writeFile(getEnvFilePath(), content, 'utf-8');
     return true;
   } catch (error) {
     console.error('Error writing .env file:', error);
@@ -392,51 +447,48 @@ export function getContentType(filePath: string): string {
 }
 
 // Helper function to safely serialize data with circular reference handling
-export function safeStringify(obj: any, maxDepth = 3): string {
-  const seen = new WeakSet();
-  
-  const replacer = (_key: string, value: any, depth = 0): any => {
+export function safeStringify(obj: unknown, maxDepth = 3): string {
+  const seen = new WeakSet<object>();
+
+  const serializeValue = (value: unknown, depth = 0): unknown => {
     if (depth > maxDepth) {
       return '[Max Depth Reached]';
     }
-    
+
     if (value === null || typeof value !== 'object') {
       return value;
     }
-    
+
     if (seen.has(value)) {
       return '[Circular Reference]';
     }
-    
     seen.add(value);
-    
+
     if (Array.isArray(value)) {
-      return value.map((item, index) => replacer(String(index), item, depth + 1));
+      return value.map((item) => serializeValue(item, depth + 1));
     }
-    
-    const result: any = {};
-    for (const [k, v] of Object.entries(value)) {
-      // Skip functions and undefined values
-      if (typeof v === 'function' || v === undefined) {
+
+    const result: Record<string, unknown> = {};
+    for (const [key, entryValue] of Object.entries(value as Record<string, unknown>)) {
+      if (typeof entryValue === 'function' || entryValue === undefined) {
         continue;
       }
       // Explicitly skip sensitive binary keys to avoid accidental exposure
-      if (k === 'derivedKey') {
+      if (key === 'derivedKey') {
         continue;
       }
-      result[k] = replacer(k, v, depth + 1);
+      result[key] = serializeValue(entryValue, depth + 1);
     }
-    
     return result;
   };
-  
+
   try {
-    return JSON.stringify(replacer('', obj));
+    return JSON.stringify(serializeValue(obj, 0));
   } catch (error) {
     return JSON.stringify({
       error: 'Failed to serialize object',
       type: typeof obj,
-      constructor: obj?.constructor?.name || 'Unknown'
+      constructor: (obj as { constructor?: { name?: string } } | null | undefined)?.constructor?.name || 'Unknown'
     });
   }
 }
@@ -795,14 +847,15 @@ export function validateRelayUrls(relays: any): { valid: boolean; urls?: string[
 export function normalizeRelayListForEcho(relays: any): string[] | undefined {
   const validation = validateRelayUrls(relays);
   if (!validation.valid || !validation.urls || validation.urls.length === 0) return undefined;
+  const allowLocalhost = process.env['ALLOW_LOCALHOST_RELAY'] === 'true';
   const filtered = validation.urls
     .map((r) => r.trim())
     .filter((r) => r.length > 0)
     .filter((r) => {
       try {
         const u = new URL(r);
-        return (u.protocol === 'ws:' || u.protocol === 'wss:') &&
-               u.hostname !== 'localhost' && u.hostname !== '127.0.0.1' && u.hostname !== '::1';
+        if (!allowLocalhost && isLoopbackRelayHost(u.hostname)) return false;
+        return true;
       } catch {
         return false;
       }

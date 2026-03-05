@@ -28,8 +28,12 @@ echo "📥 Pulling latest changes..."
 git pull origin dev
 
 # Run tests and build
+echo "🧪 Running type checks and backend tests..."
+bun install --frozen-lockfile
+bun run typecheck
+bun run test:unit
+
 echo "🔨 Building project..."
-bun install
 bun run build
 
 echo "✅ Testing server startup..."
@@ -69,13 +73,9 @@ for i in {1..5}; do
     fi
 done
 
-if [ "$SERVER_HEALTHY" = false ]; then
-    echo "❌ Server failed to respond after 5 attempts"
-fi
-
 # Cleanup will be handled by trap, just check if we should fail
 if [ "$SERVER_HEALTHY" = false ]; then
-    echo "❌ Server startup test failed - cannot proceed with release"
+    echo "❌ Server failed to respond after 5 attempts - cannot proceed with release"
     exit 1
 fi
 
@@ -83,8 +83,9 @@ echo "📋 Validating documentation..."
 bun run docs:validate
 
 # Determine version
-if [[ "$VERSION_TYPE" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    NEW_VERSION="$VERSION_TYPE"
+if [[ "$VERSION_TYPE" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+    echo "📈 Explicit version: $VERSION_TYPE"
+    NEW_VERSION=$(npm version "$VERSION_TYPE" --no-git-tag-version --allow-same-version)
 else
     CURRENT_VERSION=$(node -p "require('./package.json').version")
     echo "📊 Current version: $CURRENT_VERSION"
@@ -92,9 +93,15 @@ else
     
     # Compute new version using npm version command
     NEW_VERSION=$(npm version $VERSION_TYPE --no-git-tag-version)
-    # Remove 'v' prefix from version (npm version returns v1.2.3)
-    NEW_VERSION=${NEW_VERSION#v}
-    echo "🎯 New version: $NEW_VERSION"
+fi
+
+# Remove 'v' prefix from version (npm version returns v1.2.3)
+NEW_VERSION=${NEW_VERSION#v}
+echo "🎯 New version: $NEW_VERSION"
+
+if [[ -z "$NEW_VERSION" || ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.-]+)?$ ]]; then
+    echo "❌ Invalid NEW_VERSION computed from npm version output: '${NEW_VERSION}'"
+    exit 1
 fi
 
 # Create release branch

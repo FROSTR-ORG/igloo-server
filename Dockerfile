@@ -1,5 +1,5 @@
 # Multi-stage build for smaller production image
-FROM oven/bun:latest AS build
+FROM oven/bun:1.3.10 AS build
 
 WORKDIR /app
 
@@ -21,7 +21,7 @@ COPY tsconfig.json ./
 RUN bun run build
 
 # --- Production stage ---
-FROM oven/bun:latest AS production
+FROM oven/bun:1.3.10 AS production
 
 WORKDIR /app
 

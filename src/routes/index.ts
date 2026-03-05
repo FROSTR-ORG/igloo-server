@@ -65,6 +65,24 @@ export async function handleRequest(
     'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key, X-Session-ID',
     'Vary': mergedVary,
   };
+  const parsedRateLimitWindowSeconds = Number.parseInt(process.env.RATE_LIMIT_WINDOW ?? '', 10);
+  const retryAfterSeconds = (
+    Number.isFinite(parsedRateLimitWindowSeconds) && parsedRateLimitWindowSeconds > 0
+      ? Math.ceil(parsedRateLimitWindowSeconds)
+      : 900
+  ).toString();
+  const hasAuthHint = (() => {
+    const authz = req.headers.get('authorization');
+    const apiKey = req.headers.get('x-api-key');
+    const sessionHeader = req.headers.get('x-session-id');
+    const cookie = req.headers.get('cookie');
+    return Boolean(
+      (authz && authz.trim().length > 0) ||
+      (apiKey && apiKey.trim().length > 0) ||
+      (sessionHeader && sessionHeader.trim().length > 0) ||
+      (cookie && /(?:^|;\s*)session=/.test(cookie))
+    );
+  })();
 
   // Handle preflight OPTIONS request for all API endpoints
   if (req.method === 'OPTIONS' && url.pathname.startsWith('/api/')) {
@@ -85,7 +103,7 @@ export async function handleRequest(
           status: 429,
           headers: {
             ...headers,
-            'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
+            'Retry-After': retryAfterSeconds
           }
         });
       }
@@ -108,15 +126,38 @@ export async function handleRequest(
     return Response.json(getAuthStatus(), { headers });
   }
 
+  if (url.pathname === '/api/events' && req.headers.get('upgrade') !== 'websocket') {
+    return Response.json({ error: 'Not Found' }, { status: 404, headers });
+  }
+
   // Handle API documentation (require auth in production for security)
   if (url.pathname.startsWith('/api/docs')) {
     // Require authentication for docs in production
     if (AUTH_CONFIG.ENABLED && process.env.NODE_ENV === 'production') {
       const authResult = await authenticate(req);
       if (!authResult.authenticated) {
+        if (authResult.rateLimited) {
+          const retryAfterSeconds = typeof authResult.retryAfter === 'number' ? authResult.retryAfter : 60;
+          const retryHeaders = {
+            ...headers,
+            'Retry-After': String(retryAfterSeconds)
+          };
+          return Response.json(
+            {
+              error: 'Rate limit exceeded',
+              retryAfter: retryAfterSeconds,
+              resetAt: authResult.resetAt
+            },
+            {
+              status: 429,
+              headers: retryHeaders
+            }
+          );
+        }
+        const authStatus = getAuthStatus();
         return Response.json({ 
           error: 'Authentication required for API documentation in production',
-          authMethods: getAuthStatus()
+          authMethods: authStatus.methods
         }, { 
           status: 401,
           headers 
@@ -190,147 +231,146 @@ export async function handleRequest(
   // Admin endpoints have their own ADMIN_SECRET authentication
   const isAdminEndpoint = url.pathname.startsWith('/api/admin');
 
-  // Authentication check for API endpoints (skip public endpoints, status, and admin)
-  if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint && !isStatusEndpoint && !isAdminEndpoint) {
-    const authResult = await authenticate(req);
-    
-    if (authResult.rateLimited) {
-      const response = Response.json({ 
-        error: 'Rate limit exceeded. Try again later.' 
-      }, { 
-        status: 429,
-        headers: {
-          ...headers,
-          'Retry-After': Math.ceil(parseInt(process.env.RATE_LIMIT_WINDOW || '900')).toString()
-        }
-      });
-      finalizeAuth();
-      return response;
-    }
-    
-    if (!authResult.authenticated) {
-      // Don't set WWW-Authenticate header to avoid browser's native auth dialog
-      // The frontend will handle authentication through its own UI
-      const response = Response.json({ 
-        error: authResult.error || 'Authentication required',
-        authMethods: getAuthStatus()
-      }, { 
-        status: 401,
-        headers 
-      });
-      finalizeAuth();
-      return response;
-    }
-    
-    authInfo = createRequestAuth({
-      userId: authResult.userId,
-      authenticated: true,
-      derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
-      sessionId: authResult.sessionId,
-      hasPassword: authResult.hasPassword
-    });
-  } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
-    // Special handling for /api/status: attempt authentication if headers are present
-    // but don't require it (allow unauthenticated health checks)
-    try {
+  try {
+    // Authentication check for API endpoints (skip public endpoints, status, and admin)
+    if (url.pathname.startsWith('/api/') && AUTH_CONFIG.ENABLED && !isPublicEndpoint && !isStatusEndpoint && !isAdminEndpoint) {
       const authResult = await authenticate(req);
       
-      // Only use auth info if authentication actually succeeded (not rate limited or failed)
-      if (authResult.authenticated && !authResult.rateLimited) {
-        // Create auth info with secure ephemeral storage for secrets
-        authInfo = createRequestAuth({
-          userId: authResult.userId,
-          authenticated: true,
-          derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
-          sessionId: authResult.sessionId,
-          hasPassword: authResult.hasPassword
+      if (authResult.rateLimited) {
+        return Response.json({ 
+          error: 'Rate limit exceeded. Try again later.' 
+        }, { 
+          status: 429,
+          headers: {
+            ...headers,
+            'Retry-After': retryAfterSeconds
+          }
         });
       }
-      // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
-    } catch (error) {
-      // If authentication throws an error, allow unauthenticated access
-      // Authentication attempt failed, allowing unauthenticated access for health checks
-    }
-  }
-
-  // Note: Authentication is now handled above for all non-public API endpoints
-
-  // Handle user routes (database mode only)
-  if (!HEADLESS && url.pathname.startsWith('/api/user')) {
-    const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
-    if (userResult) {
-      finalizeAuth();
-      return userResult;
-    }
-  }
-
-  // Handle admin routes (database mode only). Admin routes primarily use ADMIN_SECRET,
-  // but when a valid session exists for an admin user we allow that too.
-  if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
-    // Attempt optional authentication for admin endpoints to support session-admin access.
-    // Do not enforce auth result here; handleAdminRoute will decide based on ADMIN_SECRET or session.
-    if (AUTH_CONFIG.ENABLED && !authInfo) {
-      try {
-        const adminAuth = await authenticate(req);
-        if (adminAuth.authenticated && !adminAuth.rateLimited) {
-          authInfo = createRequestAuth({
-            userId: adminAuth.userId,
-            authenticated: true,
-            derivedKey: adminAuth.derivedKey ? adminAuth.derivedKey : undefined,
-            sessionId: adminAuth.sessionId,
-            hasPassword: adminAuth.hasPassword
-          });
+      
+      if (!authResult.authenticated) {
+        // Don't set WWW-Authenticate header to avoid browser's native auth dialog
+        // The frontend will handle authentication through its own UI
+        const authStatus = getAuthStatus();
+        return Response.json({ 
+          error: authResult.error || 'Authentication required',
+          authMethods: authStatus.methods
+        }, { 
+          status: 401,
+          headers 
+        });
+      }
+      
+      authInfo = createRequestAuth({
+        userId: authResult.userId,
+        authenticated: true,
+        derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+        sessionId: authResult.sessionId,
+        hasPassword: authResult.hasPassword
+      });
+    } else if (isStatusEndpoint && AUTH_CONFIG.ENABLED) {
+      // Special handling for /api/status: attempt authentication if headers are present
+      // but don't require it (allow unauthenticated health checks)
+      if (hasAuthHint) {
+        try {
+          const authResult = await authenticate(req);
+          
+          // Only use auth info if authentication actually succeeded (not rate limited or failed)
+          if (authResult.authenticated && !authResult.rateLimited) {
+            // Create auth info with secure ephemeral storage for secrets
+            authInfo = createRequestAuth({
+              userId: authResult.userId,
+              authenticated: true,
+              derivedKey: authResult.derivedKey ? authResult.derivedKey : undefined,
+              sessionId: authResult.sessionId,
+              hasPassword: authResult.hasPassword
+            });
+          }
+          // If authentication failed or was rate limited, authInfo remains null (unauthenticated access)
+        } catch (error) {
+          // If authentication throws an error, allow unauthenticated access
+          // Authentication attempt failed, allowing unauthenticated access for health checks
         }
-      } catch {}
+      }
     }
 
-    const adminResult = await handleAdminRoute(req, url, baseContext, authInfo);
-    if (adminResult) {
-      finalizeAuth();
-      return adminResult;
+    // Note: Authentication is now handled above for all non-public API endpoints
+
+    // Handle user routes (database mode only)
+    if (!HEADLESS && url.pathname.startsWith('/api/user')) {
+      const userResult = await handleUserRoute(req, url, privilegedContext, authInfo);
+      if (userResult) {
+        return userResult;
+      }
     }
+
+    // Handle admin routes (database mode only). Admin routes primarily use ADMIN_SECRET,
+    // but when a valid session exists for an admin user we allow that too.
+    if (!HEADLESS && url.pathname.startsWith('/api/admin')) {
+      // Attempt optional authentication for admin endpoints to support session-admin access.
+      // Do not enforce auth result here; handleAdminRoute will decide based on ADMIN_SECRET or session.
+      if (AUTH_CONFIG.ENABLED && !authInfo) {
+        try {
+          const adminAuth = await authenticate(req);
+          if (adminAuth.authenticated && !adminAuth.rateLimited) {
+            authInfo = createRequestAuth({
+              userId: adminAuth.userId,
+              authenticated: true,
+              derivedKey: adminAuth.derivedKey ? adminAuth.derivedKey : undefined,
+              sessionId: adminAuth.sessionId,
+              hasPassword: adminAuth.hasPassword
+            });
+          }
+        } catch {}
+      }
+
+      const adminResult = await handleAdminRoute(req, url, baseContext, authInfo);
+      if (adminResult) {
+        return adminResult;
+      }
+    }
+    
+    // Handle privileged routes separately
+    if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
+      const result = await handleEnvRoute(req, url, privilegedContext, authInfo);
+      if (result) {
+        return result;
+      }
+    }
+
+    if (!HEADLESS && url.pathname.startsWith('/api/nip46/')) {
+      const nip46Result = await handleNip46Route(req, url, privilegedContext, authInfo);
+      if (nip46Result) {
+        return nip46Result;
+      }
+    }
+
+    // Try each non-privileged route handler in order
+    // Note: These handlers now accept auth as an optional parameter
+    const routeHandlers = [
+      handleStatusRoute,    // Allow unauthenticated for health checks
+      handleUpdateRoute,
+      handleEventLogRoute,
+      handlePeersRoute,
+      handleSignRoute,
+      handleNip44Route,
+      handleNip04Route,
+      handleRecoveryRoute,
+    ];
+
+    for (const handler of routeHandlers) {
+      const result = await handler(req, url, context, authInfo);
+      if (result) {
+        return result;
+      }
+    }
+
+    // If no route matched, return 404
+    if (url.pathname.startsWith('/api/')) {
+      return Response.json({ error: 'Not Found' }, { status: 404, headers });
+    }
+    return new Response('Not Found', { status: 404 });
+  } finally {
+    finalizeAuth();
   }
-  
-  // Handle privileged routes separately
-  if (needsPrivilegedAccess && url.pathname.startsWith('/api/env')) {
-    const result = await handleEnvRoute(req, url, privilegedContext, authInfo);
-    if (result) {
-      finalizeAuth();
-      return result;
-    }
-  }
-
-  if (!HEADLESS && url.pathname.startsWith('/api/nip46/')) {
-    const nip46Result = await handleNip46Route(req, url, privilegedContext, authInfo);
-    if (nip46Result) {
-      finalizeAuth();
-      return nip46Result;
-    }
-  }
-
-  // Try each non-privileged route handler in order
-  // Note: These handlers now accept auth as an optional parameter
-  const routeHandlers = [
-    handleStatusRoute,    // Allow unauthenticated for health checks
-    handleUpdateRoute,
-    handleEventLogRoute,
-    handlePeersRoute,
-    handleSignRoute,
-    handleNip44Route,
-    handleNip04Route,
-    handleRecoveryRoute,
-  ];
-
-  for (const handler of routeHandlers) {
-    const result = await handler(req, url, context, authInfo);
-    if (result) {
-      finalizeAuth();
-      return result;
-    }
-  }
-
-  // If no route matched, return 404
-  const notFound = new Response('Not Found', { status: 404 });
-  finalizeAuth();
-  return notFound;
 } 

@@ -28,3 +28,4 @@ Notes
 - Tests intentionally include public endpoints (status, docs) while sending the API key to exercise the header parsing path.
 - In database mode, API keys authenticate, but routes requiring a numeric DB user or admin secret will still respond 401/403. That’s expected and checked by the permission probes.
 - WS auth is performed via `?apiKey=...` query param to avoid client header limitations; the server maps it to `X-API-Key` during upgrade.
+  If you set `ALLOW_QUERY_CREDENTIALS=false`, switch to header or `Sec-WebSocket-Protocol` auth hints for `/api/events`.

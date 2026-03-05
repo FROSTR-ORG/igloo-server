@@ -88,6 +88,7 @@ const Recover: React.FC<RecoverProps> = ({
   
   // Add a timeout ref to clear the autofilled indicator
   const autofilledTimeoutRef = useRef<number | null>(null);
+  const hasAutoDetectedRef = useRef(false);
   
   const [sharesFormValid, setSharesFormValid] = useState(false);
   
@@ -97,6 +98,9 @@ const Recover: React.FC<RecoverProps> = ({
     message: null 
   });
   const [isProcessing, setIsProcessing] = useState(false);
+  const [recoveredNsec, setRecoveredNsec] = useState<string | null>(null);
+  const [showRecoveredNsec, setShowRecoveredNsec] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   // Add state for the dynamic threshold
   const [currentThreshold, setCurrentThreshold] = useState<number>(defaultThreshold);
@@ -111,14 +115,18 @@ const Recover: React.FC<RecoverProps> = ({
 
   // Auto-detect shares from storage
   useEffect(() => {
+    if (hasAutoDetectedRef.current) return;
+
     const autoDetectShares = async () => {
       // If we already have initial data, don't auto-detect
       if (initialShare || initialGroupCredential) {
+        hasAutoDetectedRef.current = true;
         return;
       }
       
       // If we already have user input, don't override
       if (sharesInputs.some(s => s.trim()) || groupCredential.trim()) {
+        hasAutoDetectedRef.current = true;
         return;
       }
       
@@ -135,8 +143,13 @@ const Recover: React.FC<RecoverProps> = ({
           }
         }
         
-        // If no localStorage data, try server API
+        const hasAuthHeaders = Object.keys(authHeaders).length > 0;
+
+        // If no localStorage data, try server API once auth headers are available
         if (!shares || shares.length === 0) {
+          if (!hasAuthHeaders) {
+            return;
+          }
           try {
             const response = await fetch('/api/env/shares', {
               headers: authHeaders
@@ -204,13 +217,14 @@ const Recover: React.FC<RecoverProps> = ({
             }
           }
         }
+        hasAutoDetectedRef.current = true;
       } catch (error) {
         console.warn('Auto-detection failed:', error);
       }
     };
     
-    autoDetectShares();
-  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, sharesInputs, groupCredential]);
+    void autoDetectShares();
+  }, [initialShare, initialGroupCredential, defaultThreshold, defaultTotalShares, authHeaders]);
 
   // Handle initialShare and initialGroupCredential
   useEffect(() => {
@@ -322,7 +336,7 @@ const Recover: React.FC<RecoverProps> = ({
         
         // Additional structure validation
         if (typeof decodedGroup.threshold !== 'number' || 
-            typeof decodedGroup.group_pk !== 'string' || 
+            !(typeof decodedGroup.group_pk === 'string' || decodedGroup.group_pk instanceof Uint8Array) || 
             !Array.isArray(decodedGroup.commits) ||
             decodedGroup.commits.length === 0) {
           setIsGroupValid(false);
@@ -373,6 +387,9 @@ const Recover: React.FC<RecoverProps> = ({
     
     if (!sharesFormValid) return;
     
+    setRecoveredNsec(null);
+    setShowRecoveredNsec(false);
+    setCopyStatus('idle');
     setIsProcessing(true);
     try {
       // Get valid share credentials
@@ -399,39 +416,53 @@ const Recover: React.FC<RecoverProps> = ({
       }
 
       if (result.success) {
+        if (typeof result.nsec !== 'string' || result.nsec.length === 0) {
+          throw new Error('Recovery completed without an nsec payload');
+        }
+        setRecoveredNsec(result.nsec);
         setResult({
           success: true,
-          message: (
-            <div>
-              <div className="mb-3 text-green-200 font-medium">
-                Successfully recovered NSEC using {result.details.sharesUsed} shares
-              </div>
-              <div className="space-y-3">
-                <div>
-                  <div className="text-sm font-medium mb-1">Recovered NSEC:</div>
-                  <div className="bg-gray-800/50 p-2 rounded text-xs break-all">
-                    {result.nsec}
-                  </div>
-                </div>
-                {result.details.invalidShares && (
-                  <div className="text-sm text-orange-300">
-                    Note: {result.details.invalidShares.length} invalid shares were ignored
-                  </div>
-                )}
-              </div>
-            </div>
-          )
+          message: `Successfully recovered NSEC using ${result.details.sharesUsed} shares`
         });
+        if (Array.isArray(result.details.invalidShares) && result.details.invalidShares.length > 0) {
+          setResult({
+            success: true,
+            message: (
+              <div>
+                <div className="mb-2 text-green-200 font-medium">
+                  Successfully recovered NSEC using {result.details.sharesUsed} shares
+                </div>
+                <div className="text-sm text-orange-300">
+                  Note: {result.details.invalidShares.length} invalid shares were ignored
+                </div>
+              </div>
+            )
+          });
+        }
       } else {
         throw new Error(result.error || 'Recovery failed');
       }
     } catch (error) {
+      setRecoveredNsec(null);
+      setShowRecoveredNsec(false);
+      setCopyStatus('idle');
       setResult({
         success: false,
         message: `Error recovering NSEC: ${error instanceof Error ? error.message : 'Unknown error'}`
       });
     } finally {
       setIsProcessing(false);
+    }
+  };
+
+  const handleCopyRecoveredNsec = async () => {
+    if (!recoveredNsec) return;
+    try {
+      await navigator.clipboard.writeText(recoveredNsec);
+      setCopyStatus('copied');
+    } catch (error) {
+      console.error('Failed to copy recovered NSEC:', error);
+      setCopyStatus('error');
     }
   };
 
@@ -537,6 +568,32 @@ const Recover: React.FC<RecoverProps> = ({
             result.success ? 'bg-green-900/30 text-green-200' : 'bg-red-900/30 text-red-200'
           }`}>
             {result.message}
+            {result.success && recoveredNsec && (
+              <div className="mt-3 space-y-2">
+                <div className="text-sm font-medium">Recovered NSEC:</div>
+                <div className="bg-gray-800/50 p-2 rounded text-xs break-all">
+                  {showRecoveredNsec ? recoveredNsec : '••••••••••••••••••••••••••••••••'}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    onClick={() => setShowRecoveredNsec(prev => !prev)}
+                    className="bg-gray-700/60 hover:bg-gray-600/70 text-blue-100 text-xs px-3 py-1 h-auto"
+                  >
+                    {showRecoveredNsec ? 'Hide' : 'Show'}
+                  </Button>
+                  <Button
+                    type="button"
+                    onClick={() => void handleCopyRecoveredNsec()}
+                    className="bg-blue-700/60 hover:bg-blue-600/70 text-blue-100 text-xs px-3 py-1 h-auto"
+                  >
+                    Copy
+                  </Button>
+                  {copyStatus === 'copied' && <span className="text-xs text-green-300 self-center">Copied</span>}
+                  {copyStatus === 'error' && <span className="text-xs text-red-300 self-center">Copy failed</span>}
+                </div>
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -6,7 +6,7 @@
 
 import { mkdir } from 'node:fs/promises';
 
-const VERSION = process.env.SWAGGER_UI_VERSION || '5.9.0';
+const VERSION = process.env.SWAGGER_UI_VERSION || '5.31.1';
 const BASE = `https://unpkg.com/swagger-ui-dist@${VERSION}`;
 const FILES = [
   'swagger-ui.css',
@@ -36,7 +36,7 @@ async function main() {
 
   for (const name of FILES) {
     const buf = await fetchFile(name);
-    await Bun.write(`${outDir}/${name}`, buf, { createPath: true });
+    await Bun.write(`${outDir}/${name}`, buf);
     console.log(`[docs:vendor] wrote ${outDir}/${name} (${buf.length} bytes)`);
   }
   console.log(`[docs:vendor] Swagger UI assets pinned at ${VERSION}.`);

@@ -40,7 +40,7 @@ export function NIP46({ authHeaders }: NIP46Props) {
   const [activeTab, setActiveTab] = useState('sessions')
   const [showFullKeys, setShowFullKeys] = useState(false)
   const [copied, setCopied] = useState<{ transport?: boolean; user?: boolean }>({})
-  const [transportKey, setTransportKey] = useState<string | null>(null)
+  const [transportPubkey, setTransportPubkey] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [connectUri, setConnectUri] = useState('')
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -107,14 +107,21 @@ export function NIP46({ authHeaders }: NIP46Props) {
   const fetchTransport = useCallback(async () => {
     try {
       const res = await fetch('/api/nip46/transport', { headers })
-      if (res.ok) {
-        const data = await res.json()
-        if (typeof data?.transport_sk === 'string') {
-          setTransportKey(data.transport_sk)
-          setIsConnected(true)
-        }
+      if (!res.ok) {
+        setTransportPubkey(null)
+        setIsConnected(false)
+        return
+      }
+      const data = await res.json()
+      if (typeof data?.transport_pubkey === 'string') {
+        setTransportPubkey(data.transport_pubkey)
+        setIsConnected(true)
+      } else {
+        setTransportPubkey(null)
+        setIsConnected(false)
       }
     } catch {
+      setTransportPubkey(null)
       setIsConnected(false)
     }
   }, [headers])
@@ -127,8 +134,11 @@ export function NIP46({ authHeaders }: NIP46Props) {
     if (!targets.length) return
     setRequestsError(null)
     setRequestActionPending(true)
+    const extractErrorMessage = (error: unknown): string => {
+      return error instanceof Error ? error.message : 'Failed to update request'
+    }
     try {
-      await Promise.all(targets.map(async target => {
+      const results = await Promise.allSettled(targets.map(async target => {
         const payload: Record<string, any> = { id: target.id, action }
         if (options?.policyPatch) {
           payload.policy = options.policyPatch
@@ -147,9 +157,14 @@ export function NIP46({ authHeaders }: NIP46Props) {
       if (options?.policyPatch) {
         await fetchSessions()
       }
+      const errors = results
+        .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+        .map(result => extractErrorMessage(result.reason))
+      if (errors.length > 0) {
+        setRequestsError(errors.join('; '))
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Failed to update request'
-      setRequestsError(message)
+      setRequestsError(extractErrorMessage(error))
     } finally {
       setRequestActionPending(false)
     }
@@ -241,23 +256,47 @@ export function NIP46({ authHeaders }: NIP46Props) {
   }, [sessions])
 
   const handleRevokeSession = async (pubkey: string) => {
-    await fetch(`/api/nip46/sessions/${pubkey}`, {
-      method: 'DELETE',
-      headers
-    })
-    await fetchSessions()
+    setConnectError(null)
+    const encodedPubkey = encodeURIComponent(pubkey)
+    try {
+      const response = await fetch(`/api/nip46/sessions/${encodedPubkey}`, {
+        method: 'DELETE',
+        headers
+      })
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(detail || `Failed to revoke session (${response.status})`)
+      }
+      await fetchSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to revoke session'
+      setConnectError(message)
+      console.error('[NIP46] Failed to revoke session:', error)
+    }
   }
 
   const handleUpdateSessionPolicy = useCallback(async (pubkey: string, policy: PermissionPolicy) => {
-    await fetch(`/api/nip46/sessions/${pubkey}/policy`, {
-      method: 'PUT',
-      headers,
-      body: JSON.stringify({
-        methods: policy.methods,
-        kinds: policy.kinds
+    setConnectError(null)
+    const encodedPubkey = encodeURIComponent(pubkey)
+    try {
+      const response = await fetch(`/api/nip46/sessions/${encodedPubkey}/policy`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({
+          methods: policy.methods,
+          kinds: policy.kinds
+        })
       })
-    })
-    await fetchSessions()
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '');
+        throw new Error(detail || `Failed to update policy (${response.status})`)
+      }
+      await fetchSessions()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to update session policy'
+      setConnectError(message)
+      console.error('[NIP46] Failed to update session policy:', error)
+    }
   }, [headers, fetchSessions])
 
   const handleAddRelay = async (relay: string) => {
@@ -387,30 +426,41 @@ export function NIP46({ authHeaders }: NIP46Props) {
             <div className="flex items-center gap-4 flex-wrap">
               <StatusIndicator status={isConnected ? 'success' : 'idle'} label={isConnected ? 'NIP-46 Ready' : 'NIP-46 Disconnected'} />
               <div className="flex items-center gap-4 text-sm">
-                <div className="flex items-center gap-1">
-                  <Users className="h-4 w-4 text-blue-400" />
-                  <span className="text-gray-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
-                </div>
+            <div className="flex items-center gap-1">
+              <Users className="h-4 w-4 text-blue-400" />
+              <span className="text-gray-400">{sessions.length} {sessions.length === 1 ? 'session' : 'sessions'}</span>
+            </div>
                 <div className="flex items-center gap-1">
                   <Bell className="h-4 w-4 text-blue-400" />
                   <span className="text-gray-400">{requests.filter(r => r.status === 'pending').length} pending requests</span>
                 </div>
               </div>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setShowFullKeys(v => !v)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowFullKeys(v => !v)}
+              aria-label={showFullKeys ? 'Hide keys' : 'Show keys'}
+            >
               {showFullKeys ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
             </Button>
           </div>
 
-          {transportKey && (
+          {transportPubkey && (
             <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
               <div className="flex items-center gap-1">
-                <span>Transport</span>
+                <span>Transport pubkey</span>
                 <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
-                  {showFullKeys ? transportKey : truncate(transportKey, 8)}
+                  {showFullKeys ? transportPubkey : truncate(transportPubkey, 8)}
                 </span>
-                <Button variant="ghost" size="icon" onClick={() => handleCopy('transport', transportKey)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => handleCopy('transport', transportPubkey)}
+                  aria-label={`Copy transport pubkey${copied.transport ? ' (copied)' : ''}`}
+                  title="Copy transport pubkey"
+                >
                   {copied.transport ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
                 </Button>
               </div>
