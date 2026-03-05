@@ -66,7 +66,6 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
     const secretHex = await deriveSharedSecret(context.node, peer, timeoutMs);
     const localSecret = Uint8Array.from(Buffer.from(secretHex, 'hex'));
     const conversationKey = nip44.getConversationKey(localSecret, peer);
-    const conversationKeyHex = Buffer.from(conversationKey).toString('hex');
     const mode = url.pathname.endsWith('/encrypt') ? 'encrypt' : url.pathname.endsWith('/decrypt') ? 'decrypt' : null;
     if (!mode) return Response.json({ error: 'Unknown operation' }, { status: 404, headers });
 
@@ -74,10 +73,10 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
       throw new Error('Invalid shared secret length');
     }
     if (mode === 'encrypt') {
-      const ciphertext = nip44.encrypt(content, conversationKeyHex);
+      const ciphertext = nip44.encrypt(content, conversationKey);
       return Response.json({ result: ciphertext }, { status: 200, headers });
     } else {
-      const plaintext = nip44.decrypt(content, conversationKeyHex);
+      const plaintext = nip44.decrypt(content, conversationKey);
       return Response.json({ result: plaintext }, { status: 200, headers });
     }
   } catch (e: any) {

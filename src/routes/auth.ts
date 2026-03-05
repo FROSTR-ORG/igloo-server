@@ -459,6 +459,8 @@ export interface AuthResult {
   userId?: string | number; // Only JSON-serializable types
   error?: string;
   rateLimited?: boolean;
+  retryAfter?: number;
+  resetAt?: number;
   derivedKey?: Uint8Array; // Derived key for decryption operations (ephemeral - cleared after extraction)
   sessionId?: string; // Session ID for lazy vault retrieval
   hasPassword?: boolean; // Flag indicating if password-based derived key is available
@@ -877,7 +879,16 @@ export async function authenticate(req: Request): Promise<AuthResult> {
 
   const rateLimit = await checkRateLimit(req);
   if (!rateLimit.allowed) {
-    return { authenticated: false, error: 'Rate limit exceeded', rateLimited: true };
+    const retryAfter = typeof rateLimit.resetAt === 'number' && Number.isFinite(rateLimit.resetAt)
+      ? Math.max(0, Math.ceil((rateLimit.resetAt - Date.now()) / 1000))
+      : undefined;
+    return {
+      authenticated: false,
+      error: 'Rate limit exceeded',
+      rateLimited: true,
+      retryAfter,
+      resetAt: rateLimit.resetAt
+    };
   }
 
   // Try API Key first
