@@ -37,10 +37,11 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
 
   // Security: Ensure migrations directory is within project boundaries
   const projectRoot = path.resolve(process.cwd())
+  let resolvedDir = dir
   try {
-    const resolvedRealDir = realpathSync(dir)
+    resolvedDir = realpathSync(dir)
     const resolvedProjectRoot = realpathSync(projectRoot)
-    if (resolvedRealDir !== resolvedProjectRoot && !resolvedRealDir.startsWith(resolvedProjectRoot + path.sep)) {
+    if (resolvedDir !== resolvedProjectRoot && !resolvedDir.startsWith(resolvedProjectRoot + path.sep)) {
       throw new MigrationDirSecurityError(`Security: Migration directory must be within project root. Attempted: ${dir}`)
     }
   } catch (error) {
@@ -50,7 +51,7 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
     const detail = error instanceof Error ? error.message : String(error)
     throw new Error(`Security: Failed to validate migration directory path: ${detail}`)
   }
-  const files = readdirSync(dir)
+  const files = readdirSync(resolvedDir)
     .filter(f => f.toLowerCase().endsWith('.sql'))
     .sort()
 
@@ -58,7 +59,7 @@ export function runMigrations(migrationsDirRel = 'src/db/migrations', opts?: { s
   const stopOnError = opts?.stopOnError ?? true
   for (const file of files) {
     if (applied.has(file)) continue
-    const full = path.join(dir, file)
+    const full = path.join(resolvedDir, file)
     const sql = readFileSync(full, 'utf-8')
     // Basic sanity checks for managed SQL files
     if (sql.length > 1_000_000) {

@@ -43,7 +43,9 @@ function loadOpenApiSpec() {
 
 // Allowed local asset names to serve for the docs UI
 const ALLOWED_DOCS_ASSETS = new Set([
-  'swagger-ui.css'
+  'swagger-ui.css',
+  'swagger-ui-bundle.js',
+  'swagger-ui-standalone-preset.js'
 ]);
 
 // Swagger UI HTML template (self-hosted assets under /api/docs/assets/*)
@@ -54,7 +56,7 @@ const swaggerUIHtml = (specUrl: string) => `
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Igloo Server API Documentation</title>
-  <link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui.css" />
+  <link rel="stylesheet" type="text/css" href="/api/docs/assets/swagger-ui.css" />
   <style>
     html {
       box-sizing: border-box;
@@ -81,8 +83,8 @@ const swaggerUIHtml = (specUrl: string) => `
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-bundle.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5/swagger-ui-standalone-preset.js"></script>
+  <script src="/api/docs/assets/swagger-ui-bundle.js"></script>
+  <script src="/api/docs/assets/swagger-ui-standalone-preset.js"></script>
   <script>
     function renderDocsFallback() {
       var el = document.getElementById('swagger-ui') || document.body;

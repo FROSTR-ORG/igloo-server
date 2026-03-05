@@ -40,7 +40,7 @@ export function NIP46({ authHeaders }: NIP46Props) {
   const [activeTab, setActiveTab] = useState('sessions')
   const [showFullKeys, setShowFullKeys] = useState(false)
   const [copied, setCopied] = useState<{ transport?: boolean; user?: boolean }>({})
-  const [transportKey, setTransportKey] = useState<string | null>(null)
+  const [transportPubkey, setTransportPubkey] = useState<string | null>(null)
   const [isConnected, setIsConnected] = useState(false)
   const [connectUri, setConnectUri] = useState('')
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -108,20 +108,20 @@ export function NIP46({ authHeaders }: NIP46Props) {
     try {
       const res = await fetch('/api/nip46/transport', { headers })
       if (!res.ok) {
-        setTransportKey(null)
+        setTransportPubkey(null)
         setIsConnected(false)
         return
       }
       const data = await res.json()
-      if (typeof data?.transport_sk === 'string') {
-        setTransportKey(data.transport_sk)
+      if (typeof data?.transport_pubkey === 'string') {
+        setTransportPubkey(data.transport_pubkey)
         setIsConnected(true)
       } else {
-        setTransportKey(null)
+        setTransportPubkey(null)
         setIsConnected(false)
       }
     } catch {
-      setTransportKey(null)
+      setTransportPubkey(null)
       setIsConnected(false)
     }
   }, [headers])
@@ -446,20 +446,20 @@ export function NIP46({ authHeaders }: NIP46Props) {
             </Button>
           </div>
 
-          {transportKey && (
+          {transportPubkey && (
             <div className="flex flex-wrap items-center gap-3 text-xs text-gray-400">
               <div className="flex items-center gap-1">
-                <span>Transport</span>
+                <span>Transport pubkey</span>
                 <HelpCircle className="h-3.5 w-3.5 text-blue-400" />
                 <span className="font-mono text-blue-200 bg-blue-900/30 px-2 py-0.5 rounded">
-                  {showFullKeys ? transportKey : truncate(transportKey, 8)}
+                  {showFullKeys ? transportPubkey : truncate(transportPubkey, 8)}
                 </span>
                 <Button
                   variant="ghost"
                   size="icon"
-                  onClick={() => handleCopy('transport', transportKey)}
-                  aria-label={`Copy transport key${copied.transport ? ' (copied)' : ''}`}
-                  title="Copy transport key"
+                  onClick={() => handleCopy('transport', transportPubkey)}
+                  aria-label={`Copy transport pubkey${copied.transport ? ' (copied)' : ''}`}
+                  title="Copy transport pubkey"
                 >
                   {copied.transport ? <CheckIcon className="h-4 w-4 text-green-400" /> : <CopyIcon className="h-4 w-4 text-blue-300" />}
                 </Button>

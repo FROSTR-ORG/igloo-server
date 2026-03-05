@@ -1086,7 +1086,7 @@ async function checkRelayConnectivity(
       }
     }
 
-    if (requestRecreate && nodeValidation.shouldRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+    if (requestRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
       addServerLog('info', 'Recreating node after sustained connectivity failures');
       nodeHealth.consecutiveConnectivityFailures = 0;
       await nodeRecreateCallback();
@@ -1100,7 +1100,7 @@ async function checkRelayConnectivity(
     nodeHealth.consecutiveConnectivityFailures++;
     requestRecreate = true;
 
-    if (requestRecreate && nodeValidation.shouldRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
+    if (requestRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
       addServerLog('info', 'Connectivity errors exceeded threshold, recreating node');
       nodeHealth.consecutiveConnectivityFailures = 0;
       await nodeRecreateCallback();

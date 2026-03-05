@@ -97,6 +97,35 @@ function isTimeoutReason(reason: string): boolean {
   return value.includes('timeout');
 }
 
+async function readTextBodyWithLimit(req: Request, maxBytes: number): Promise<string | null> {
+  if (!req.body) return '';
+
+  const reader = req.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    const chunk = value instanceof Uint8Array ? value : new Uint8Array(value);
+    totalBytes += chunk.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      return null;
+    }
+    chunks.push(chunk);
+  }
+
+  const bodyBytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bodyBytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+
+  return new TextDecoder().decode(bodyBytes);
+}
+
 export async function handleSignRoute(req: Request, url: URL, context: RouteContext, _auth?: RequestAuth | null) {
   if (url.pathname !== '/api/sign') return null;
 
@@ -149,14 +178,13 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
 
   let rawBody = '';
   try {
-    rawBody = await req.text();
+    const bodyText = await readTextBodyWithLimit(req, maxBodyBytes);
+    if (bodyText === null) {
+      return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
+    }
+    rawBody = bodyText;
   } catch {
     return Response.json({ code: 'INVALID_JSON', error: 'Invalid JSON' }, { status: 400, headers });
-  }
-
-  const actualBodyBytes = new TextEncoder().encode(rawBody).byteLength;
-  if (actualBodyBytes > maxBodyBytes) {
-    return Response.json({ code: 'REQUEST_TOO_LARGE', error: 'Request too large' }, { status: 413, headers });
   }
 
   let body: SignRequestBody;
@@ -223,7 +251,7 @@ export async function handleSignRoute(req: Request, url: URL, context: RouteCont
     if (typeof signatureHex === 'string' && signatureHex.startsWith('0x')) {
       signatureHex = signatureHex.slice(2);
     }
-    if (!signatureHex || !/^[0-9a-fA-F]+$/.test(signatureHex)) {
+    if (!signatureHex || !/^[0-9a-fA-F]{128}$/.test(signatureHex)) {
       try {
         context.addServerLog('error', 'Invalid signature format', { id, signature: signatureHex });
       } catch {

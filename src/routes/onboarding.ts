@@ -29,7 +29,7 @@ const parsedClientIdTtl = Number.parseInt(process.env.CLIENT_ID_TTL_MS ?? '', 10
 const clientIdTtlBase = Number.isFinite(parsedClientIdTtl) && parsedClientIdTtl > 0 ? parsedClientIdTtl : 86400000;
 const CLIENT_ID_TTL_MS = Math.max(10 * 60_000, Math.min(SEVEN_DAYS_MS, clientIdTtlBase));
 const FINGERPRINT_SECRET = process.env.FINGERPRINT_SECRET || '';
-const FALLBACK_FINGERPRINT_SECRET = FINGERPRINT_SECRET || randomBytes(32).toString('hex');
+const FALLBACK_FINGERPRINT_SECRET = FINGERPRINT_SECRET || process.env.SESSION_SECRET || ADMIN_SECRET || randomBytes(32).toString('hex');
 const LOG_FINGERPRINT_FALLBACK = process.env.LOG_FINGERPRINT_FALLBACK === 'true';
 let clientIdCleanupTimer: ReturnType<typeof setInterval> | null = null;
 

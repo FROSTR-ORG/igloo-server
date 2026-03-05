@@ -44,10 +44,20 @@ const formatTimestamp = (value: string) => {
   return Number.isNaN(date.getTime()) ? 'N/A' : date.toLocaleString()
 }
 
+const isPreviewCodePointAllowed = (codePoint: number): boolean => {
+  const isC0Control = codePoint <= 0x1f
+  const isDeleteOrC1Control = codePoint >= 0x7f && codePoint <= 0x9f
+  const isBidiIsolate = codePoint >= 0x202a && codePoint <= 0x202e
+  const isDirectionalIsolate = codePoint >= 0x2066 && codePoint <= 0x2069
+  return !(isC0Control || isDeleteOrC1Control || isBidiIsolate || isDirectionalIsolate)
+}
+
 const sanitizePreview = (value: string): string => {
-  return value
-    .replace(/[\u0000-\u001F\u007F-\u009F]/g, '')
-    .replace(/[\u202A-\u202E\u2066-\u2069]/g, '')
+  const filtered = Array.from(value).filter((char) => {
+    const codePoint = char.codePointAt(0)
+    return codePoint !== undefined && isPreviewCodePointAllowed(codePoint)
+  }).join('')
+  return filtered
     .replace(/\s+/g, ' ')
     .trim()
 }

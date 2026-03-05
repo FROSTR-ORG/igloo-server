@@ -412,24 +412,6 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
             // for correctness, then perform a single write.
             env.CREDENTIALS_SAVED_AT = new Date().toISOString();
           }
-          if (updatingCredentials || updatingRelays) {
-            try {
-              // Make restart intent explicit for observability and reviews
-              context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
-                updatingCredentials,
-                updatingRelays
-              });
-
-              // Serialize node restart under the global node lock.
-              // createAndConnectServerNode() updates the active node from the new env.
-              await executeUnderNodeLock(async () => {
-                await createAndConnectServerNode(env, context);
-              }, context);
-            } catch (error) {
-              context.addServerLog('error', 'Error recreating Bifrost node', error);
-              return Response.json({ success: false, message: 'Failed to recreate Bifrost node' }, { status: 500, headers });
-            }
-          }
 
           const writeOk = await writeEnvFile(env);
           if (!writeOk) {
@@ -462,6 +444,25 @@ export async function handleEnvRoute(req: Request, url: URL, context: Privileged
               }
             }
           } catch {}
+
+          if (updatingCredentials || updatingRelays) {
+            try {
+              // Make restart intent explicit for observability and reviews
+              context.addServerLog('info', 'Recreating Bifrost node due to env changes', {
+                updatingCredentials,
+                updatingRelays
+              });
+
+              // Serialize node restart under the global node lock.
+              // createAndConnectServerNode() updates the active node from the new env.
+              await executeUnderNodeLock(async () => {
+                await createAndConnectServerNode(env, context);
+              }, context);
+            } catch (error) {
+              context.addServerLog('error', 'Error recreating Bifrost node', error);
+              return Response.json({ success: false, message: 'Failed to recreate Bifrost node' }, { status: 500, headers });
+            }
+          }
 
           if (updatingCredentials || updatingRelays) {
             const echoPayload = (() => {

@@ -29,7 +29,7 @@ git pull origin dev
 
 # Run tests and build
 echo "🧪 Running type checks and backend tests..."
-bun install
+bun install --frozen-lockfile
 bun run typecheck
 bun run test:unit
 

@@ -85,7 +85,7 @@ describe('API key-protected route handlers', () => {
 
     const node: FakeSignNode = {
       req: {
-        sign: async (id: string) => ({ ok: true, data: [[id, 'stub', 'deadbeefcafe']] }),
+        sign: async (id: string) => ({ ok: true, data: [[id, 'stub', 'deadbeef'.repeat(16)]] }),
       },
     };
 
@@ -99,7 +99,7 @@ describe('API key-protected route handlers', () => {
     const res = await handleSignRoute(req, new URL(req.url), context, { authenticated: true });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.signature).toBe('deadbeefcafe');
+    expect(body.signature).toBe('deadbeef'.repeat(16));
     expect(body.id).toBe('1'.repeat(64));
   }, { timeout: 10000 });
 

@@ -116,16 +116,17 @@ const Recover: React.FC<RecoverProps> = ({
   // Auto-detect shares from storage
   useEffect(() => {
     if (hasAutoDetectedRef.current) return;
-    hasAutoDetectedRef.current = true;
 
     const autoDetectShares = async () => {
       // If we already have initial data, don't auto-detect
       if (initialShare || initialGroupCredential) {
+        hasAutoDetectedRef.current = true;
         return;
       }
       
       // If we already have user input, don't override
       if (sharesInputs.some(s => s.trim()) || groupCredential.trim()) {
+        hasAutoDetectedRef.current = true;
         return;
       }
       
@@ -142,8 +143,13 @@ const Recover: React.FC<RecoverProps> = ({
           }
         }
         
-        // If no localStorage data, try server API
+        const hasAuthHeaders = Object.keys(authHeaders).length > 0;
+
+        // If no localStorage data, try server API once auth headers are available
         if (!shares || shares.length === 0) {
+          if (!hasAuthHeaders) {
+            return;
+          }
           try {
             const response = await fetch('/api/env/shares', {
               headers: authHeaders
@@ -211,6 +217,7 @@ const Recover: React.FC<RecoverProps> = ({
             }
           }
         }
+        hasAutoDetectedRef.current = true;
       } catch (error) {
         console.warn('Auto-detection failed:', error);
       }
@@ -409,7 +416,10 @@ const Recover: React.FC<RecoverProps> = ({
       }
 
       if (result.success) {
-        setRecoveredNsec(typeof result.nsec === 'string' ? result.nsec : null);
+        if (typeof result.nsec !== 'string' || result.nsec.length === 0) {
+          throw new Error('Recovery completed without an nsec payload');
+        }
+        setRecoveredNsec(result.nsec);
         setResult({
           success: true,
           message: `Successfully recovered NSEC using ${result.details.sharesUsed} shares`

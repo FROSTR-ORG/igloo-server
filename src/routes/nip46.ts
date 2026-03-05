@@ -3,6 +3,7 @@ import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './
 import type { PrivilegedRouteContext, RequestAuth } from './types.js'
 import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey, getNip46Relays, setNip46Relays, mergeNip46Relays, listNip46Requests, updateNip46RequestStatus, deleteNip46Request, type Nip46RequestStatus, getSession, getNip46RequestById } from '../db/nip46.js'
 import { getNip46Service } from '../nip46/index.js'
+import { get_pubkey } from '../util/ecc.js'
 
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_MAX = HEADLESS ? 30 : 120;
 const DEFAULT_NIP46_SESSION_RATE_LIMIT_WINDOW_SECONDS = 3600; // Keep a 1 hour window by default
@@ -94,7 +95,7 @@ function parsePolicyPatch(value: unknown): PolicyPatch | null {
   const patch: PolicyPatch = {}
 
   if (value && typeof (value as any).methods === 'object' && !Array.isArray((value as any).methods)) {
-    const methods: Record<string, boolean> = {}
+    const methods = Object.create(null) as Record<string, boolean>
     for (const [name, flag] of Object.entries((value as any).methods)) {
       if (typeof flag === 'boolean' && name.trim()) {
         methods[name.trim()] = flag
@@ -104,7 +105,7 @@ function parsePolicyPatch(value: unknown): PolicyPatch | null {
   }
 
   if (value && typeof (value as any).kinds === 'object' && !Array.isArray((value as any).kinds)) {
-    const kinds: Record<string, boolean> = {}
+    const kinds = Object.create(null) as Record<string, boolean>
     for (const [rawKind, flag] of Object.entries((value as any).kinds)) {
       if (typeof flag === 'boolean') {
         const key = String(rawKind).trim()
@@ -129,7 +130,7 @@ function parseBooleanPolicyMap(
     throw new Error(`Field "${fieldPath}" must be an object`)
   }
 
-  const normalized: Record<string, boolean> = {}
+  const normalized = Object.create(null) as Record<string, boolean>
   for (const [rawKey, rawValue] of Object.entries(value as Record<string, unknown>)) {
     const key = rawKey.trim()
     if (!key) {
@@ -174,8 +175,8 @@ function parseSessionPolicyInput(policyValue: unknown): Nip46Policy | undefined 
 }
 
 function applyPolicyPatch(current: Nip46Policy | null | undefined, patch: PolicyPatch): Nip46Policy {
-  const baseMethods = { ...(current?.methods ?? {}) }
-  const baseKinds = { ...(current?.kinds ?? {}) }
+  const baseMethods = Object.assign(Object.create(null), current?.methods ?? {}) as Record<string, boolean>
+  const baseKinds = Object.assign(Object.create(null), current?.kinds ?? {}) as Record<string, boolean>
   const result: Nip46Policy = {}
 
   if (patch.methods) {
@@ -319,7 +320,7 @@ export async function handleNip46Route(
         sk = Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('')
         setTransportKey(userId, sk)
       }
-      return Response.json({ transport_sk: sk }, { headers })
+      return Response.json({ transport_pubkey: get_pubkey(sk) }, { headers })
     } catch (error) {
       console.error('[NIP46] Failed to get transport key:', error)
       return Response.json({ error: 'Failed to get transport key' }, { status: 500, headers })
@@ -336,7 +337,7 @@ export async function handleNip46Route(
       const body = parsedBody as Record<string, any>
       const sk = typeof body?.transport_sk === 'string' ? body.transport_sk : ''
       const saved = setTransportKey(userId, sk)
-      return Response.json({ ok: true, transport_sk: saved }, { headers })
+      return Response.json({ ok: true, transport_pubkey: get_pubkey(saved) }, { headers })
     } catch (error) {
       const msg = error instanceof Error ? error.message : 'Failed to set transport key'
       return Response.json({ error: msg }, { status: 400, headers })

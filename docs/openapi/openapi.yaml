@@ -54,7 +54,12 @@ servers:
     description: Local development server (HTTP for local development only)
     x-internal-only: true
 
-security: []
+security:
+  - apiKeyAuth: []
+  - bearerAuth: []
+  - basicAuth: []
+  - sessionCookie: []
+  - sessionHeader: []
 
 paths:
   /api/status:
@@ -1709,7 +1714,7 @@ paths:
   /api/nip46/transport:
     get:
       operationId: getNip46Transport
-      summary: Get NIP‑46 transport key
+      summary: Get NIP‑46 transport public key
       tags: [NIP‑46]
       security:
         - apiKeyAuth: []
@@ -1719,11 +1724,11 @@ paths:
         - sessionHeader: []
       responses:
         '200':
-          description: Transport key
+          description: Transport public key
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Nip46Transport'
+                $ref: '#/components/schemas/Nip46TransportPublic'
         '401': { $ref: '#/components/responses/Unauthorized' }
     put:
       operationId: updateNip46Transport
@@ -1740,17 +1745,17 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Nip46Transport'
+              $ref: '#/components/schemas/Nip46TransportInput'
       responses:
         '200':
-          description: Updated transport key
+          description: Updated transport public key
           content:
             application/json:
               schema:
                 type: object
                 properties:
                   ok: { type: boolean }
-                  transport_sk: { type: string }
+                  transport_pubkey: { type: string }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
 
@@ -2894,13 +2899,21 @@ components:
           items: { type: string }
       required: [relays]
 
-    Nip46Transport:
+    Nip46TransportInput:
       type: object
       properties:
         transport_sk:
           type: string
           description: 32-byte transport secret key encoded as hex
       required: [transport_sk]
+
+    Nip46TransportPublic:
+      type: object
+      properties:
+        transport_pubkey:
+          type: string
+          description: Transport public key derived from the stored NIP-46 secret
+      required: [transport_pubkey]
 
     AdminApiKey:
       type: object
