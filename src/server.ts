@@ -224,7 +224,7 @@ const addServerLog = createAddServerLog(broadcastEvent, {
 });
 // NIP-46 service only needed in database mode (perf optimization 3.3)
 if (!CONST.HEADLESS) {
-  initNip46Service({
+  void initNip46Service({
     addServerLog,
     broadcastEvent,
     getNode: () => node

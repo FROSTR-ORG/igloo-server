@@ -27,5 +27,25 @@ WHERE client_request_id IS NULL
   AND json_valid(params)
   AND json_type(params, '$.id') IS NOT NULL;
 
-CREATE INDEX IF NOT EXISTS idx_nip46_requests_dedupe
-  ON nip46_requests(user_id, session_pubkey, client_request_id, status);
+DELETE FROM nip46_requests
+WHERE rowid IN (
+  SELECT older.rowid
+  FROM nip46_requests AS older
+  JOIN nip46_requests AS newer
+    ON newer.user_id = older.user_id
+   AND newer.session_pubkey = older.session_pubkey
+   AND newer.client_request_id = older.client_request_id
+   AND newer.status = 'pending'
+   AND older.status = 'pending'
+   AND newer.client_request_id IS NOT NULL
+   AND (
+     newer.created_at > older.created_at
+     OR (newer.created_at = older.created_at AND newer.id > older.id)
+   )
+);
+
+DROP INDEX IF EXISTS idx_nip46_requests_dedupe;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_nip46_requests_pending_dedupe
+  ON nip46_requests(user_id, session_pubkey, client_request_id)
+  WHERE status = 'pending' AND client_request_id IS NOT NULL;

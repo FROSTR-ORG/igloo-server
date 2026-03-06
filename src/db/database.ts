@@ -27,8 +27,10 @@ const isEnvPathFile = (() => {
 
   return true;
 })();
-const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
+const rawDbDir = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
+const DB_DIR = rawDbDir;
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');
+const SHOULD_SECURE_DB_DIR = !(isEnvPathFile && rawDbDir === '.');
 
 /**
  * Umbrel mounts `/app/data` from the host and may enforce permissions outside
@@ -61,7 +63,9 @@ const ensureDataDirSecure = (): void => {
   }
 };
 
-ensureDataDirSecure();
+if (SHOULD_SECURE_DB_DIR) {
+  ensureDataDirSecure();
+}
 
 /**
  * @security

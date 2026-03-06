@@ -58,6 +58,18 @@ function normalizeClientPubkey(clientPubkey: string): string {
   return (clientPubkey || '').trim().toLowerCase()
 }
 
+function hasTableColumn(tableName: string, columnName: string): boolean {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name?: string }>
+  return rows.some((row) => row.name === columnName)
+}
+
+function hasIndex(indexName: string): boolean {
+  const row = db.prepare(
+    "SELECT name FROM sqlite_master WHERE type='index' AND name = ?"
+  ).get(indexName) as { name?: string } | undefined
+  return row?.name === indexName
+}
+
 // Defensive function to ensure critical NIP46 tables exist
 function verifyAndCreateMissingTables(): void {
   const requiredTables = [
@@ -139,16 +151,50 @@ function verifyAndCreateMissingTables(): void {
       if (!exists) {
         console.log(`[nip46] Creating missing table: ${table.name}`)
         db.exec(table.sql)
+      }
 
-        // Create associated indexes
-        if (table.name === 'nip46_sessions') {
-          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id)')
-        } else if (table.name === 'nip46_session_events') {
-          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
-        } else if (table.name === 'nip46_requests') {
-          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_user_status ON nip46_requests(user_id, status, created_at DESC)')
-          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_dedupe ON nip46_requests(user_id, session_pubkey, client_request_id, status)')
+      if (table.name === 'nip46_sessions') {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_sessions_user ON nip46_sessions(user_id)')
+      } else if (table.name === 'nip46_session_events') {
+        db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
+      } else if (table.name === 'nip46_requests') {
+        if (!hasTableColumn('nip46_requests', 'client_request_id')) {
+          db.exec('ALTER TABLE nip46_requests ADD COLUMN client_request_id TEXT')
         }
+        db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_user_status ON nip46_requests(user_id, status, created_at DESC)')
+        db.exec(`
+          UPDATE nip46_requests
+          SET client_request_id = TRIM(CAST(json_extract(params, '$.id') AS TEXT))
+          WHERE client_request_id IS NULL
+            AND json_valid(params)
+            AND json_type(params, '$.id') IS NOT NULL
+        `)
+        db.exec(`
+          DELETE FROM nip46_requests
+          WHERE rowid IN (
+            SELECT older.rowid
+            FROM nip46_requests AS older
+            JOIN nip46_requests AS newer
+              ON newer.user_id = older.user_id
+             AND newer.session_pubkey = older.session_pubkey
+             AND newer.client_request_id = older.client_request_id
+             AND newer.status = 'pending'
+             AND older.status = 'pending'
+             AND newer.client_request_id IS NOT NULL
+             AND (
+               newer.created_at > older.created_at
+               OR (newer.created_at = older.created_at AND newer.id > older.id)
+             )
+          )
+        `)
+        if (hasIndex('idx_nip46_requests_dedupe')) {
+          db.exec('DROP INDEX idx_nip46_requests_dedupe')
+        }
+        db.exec(`
+          CREATE UNIQUE INDEX IF NOT EXISTS idx_nip46_requests_pending_dedupe
+            ON nip46_requests(user_id, session_pubkey, client_request_id)
+            WHERE status = 'pending' AND client_request_id IS NOT NULL
+        `)
       }
     } catch (error) {
       console.error(`[nip46] Failed to verify/create table ${table.name}:`, error)
@@ -368,6 +414,19 @@ export function createNip46Request(params: {
   expiresAt?: Date
 }): Nip46RequestRecord {
   const id = randomRequestId()
+  let payloadObject: Record<string, any> | null = null
+  if (typeof params.payload === 'string') {
+    try {
+      const parsed = JSON.parse(params.payload) as unknown
+      payloadObject = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+        ? parsed as Record<string, any>
+        : null
+    } catch {
+      throw new Error('Request payload must be valid JSON')
+    }
+  } else {
+    payloadObject = params.payload
+  }
   const payload = typeof params.payload === 'string' ? params.payload : JSON.stringify(params.payload)
   if (payload.length > MAX_JSON_FIELD_SIZE) {
     throw new Error('Request payload too large to persist')
@@ -380,13 +439,30 @@ export function createNip46Request(params: {
 
   const expires = params.expiresAt ? params.expiresAt.toISOString() : null
   const clientRequestId = normalizeClientRequestId(
-    typeof params.payload === 'string' ? null : params.payload.id
+    payloadObject && typeof payloadObject === 'object'
+      ? (payloadObject as { id?: unknown }).id
+      : null
   )
 
-  db.prepare(`
-    INSERT INTO nip46_requests (id, user_id, session_pubkey, client_request_id, method, params, status, expires_at)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, params.userId, normalizedPubkey, clientRequestId, params.method, payload, expires)
+  try {
+    db.prepare(`
+      INSERT INTO nip46_requests (id, user_id, session_pubkey, client_request_id, method, params, status, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).run(id, params.userId, normalizedPubkey, clientRequestId, params.method, payload, expires)
+  } catch (error) {
+    const candidate = error as { code?: string; message?: string }
+    const message = candidate?.message ?? ''
+    if (
+      clientRequestId &&
+      (candidate?.code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+        message.includes('UNIQUE constraint failed') ||
+        message.includes('idx_nip46_requests_pending_dedupe'))
+    ) {
+      const existing = getPendingNip46RequestByClientId(params.userId, normalizedPubkey, clientRequestId)
+      if (existing) return existing
+    }
+    throw error
+  }
 
   return getNip46RequestById(id) as Nip46RequestRecord
 }

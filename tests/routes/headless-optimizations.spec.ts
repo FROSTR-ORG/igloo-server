@@ -1,18 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { pathToFileURL } from 'url';
 import { runRouteScript } from './helpers/script-runner';
 
 const PROJECT_ROOT = pathToFileURL(process.cwd() + '/').href;
-
-afterEach(() => {
-  delete process.env.NODE_ENV;
-  delete process.env.HEADLESS;
-  delete process.env.AUTH_ENABLED;
-  delete process.env.API_KEY;
-  delete process.env.RATE_LIMIT_ENABLED;
-  delete process.env.SESSION_SECRET;
-  delete process.env.SKIP_STARTUP_ECHO;
-});
 
 describe('Headless performance optimizations', () => {
   describe('SKIP_STARTUP_ECHO const (5.2)', () => {
@@ -193,13 +183,13 @@ describe('Headless performance optimizations', () => {
 
         const mod = await import(root + 'src/nip46/index.ts');
 
-        const first = mod.initNip46Service({
+        const first = await mod.initNip46Service({
           addServerLog: () => {},
           broadcastEvent: () => {},
           getNode: () => null
         });
 
-        const second = mod.initNip46Service({
+        const second = await mod.initNip46Service({
           addServerLog: () => {},
           broadcastEvent: () => {},
           getNode: () => null

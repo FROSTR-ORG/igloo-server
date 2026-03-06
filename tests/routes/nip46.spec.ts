@@ -167,4 +167,98 @@ describe('NIP-46 routes', () => {
     expect(result.secondStatus).toBe(429);
     expect(result.secondBody?.error).toContain('Rate limit exceeded');
   });
+
+  test('string payload requests persist client_request_id and reuse the existing pending row', () => {
+    const script = `
+      const root = ${JSON.stringify(PROJECT_ROOT)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'false';
+
+      const database = await import(root + 'src/db/database.ts');
+      const nip46 = await import(root + 'src/db/nip46.ts');
+
+      await nip46.initializeNip46DB();
+      database.default.exec("INSERT INTO users (username, password_hash, salt) VALUES ('nip46-string-payload', 'hash', 'salt')");
+
+      const payload = JSON.stringify({ id: 'string-client-id', method: 'sign_event', params: [] });
+      const first = nip46.createNip46Request({
+        userId: 1,
+        session_pubkey: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        method: 'sign_event',
+        payload
+      });
+      const second = nip46.createNip46Request({
+        userId: 1,
+        session_pubkey: 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        method: 'sign_event',
+        payload
+      });
+
+      try { await database.closeDatabase(); } catch {}
+      console.log('@@RESULT@@' + JSON.stringify({
+        sameId: first.id === second.id,
+        clientRequestId: second.client_request_id ?? null
+      }));
+      process.exit(0);
+    `;
+
+    const result = runRouteScript(script);
+    expect(result.sameId).toBe(true);
+    expect(result.clientRequestId).toBe('string-client-id');
+  });
+
+  test('schema verification repairs a marked-applied request table missing the dedupe column and index', () => {
+    const script = `
+      const root = ${JSON.stringify(PROJECT_ROOT)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'false';
+
+      const database = await import(root + 'src/db/database.ts');
+      database.default.exec("CREATE TABLE IF NOT EXISTS schema_migrations (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT UNIQUE NOT NULL, applied_at DATETIME DEFAULT CURRENT_TIMESTAMP)");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250915_0001_init_nip46.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250915_0002_event_type_check_trigger.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250916_0001_fix_null_event_type.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250916_0003_fix_nip46_trigger_recursion.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250916_0004_audit_nip46_data_sizes.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250916_0005_add_rate_limits_table.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250917_0001_fix_rate_limits_trigger_recursion.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250918_0006_add_nip46_transport_keys.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250922_0007_add_nip46_relays.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20250922_0008_create_nip46_requests.sql')");
+      database.default.exec("INSERT OR IGNORE INTO schema_migrations (name) VALUES ('20260306_0010_harden_nip46_relays_and_requests.sql')");
+
+      database.default.exec("DROP TABLE IF EXISTS nip46_requests");
+      database.default.exec(\`
+        CREATE TABLE nip46_requests (
+          id TEXT PRIMARY KEY,
+          user_id INTEGER NOT NULL,
+          session_pubkey TEXT NOT NULL,
+          method TEXT NOT NULL,
+          params TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          result TEXT,
+          error TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          expires_at DATETIME
+        )
+      \`);
+
+      const nip46 = await import(root + 'src/db/nip46.ts?schema_repair');
+      await nip46.initializeNip46DB();
+
+      const columns = database.default.prepare("PRAGMA table_info(nip46_requests)").all();
+      const indexes = database.default.prepare("PRAGMA index_list(nip46_requests)").all();
+      const hasClientRequestId = columns.some((column) => column.name === 'client_request_id');
+      const hasPendingDedupe = indexes.some((index) => index.name === 'idx_nip46_requests_pending_dedupe' && index.unique === 1);
+
+      try { await database.closeDatabase(); } catch {}
+      console.log('@@RESULT@@' + JSON.stringify({ hasClientRequestId, hasPendingDedupe }));
+      process.exit(0);
+    `;
+
+    const result = runRouteScript(script);
+    expect(result.hasClientRequestId).toBe(true);
+    expect(result.hasPendingDedupe).toBe(true);
+  });
 });
