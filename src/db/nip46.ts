@@ -105,9 +105,9 @@ function verifyAndCreateMissingTables(): void {
       name: 'nip46_relays',
       sql: `CREATE TABLE IF NOT EXISTS nip46_relays (
         user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-        relays TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        relays TEXT NOT NULL DEFAULT '[]',
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`
     },
     {
@@ -116,6 +116,7 @@ function verifyAndCreateMissingTables(): void {
         id TEXT PRIMARY KEY,
         user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
         session_pubkey TEXT NOT NULL,
+        client_request_id TEXT,
         method TEXT NOT NULL,
         params TEXT NOT NULL,
         status TEXT NOT NULL CHECK (status IN ('pending','approved','denied','completed','failed','expired')) DEFAULT 'pending',
@@ -146,6 +147,7 @@ function verifyAndCreateMissingTables(): void {
           db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_events_user_pub ON nip46_session_events(user_id, client_pubkey, created_at)')
         } else if (table.name === 'nip46_requests') {
           db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_user_status ON nip46_requests(user_id, status, created_at DESC)')
+          db.exec('CREATE INDEX IF NOT EXISTS idx_nip46_requests_dedupe ON nip46_requests(user_id, session_pubkey, client_request_id, status)')
         }
       }
     } catch (error) {
@@ -167,6 +169,7 @@ export interface Nip46RequestRecord {
   id: string
   user_id: number | bigint
   session_pubkey: string
+  client_request_id?: string | null
   method: string
   params: string
   status: Nip46RequestStatus
@@ -190,6 +193,12 @@ function parseRelayArray(raw: string): string[] {
     relays.push(value)
   }
   return relays
+}
+
+function normalizeClientRequestId(value: unknown): string | null {
+  if (value === null || value === undefined) return null
+  const normalized = String(value).trim()
+  return normalized.length > 0 ? normalized : null
 }
 
 function parseBooleanMap(raw: string, label: string): Record<string, boolean> {
@@ -370,11 +379,14 @@ export function createNip46Request(params: {
   }
 
   const expires = params.expiresAt ? params.expiresAt.toISOString() : null
+  const clientRequestId = normalizeClientRequestId(
+    typeof params.payload === 'string' ? null : params.payload.id
+  )
 
   db.prepare(`
-    INSERT INTO nip46_requests (id, user_id, session_pubkey, method, params, status, expires_at)
-    VALUES (?, ?, ?, ?, ?, 'pending', ?)
-  `).run(id, params.userId, normalizedPubkey, params.method, payload, expires)
+    INSERT INTO nip46_requests (id, user_id, session_pubkey, client_request_id, method, params, status, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+  `).run(id, params.userId, normalizedPubkey, clientRequestId, params.method, payload, expires)
 
   return getNip46RequestById(id) as Nip46RequestRecord
 }
@@ -390,32 +402,18 @@ export function getPendingNip46RequestByClientId(
   clientRequestId: string
 ): Nip46RequestRecord | null {
   const normalizedPubkey = normalizeClientPubkey(sessionPubkey)
-  const normalizedClientRequestId = clientRequestId.trim()
+  const normalizedClientRequestId = normalizeClientRequestId(clientRequestId)
   if (!normalizedPubkey || !/^[0-9a-f]{64}$/.test(normalizedPubkey) || !normalizedClientRequestId) {
     return null
   }
 
-  const rows = db
-    .prepare(
-      `SELECT * FROM nip46_requests
-       WHERE user_id = ? AND session_pubkey = ? AND status = 'pending'
-       ORDER BY created_at DESC, id DESC
-       LIMIT 500`
-    )
-    .all(userId, normalizedPubkey) as Nip46RequestRecord[]
-
-  for (const row of rows) {
-    try {
-      const payload = JSON.parse(row.params)
-      const payloadId = payload?.id
-      if (payloadId !== undefined && String(payloadId) === normalizedClientRequestId) {
-        return row
-      }
-    } catch {
-      continue
-    }
-  }
-  return null
+  const row = db.prepare(
+    `SELECT * FROM nip46_requests
+     WHERE user_id = ? AND session_pubkey = ? AND client_request_id = ? AND status = 'pending'
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1`
+  ).get(userId, normalizedPubkey, normalizedClientRequestId) as Nip46RequestRecord | undefined
+  return row ?? null
 }
 
 export function listNip46Requests(
@@ -706,7 +704,11 @@ export function deleteSession(userId: number | bigint, client_pubkey: string): b
 export function countUserSessionsInWindow(userId: number | bigint, windowMs: number): number {
   const cutoffEpochSeconds = Math.floor((Date.now() - windowMs) / 1000)
   const row = db.prepare(
-    'SELECT COUNT(*) as count FROM nip46_sessions WHERE user_id = ? AND CAST(strftime(\'%s\', created_at) AS INTEGER) >= ?'
+    `SELECT COUNT(*) as count
+     FROM nip46_session_events
+     WHERE user_id = ?
+       AND event_type = 'created'
+       AND CAST(strftime('%s', created_at) AS INTEGER) >= ?`
   ).get(userId, cutoffEpochSeconds) as { count: number } | undefined
   return row?.count || 0
 }

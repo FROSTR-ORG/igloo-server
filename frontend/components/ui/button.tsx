@@ -42,7 +42,7 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, type, ...props }, ref) => {
     const Comp = asChild ? Slot : "button"
     const componentProps = asChild
-      ? props
+      ? { ...props, ...(type !== undefined ? { type } : {}) }
       : { ...props, type: type ?? "button" }
     return (
       <Comp

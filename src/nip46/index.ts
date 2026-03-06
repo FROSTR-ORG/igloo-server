@@ -21,7 +21,12 @@ function areInitOptionsEquivalent(a: InitOptions, b: InitOptions): boolean {
 export function initNip46Service(opts: InitOptions): Nip46Service {
   if (service) {
     if (!serviceInitOptions || !areInitOptionsEquivalent(serviceInitOptions, opts)) {
-      console.warn('Reusing existing Nip46Service with different init options.')
+      void service.stop().catch((error) => {
+        console.warn('Failed to stop existing Nip46Service before reinit', error)
+      })
+      service = new Nip46Service(opts)
+      serviceInitOptions = { ...opts }
+      return service
     }
     return service
   }

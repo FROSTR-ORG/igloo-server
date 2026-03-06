@@ -79,12 +79,11 @@ export class PersistentRateLimiter {
       this.fallbackStore = new Map(fallbackState);
     }
 
-    if (!HEADLESS) {
-      if (db) {
-        this.db = db;
-      }
-      this.startCleanup();
+    if (!HEADLESS && db) {
+      this.db = db;
     }
+
+    this.startCleanup();
   }
 
   /**

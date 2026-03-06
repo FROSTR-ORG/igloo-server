@@ -684,6 +684,73 @@ interface BackgroundProbeResult {
   timestamp: number;
 }
 let lastBackgroundProbeResult: BackgroundProbeResult | null = null;
+let backgroundProbeRelayApplier:
+  ((filteredRelays: string[], originalRelays: string[], addServerLog?: ReturnType<typeof createAddServerLog>) => Promise<void>) | null = null;
+
+function sameRelayList(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((relay, index) => relay === b[index]);
+}
+
+async function applyFilteredRelaysToActiveNode(
+  node: ServerBifrostNode | null,
+  filteredRelays: string[],
+  originalRelays: string[],
+  addServerLog?: ReturnType<typeof createAddServerLog>
+): Promise<void> {
+  if (!node || filteredRelays.length === 0) return;
+
+  const client = (node as any)._client || (node as any).client;
+  if (!client || typeof client.update !== 'function') {
+    if (addServerLog) {
+      addServerLog('warning', 'Background probe could not update the active node relay set');
+    }
+    return;
+  }
+
+  const currentRelays: string[] = Array.isArray(client.relays)
+    ? client.relays
+        .filter((relay: unknown): relay is string => typeof relay === 'string')
+        .map((relay: string) => relay.trim())
+    : [];
+
+  if (!sameRelayList(currentRelays, originalRelays)) {
+    if (addServerLog) {
+      addServerLog('debug', 'Skipping background relay reconcile because the active relay set changed', {
+        currentRelays,
+        originalRelays
+      });
+    }
+    return;
+  }
+
+  if (sameRelayList(currentRelays, filteredRelays)) {
+    return;
+  }
+
+  const dropped = currentRelays.filter((relay) => !filteredRelays.includes(relay));
+
+  if (Array.isArray(client._relays)) {
+    client._relays = [...filteredRelays];
+  } else {
+    client._relays = [...filteredRelays];
+  }
+
+  try {
+    if (client._pool && typeof client._pool.close === 'function' && dropped.length > 0) {
+      client._pool.close(dropped);
+    }
+  } catch {}
+
+  await client.update(client.filter);
+
+  if (addServerLog) {
+    addServerLog('info', 'Applied background relay probe result to active node', {
+      dropped,
+      kept: filteredRelays
+    });
+  }
+}
 
 // Quick relay capability probe: keep relays that accept the given kind.
 // Uses an ephemeral keypair and a tiny, throwaway event, and closes connections immediately.
@@ -781,6 +848,10 @@ async function runBackgroundRelayProbe(
       }
     } else if (addServerLog) {
       addServerLog('debug', 'Background probe complete: all relays support kind 20004');
+    }
+
+    if (backgroundProbeGeneration === myGeneration) {
+      await backgroundProbeRelayApplier?.(filtered, relays, addServerLog);
     }
   } catch (error) {
     if (addServerLog) {
@@ -1002,6 +1073,7 @@ async function checkRelayConnectivity(
   const now = new Date();
   nodeHealth.lastConnectivityCheck = now;
   let requestRecreate = false;
+  let failedThisCheck = false;
   let nodeValidation: { valid: boolean; client: any; shouldRecreate: boolean } = { valid: false, client: null, shouldRecreate: false };
 
   try {
@@ -1009,7 +1081,7 @@ async function checkRelayConnectivity(
     nodeValidation = await checkNodeValidity(node, addServerLog);
     if (!nodeValidation.valid) {
       nodeHealth.isConnected = false;
-      nodeHealth.consecutiveConnectivityFailures++;
+      failedThisCheck = true;
       requestRecreate = nodeValidation.shouldRecreate;
     } else {
       const { client } = nodeValidation;
@@ -1019,7 +1091,7 @@ async function checkRelayConnectivity(
       const activityCheck = checkActivityTimeout(now, addServerLog);
       if (activityCheck.shouldRecreate) {
         requestRecreate = true;
-        nodeHealth.consecutiveConnectivityFailures++;
+        failedThisCheck = true;
         nodeHealth.isConnected = false;
       }
 
@@ -1033,7 +1105,7 @@ async function checkRelayConnectivity(
 
         if (tooLongWithoutActivity) {
           addServerLog('warning', `No real activity for ${Math.round(timeSinceRealActivity / 60000)} minutes and relays disconnected`);
-          nodeHealth.consecutiveConnectivityFailures++;
+          failedThisCheck = true;
           requestRecreate = true;
         }
 
@@ -1041,14 +1113,14 @@ async function checkRelayConnectivity(
         const stillDisconnected = await reconnectDisconnectedRelays(pool, relayStatus.disconnectedRelays, addServerLog);
 
         if (stillDisconnected > 0) {
-          nodeHealth.consecutiveConnectivityFailures++;
+          failedThisCheck = true;
           requestRecreate = true;
         } else {
           // Successfully reconnected
           markConnectivityHealthy(now);
         }
 
-        if (activityCheck.isIdle && nodeHealth.consecutiveConnectivityFailures > 0) {
+        if (activityCheck.isIdle && (failedThisCheck || nodeHealth.consecutiveConnectivityFailures > 0)) {
           nodeHealth.isConnected = false;
         }
       }
@@ -1066,7 +1138,7 @@ async function checkRelayConnectivity(
 
           // No connected relays and no ping capability
           nodeHealth.isConnected = false;
-          nodeHealth.consecutiveConnectivityFailures++;
+          failedThisCheck = true;
           requestRecreate = true;
         } else if (pingResult.success) {
           markConnectivityHealthy(now);
@@ -1074,16 +1146,19 @@ async function checkRelayConnectivity(
         } else {
           // Ping failed
           nodeHealth.isConnected = false;
-          nodeHealth.consecutiveConnectivityFailures++;
+          failedThisCheck = true;
           requestRecreate = true;
         }
       }
 
-      // Everything looks good
-      if (!requestRecreate && nodeHealth.consecutiveConnectivityFailures === 0) {
+      if (!requestRecreate && !failedThisCheck) {
         markConnectivityHealthy(now);
         return true;
       }
+    }
+
+    if (failedThisCheck) {
+      nodeHealth.consecutiveConnectivityFailures++;
     }
 
     if (requestRecreate && nodeHealth.consecutiveConnectivityFailures >= 3 && nodeRecreateCallback) {
@@ -2306,6 +2381,9 @@ export async function createNodeWithCredentials(
           
           // Create instrumented proxy and use it for subsequent operations
           const wrappedNode = createInstrumentedNode(node, addServerLog);
+          backgroundProbeRelayApplier = async (filtered, original, logger) => {
+            await applyFilteredRelaysToActiveNode(wrappedNode, filtered, original, logger);
+          };
 
           // Seed activity immediately upon successful connection to avoid
           // the first connectivity check being treated as idle.
@@ -2376,6 +2454,9 @@ export async function createNodeWithCredentials(
                 addServerLog('info', 'Node connected and ready (basic mode)');
               }
               const wrappedNode = createInstrumentedNode(node, addServerLog);
+              backgroundProbeRelayApplier = async (filtered, original, logger) => {
+                await applyFilteredRelaysToActiveNode(wrappedNode, filtered, original, logger);
+              };
 
               // Start background probe if deferred (perf optimization 3.1)
               if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {

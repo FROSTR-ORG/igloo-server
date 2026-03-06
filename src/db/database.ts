@@ -10,7 +10,6 @@ import { PBKDF2_CONFIG, AES_CONFIG, SALT_CONFIG, PASSWORD_HASH_CONFIG } from '..
 const defaultDbDir = path.join(process.cwd(), 'data');
 const envPathRaw = process.env.DB_PATH;
 const envPath = typeof envPathRaw === 'string' ? envPathRaw.trim() : undefined;
-const DB_FILE_EXTENSIONS = ['.db', '.sqlite', '.sqlite3'];
 const isEnvPathFile = (() => {
   if (!envPath) return false;
 
@@ -26,9 +25,7 @@ const isEnvPathFile = (() => {
     return false;
   }
 
-  // Keep inference consistent with session-secret path handling in routes/auth.ts.
-  const normalizedBase = path.basename(path.normalize(envPath)).toLowerCase();
-  return DB_FILE_EXTENSIONS.some((ext) => normalizedBase.endsWith(ext));
+  return true;
 })();
 const DB_DIR = isEnvPathFile ? path.dirname(envPath as string) : (envPath || defaultDbDir);
 const DB_FILE = isEnvPathFile ? (envPath as string) : path.join(DB_DIR, 'igloo.db');

@@ -28,7 +28,7 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
     return Response.json({ error: 'Request too large' }, { status: 413, headers });
   }
 
-  const authContext = requestAuth ?? context.auth;
+  const authContext = requestAuth === undefined ? context.auth : requestAuth;
   if (!authContext?.authenticated) {
     return Response.json({ error: 'Unauthorized' }, { status: 401, headers });
   }

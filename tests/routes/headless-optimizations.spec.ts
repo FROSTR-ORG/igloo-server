@@ -182,5 +182,39 @@ describe('Headless performance optimizations', () => {
       // Service should be null/undefined since it was never initialized
       expect(result.serviceIsNull).toBe(true);
     }, { timeout: 10000 });
+
+    test('initNip46Service replaces the singleton when init callbacks change', () => {
+      const script = `
+        const root = ${JSON.stringify(PROJECT_ROOT)};
+        process.env.NODE_ENV = 'test';
+        process.env.HEADLESS = 'true';
+        process.env.AUTH_ENABLED = 'false';
+        process.env.RATE_LIMIT_ENABLED = 'false';
+
+        const mod = await import(root + 'src/nip46/index.ts');
+
+        const first = mod.initNip46Service({
+          addServerLog: () => {},
+          broadcastEvent: () => {},
+          getNode: () => null
+        });
+
+        const second = mod.initNip46Service({
+          addServerLog: () => {},
+          broadcastEvent: () => {},
+          getNode: () => null
+        });
+
+        await second.stop();
+
+        console.log('@@RESULT@@' + JSON.stringify({
+          replaced: first !== second
+        }));
+        process.exit(0);
+      `;
+
+      const result = runRouteScript(script);
+      expect(result.replaced).toBe(true);
+    }, { timeout: 10000 });
   });
 });

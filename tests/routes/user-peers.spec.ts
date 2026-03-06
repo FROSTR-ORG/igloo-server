@@ -300,17 +300,32 @@ describe('User & Peers routes', () => {
         body: JSON.stringify({ allowSend: false })
       });
 
+      let releaseRetry;
+      const retryPaused = new Promise((resolve) => {
+        globalThis.__IGLOO_PEER_POLICY_TEST_HOOK__ = {
+          onRetry: async ({ attempt }) => {
+            if (attempt !== 1) return;
+            resolve(null);
+            await new Promise((resume) => {
+              releaseRetry = resume;
+            });
+          }
+        };
+      });
+
       const pending = peers.handlePeersRoute(req, new URL(req.url), context, null);
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await retryPaused;
 
       // Simulate a concurrent successful update on another peer while first request is retrying.
       setNodePolicies(context.node, [{ pubkey: pubkeyB, allowSend: false, allowReceive: true, source: 'runtime' }], { merge: true });
+      releaseRetry();
 
       const res = await pending;
       const body = await res.json();
       const policyA = getNodePolicy(context.node, pubkeyA);
       const policyB = getNodePolicy(context.node, pubkeyB);
 
+      delete globalThis.__IGLOO_PEER_POLICY_TEST_HOOK__;
       console.log('@@RESULT@@' + JSON.stringify({ status: res.status, body, policyA, policyB }));
       process.exit(0);
     `;
@@ -365,17 +380,32 @@ describe('User & Peers routes', () => {
         method: 'DELETE'
       });
 
+      let releaseRetry;
+      const retryPaused = new Promise((resolve) => {
+        globalThis.__IGLOO_PEER_POLICY_TEST_HOOK__ = {
+          onRetry: async ({ attempt }) => {
+            if (attempt !== 1) return;
+            resolve(null);
+            await new Promise((resume) => {
+              releaseRetry = resume;
+            });
+          }
+        };
+      });
+
       const pending = peers.handlePeersRoute(req, new URL(req.url), context, null);
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await retryPaused;
 
       // Simulate a concurrent successful update on another peer while first request is retrying.
       setNodePolicies(context.node, [{ pubkey: pubkeyB, allowSend: false, allowReceive: true, source: 'runtime' }], { merge: true });
+      releaseRetry();
 
       const res = await pending;
       const body = await res.json();
       const policyA = getNodePolicy(context.node, pubkeyA);
       const policyB = getNodePolicy(context.node, pubkeyB);
 
+      delete globalThis.__IGLOO_PEER_POLICY_TEST_HOOK__;
       console.log('@@RESULT@@' + JSON.stringify({ status: res.status, body, policyA, policyB }));
       process.exit(0);
     `;

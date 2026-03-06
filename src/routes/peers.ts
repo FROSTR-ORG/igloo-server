@@ -27,6 +27,16 @@ const MAX_CONCURRENT_PINGS = Number.isFinite(parsedPingConcurrency) && parsedPin
   ? Math.min(parsedPingConcurrency, 64)
   : 8;
 
+type PeerPolicyPersistTestHook = {
+  onRetry?: (details: { attempt: number; maxAttempts: number; pubkey: string }) => Promise<void> | void
+}
+
+function getPeerPolicyPersistTestHook(): PeerPolicyPersistTestHook | null {
+  const hook = (globalThis as { __IGLOO_PEER_POLICY_TEST_HOOK__?: PeerPolicyPersistTestHook }).__IGLOO_PEER_POLICY_TEST_HOOK__
+  if (!hook || typeof hook !== 'object') return null
+  return hook
+}
+
 function safeNormalizePubkey(pubkey: string): string | null {
   try {
     return normalizePubkey(pubkey);
@@ -180,6 +190,15 @@ async function persistUserPeerPoliciesWithRetry(
         });
       } catch {}
       if (attempt < maxAttempts) {
+        try {
+          await getPeerPolicyPersistTestHook()?.onRetry?.({
+            attempt,
+            maxAttempts,
+            pubkey: details.pubkey
+          })
+        } catch (hookError) {
+          console.warn('Peer policy test hook failed:', hookError)
+        }
         const delayMs = 100 * (2 ** (attempt - 1));
         await new Promise(resolve => setTimeout(resolve, delayMs));
       }

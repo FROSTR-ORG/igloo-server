@@ -68,4 +68,22 @@ describe('buildScriptEnv', () => {
       else process.env[reservedKey] = preserved;
     }
   });
+
+  test('does not inherit arbitrary parent env keys', () => {
+    const preserved = process.env.MY_SECRET_TOKEN;
+    process.env.MY_SECRET_TOKEN = 'should-not-leak';
+    try {
+      const env = buildScriptEnv(
+        {},
+        {
+          dbPath: '/tmp/forced.db',
+          envFilePath: '/tmp/forced.env',
+        }
+      );
+      expect(env.MY_SECRET_TOKEN).toBeUndefined();
+    } finally {
+      if (preserved === undefined) delete process.env.MY_SECRET_TOKEN;
+      else process.env.MY_SECRET_TOKEN = preserved;
+    }
+  });
 });

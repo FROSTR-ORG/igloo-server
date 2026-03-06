@@ -74,8 +74,8 @@ jobs:
     - name: Type check
       run: bun run tsc --noEmit
 
-    - name: Run backend tests
-      run: bun run test:unit
+    - name: Run test suite
+      run: bun test
 
     - name: Build application
       run: bun run build
@@ -127,6 +127,17 @@ jobs:
         mv CHANGELOG.md.tmp CHANGELOG.md
         rm -f "$temp_changelog"
 
+    - name: Commit release metadata
+      run: |
+        TAG="${{ steps.new_version.outputs.new_version }}"
+        git add package.json bun.lock CHANGELOG.md
+        if git diff --cached --quiet; then
+          echo "No release metadata changes to commit"
+        else
+          git commit -m "chore(release): ${TAG}"
+          git push origin HEAD:${GITHUB_REF_NAME}
+        fi
+
     - name: Create release archive
       run: |
         mkdir -p release
@@ -150,9 +161,6 @@ jobs:
 
     - name: Create release tag
       run: |
-        # Create git tag for release (works with branch protection)
-        # Note: Version changes are not committed back to main due to branch protection
-        # The release archives will contain the correct versions
         TAG="${{ steps.new_version.outputs.new_version }}"
         git fetch --tags origin
         if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then

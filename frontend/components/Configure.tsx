@@ -322,8 +322,13 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
   useEffect(() => {
     if (!showAdvanced) return;
 
-    const handleFocus = () => { void loadAdvancedSettings(isHeadlessMode) };
-    void loadAdvancedSettings(isHeadlessMode);
+    const isDirty = JSON.stringify(advancedSettings) !== JSON.stringify(originalAdvancedSettings);
+    const reloadAdvancedSettings = () => {
+      if (isDirty) return;
+      void loadAdvancedSettings(isHeadlessMode);
+    };
+    const handleFocus = () => { reloadAdvancedSettings() };
+    reloadAdvancedSettings();
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('focus', handleFocus);
@@ -332,7 +337,7 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
         loadAdvancedSettingsRef.current = null
       }
     };
-  }, [showAdvanced, isHeadlessMode, loadAdvancedSettings]);
+  }, [showAdvanced, isHeadlessMode, loadAdvancedSettings, advancedSettings, originalAdvancedSettings]);
 
   useEffect(() => {
     if (!showClearConfirm) return;
@@ -568,8 +573,10 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       }
       
       // Notify parent component to refresh views
-      if (onCredentialsSaved) {
-        await onCredentialsSaved();
+      try {
+        await onCredentialsSaved?.();
+      } catch (callbackError) {
+        console.error('Post-clear refresh failed:', callbackError);
       }
       
       // Clear the form
@@ -693,9 +700,10 @@ const Configure: React.FC<ConfigureProps> = ({ onKeysetCreated, onCredentialsSav
       };
       
       // Call the appropriate callback
-      if (onCredentialsSaved) {
-        // In database mode, notify that credentials were saved
-        await onCredentialsSaved();
+      try {
+        await onCredentialsSaved?.();
+      } catch (callbackError) {
+        console.error('Post-save refresh failed:', callbackError);
       }
 
       // Always notify parent with local snapshot so UI can transition immediately

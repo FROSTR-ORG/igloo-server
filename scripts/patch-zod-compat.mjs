@@ -25,7 +25,8 @@ const cjsStub = `"use strict";\nvar __createBinding = (this && this.__createBind
 const cjsDeclarationStub = `import * as z from "./v3/external.cjs";\ndeclare const exported: typeof z & { readonly z: typeof z; readonly default: typeof z };\nexport = exported;\n`
 
 if (!existsSync(ZOD_DIR)) {
-  console.log('[patch-zod-compat] zod directory not found, skipping zod compatibility patch')
+  console.error('[patch-zod-compat] zod directory not found')
+  process.exit(1)
 } else {
   mkdirSync(ZOD_DIR, { recursive: true })
   ensureFile(join(ZOD_DIR, 'index.js'), esmStub)
@@ -35,7 +36,8 @@ if (!existsSync(ZOD_DIR)) {
 }
 
 if (!existsSync(NOSTR_SCHEMA_DIR)) {
-  console.log('[patch-zod-compat] Nostr schema directory not found, skipping schema patch')
+  console.error('[patch-zod-compat] Nostr schema directory not found')
+  process.exit(1)
 } else {
   try {
   const schemaFiles = readdirSync(NOSTR_SCHEMA_DIR).filter(name => name.endsWith('.js'))

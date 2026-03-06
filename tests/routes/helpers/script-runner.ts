@@ -32,6 +32,7 @@ export const ISOLATED_ENV_PREFIXES = [
 ] as const;
 
 const ERROR_PREVIEW_MAX_CHARS = 200;
+const PASSTHROUGH_ENV_KEYS = ['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'TZ'] as const;
 
 function isBlockedEnvKey(key: string): boolean {
   return ISOLATED_ENV_KEYS.includes(key as (typeof ISOLATED_ENV_KEYS)[number]) ||
@@ -64,15 +65,10 @@ export function buildScriptEnv(
   forced: { dbPath: string; envFilePath: string }
 ): Record<string, string> {
   const nextEnv: Record<string, string> = {};
-  for (const [key, value] of Object.entries(process.env)) {
+  for (const key of PASSTHROUGH_ENV_KEYS) {
+    const value = process.env[key];
     if (typeof value === 'string') {
       nextEnv[key] = value;
-    }
-  }
-
-  for (const key of Object.keys(nextEnv)) {
-    if (isBlockedEnvKey(key)) {
-      delete nextEnv[key];
     }
   }
 
