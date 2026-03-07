@@ -410,16 +410,16 @@ export function createNip46Request(params: {
   userId: number | bigint
   session_pubkey: string
   method: string
-  payload: Record<string, any> | string
+  payload: Record<string, unknown> | string
   expiresAt?: Date
 }): Nip46RequestRecord {
   const id = randomRequestId()
-  let payloadObject: Record<string, any> | null = null
+  let payloadObject: Record<string, unknown> | null = null
   if (typeof params.payload === 'string') {
     try {
       const parsed = JSON.parse(params.payload) as unknown
       payloadObject = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, any>
+        ? parsed as Record<string, unknown>
         : null
     } catch {
       throw new Error('Request payload must be valid JSON')
@@ -503,7 +503,7 @@ export function listNip46Requests(
   const statuses = opts?.status && opts.status.length ? opts.status : null
   const limit = Math.min(Math.max(opts?.limit ?? 100, 1), 500)
   const clauses: string[] = ['user_id = ?']
-  const params: any[] = [userId]
+  const params: Array<number | bigint | string> = [userId]
 
   if (statuses) {
     const placeholders = statuses.map(() => '?').join(',')
@@ -566,7 +566,7 @@ export function setTransportKey(userId: number | bigint, sk: string): string {
   return key
 }
 
-export function upsertSession(params: {
+interface UpsertSessionParams {
   userId: number | bigint
   client_pubkey: string
   status?: Nip46Status
@@ -574,16 +574,27 @@ export function upsertSession(params: {
   relays?: string[] | null
   policy?: Nip46Policy
   touchLastActive?: boolean
-}): Nip46Session {
-  const { userId, client_pubkey } = params
-  const status = params.status || 'pending'
+}
 
-  const normalizedKey = (client_pubkey || '').trim().toLowerCase()
+interface PreparedSessionUpsert {
+  userId: number | bigint
+  clientPubkey: string
+  status: Nip46Status
+  profileName: string | null
+  profileUrl: string | null
+  profileImage: string | null
+  relays: string | null
+  policyMethods: string | null
+  policyKinds: string | null
+  lastActiveAt: string | null
+}
+
+function prepareSessionUpsert(params: UpsertSessionParams): PreparedSessionUpsert {
+  const normalizedKey = (params.client_pubkey || '').trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(normalizedKey)) {
     throw new Error('Invalid client pubkey format; expected 64-character hex string')
   }
 
-  // Validate and stringify JSON fields with size limits
   let relays: string | null = null
   if (params.relays) {
     relays = JSON.stringify(params.relays)
@@ -592,69 +603,119 @@ export function upsertSession(params: {
     }
   }
 
-  let policy_methods: string | null = null
+  let policyMethods: string | null = null
   if (params.policy && params.policy.methods !== undefined) {
-    policy_methods = JSON.stringify(params.policy.methods)
-    if (policy_methods.length > MAX_JSON_FIELD_SIZE) {
-      throw new Error(`Policy methods data too large (${policy_methods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    policyMethods = JSON.stringify(params.policy.methods)
+    if (policyMethods.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy methods data too large (${policyMethods.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
     }
   }
 
-  let policy_kinds: string | null = null
+  let policyKinds: string | null = null
   if (params.policy && params.policy.kinds !== undefined) {
-    policy_kinds = JSON.stringify(params.policy.kinds)
-    if (policy_kinds.length > MAX_JSON_FIELD_SIZE) {
-      throw new Error(`Policy kinds data too large (${policy_kinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
+    policyKinds = JSON.stringify(params.policy.kinds)
+    if (policyKinds.length > MAX_JSON_FIELD_SIZE) {
+      throw new Error(`Policy kinds data too large (${policyKinds.length} bytes, max ${MAX_JSON_FIELD_SIZE})`)
     }
   }
 
-  const now = new Date().toISOString()
+  return {
+    userId: params.userId,
+    clientPubkey: normalizedKey,
+    status: params.status || 'pending',
+    profileName: params.profile?.name ?? null,
+    profileUrl: params.profile?.url ?? null,
+    profileImage: params.profile?.image ?? null,
+    relays,
+    policyMethods,
+    policyKinds,
+    lastActiveAt: params.touchLastActive ? new Date().toISOString() : null
+  }
+}
+
+function upsertSessionInTransaction(params: PreparedSessionUpsert): Nip46Session {
+  db.prepare(`
+    INSERT INTO nip46_sessions (
+      user_id, client_pubkey, status, profile_name, profile_url, profile_image,
+      relays, policy_methods, policy_kinds, created_at, updated_at, last_active_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
+    ON CONFLICT(user_id, client_pubkey) DO UPDATE SET
+      status = excluded.status,
+      -- Preserve existing profile fields when the incoming value is NULL
+      profile_name = COALESCE(excluded.profile_name, nip46_sessions.profile_name),
+      profile_url = COALESCE(excluded.profile_url, nip46_sessions.profile_url),
+      profile_image = COALESCE(excluded.profile_image, nip46_sessions.profile_image),
+      -- Preserve existing relays when not provided
+      relays = COALESCE(excluded.relays, nip46_sessions.relays),
+      -- Policies are explicit; always update with provided JSON
+      policy_methods = COALESCE(excluded.policy_methods, nip46_sessions.policy_methods),
+      policy_kinds = COALESCE(excluded.policy_kinds, nip46_sessions.policy_kinds),
+      updated_at = CURRENT_TIMESTAMP,
+      last_active_at = COALESCE(excluded.last_active_at, nip46_sessions.last_active_at)
+  `).run(
+    params.userId,
+    params.clientPubkey,
+    params.status,
+    params.profileName,
+    params.profileUrl,
+    params.profileImage,
+    params.relays,
+    params.policyMethods,
+    params.policyKinds,
+    params.lastActiveAt
+  )
+
+  const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(
+    params.userId,
+    params.clientPubkey
+  )
+  return rowToSession(row)
+}
+
+function insertSessionEvent(
+  userId: number | bigint,
+  client_pubkey: string,
+  event_type: string,
+  detail?: string,
+  value?: string
+): void {
+  db.prepare(`
+    INSERT INTO nip46_session_events (user_id, client_pubkey, event_type, detail, value)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(userId, client_pubkey, event_type, detail ?? null, value ?? null)
+}
+
+export function upsertSession(params: UpsertSessionParams): Nip46Session {
+  const prepared = prepareSessionUpsert(params)
 
   db.exec('BEGIN')
   try {
-    db.prepare(`
-      INSERT INTO nip46_sessions (
-        user_id, client_pubkey, status, profile_name, profile_url, profile_image,
-        relays, policy_methods, policy_kinds, created_at, updated_at, last_active_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, ?)
-      ON CONFLICT(user_id, client_pubkey) DO UPDATE SET
-        status = excluded.status,
-        -- Preserve existing profile fields when the incoming value is NULL
-        profile_name = COALESCE(excluded.profile_name, nip46_sessions.profile_name),
-        profile_url = COALESCE(excluded.profile_url, nip46_sessions.profile_url),
-        profile_image = COALESCE(excluded.profile_image, nip46_sessions.profile_image),
-        -- Preserve existing relays when not provided
-        relays = COALESCE(excluded.relays, nip46_sessions.relays),
-        -- Policies are explicit; always update with provided JSON
-        policy_methods = COALESCE(excluded.policy_methods, nip46_sessions.policy_methods),
-        policy_kinds = COALESCE(excluded.policy_kinds, nip46_sessions.policy_kinds),
-        updated_at = CURRENT_TIMESTAMP,
-        last_active_at = COALESCE(excluded.last_active_at, nip46_sessions.last_active_at)
-    `).run(
-      userId,
-      normalizedKey,
-      status,
-      params.profile?.name ?? null,
-      params.profile?.url ?? null,
-      params.profile?.image ?? null,
-      relays,
-      policy_methods,
-      policy_kinds,
-      params.touchLastActive ? now : null
-    )
-
-    const row = db.prepare('SELECT * FROM nip46_sessions WHERE user_id = ? AND client_pubkey = ?').get(userId, normalizedKey)
-    // Convert row to session object BEFORE committing transaction
-    // This ensures any errors in rowToSession will properly rollback
-    const session = rowToSession(row)
+    const session = upsertSessionInTransaction(prepared)
     db.exec('COMMIT')
 
     // Log event after successful commit (non-critical, failures ignored)
-    try { logSessionEvent(userId, normalizedKey, 'upsert') } catch {}
+    try { logSessionEvent(prepared.userId, prepared.clientPubkey, 'upsert') } catch {}
     return session
   } catch (e) {
     db.exec('ROLLBACK')
     throw e
+  }
+}
+
+export function createSessionWithCreatedEvent(params: UpsertSessionParams): Nip46Session {
+  const prepared = prepareSessionUpsert(params)
+
+  db.exec('BEGIN')
+  try {
+    const session = upsertSessionInTransaction(prepared)
+    insertSessionEvent(prepared.userId, prepared.clientPubkey, 'created')
+    db.exec('COMMIT')
+
+    try { logSessionEvent(prepared.userId, prepared.clientPubkey, 'upsert') } catch {}
+    return session
+  } catch (error) {
+    db.exec('ROLLBACK')
+    throw error
   }
 }
 
@@ -808,10 +869,7 @@ export interface Nip46SessionEvent {
 
 export function logSessionEvent(userId: number | bigint, client_pubkey: string, event_type: string, detail?: string, value?: string) {
   const normalizedKey = normalizeClientPubkey(client_pubkey)
-  db.prepare(`
-    INSERT INTO nip46_session_events (user_id, client_pubkey, event_type, detail, value)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(userId, normalizedKey, event_type, detail ?? null, value ?? null)
+  insertSessionEvent(userId, normalizedKey, event_type, detail, value)
 }
 
 export function listSessionEvents(userId: number | bigint, client_pubkey: string, limit = 50): Nip46SessionEvent[] {

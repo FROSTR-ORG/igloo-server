@@ -222,14 +222,6 @@ const addServerLog = createAddServerLog(broadcastEvent, {
     try { return persistUiEventLogEntry?.(entry) ?? null } catch { return null }
   }
 });
-// NIP-46 service only needed in database mode (perf optimization 3.3)
-if (!CONST.HEADLESS) {
-  void initNip46Service({
-    addServerLog,
-    broadcastEvent,
-    getNode: () => node
-  });
-}
 
 // Removed global nostr-tools SimplePool monkey-patch in favor of proxy-based instrumentation
 // See: src/node/manager.ts createInstrumentedNode/createInstrumentedClient/createInstrumentedPool
@@ -418,6 +410,17 @@ async function initializeDatabase(): Promise<void> {
 // Initialize database before starting relay/node setup
 try {
   await initializeDatabase();
+  if (!CONST.HEADLESS) {
+    try {
+      await initNip46Service({
+        addServerLog,
+        broadcastEvent,
+        getNode: () => node
+      });
+    } catch (error) {
+      console.error('⚠️  Failed to initialize NIP-46 service:', error instanceof Error ? error.message : String(error));
+    }
+  }
 } catch (err) {
   console.error('❌ Fatal initialization error:');
   console.error('  ', err instanceof Error ? err.message : String(err));
@@ -656,10 +659,7 @@ const WS_MSG_BURST = Number.isFinite(parsedMsgBurst) && parsedMsgBurst > 0
   ? Math.max(parsedMsgBurst, WS_MSG_RATE)
   : Math.max(WS_MSG_RATE, 40);
 const parsedAllowQueryCredentials = (process.env.ALLOW_QUERY_CREDENTIALS ?? '').trim().toLowerCase();
-// Backward-compatible default: allow legacy ?apiKey= / ?sessionId= WS auth unless explicitly disabled.
-const WS_ALLOW_QUERY_CREDENTIALS = parsedAllowQueryCredentials === ''
-  ? true
-  : !['0', 'false', 'no', 'off'].includes(parsedAllowQueryCredentials);
+const WS_ALLOW_QUERY_CREDENTIALS = ['1', 'true', 'yes', 'on'].includes(parsedAllowQueryCredentials);
 const WS_POLICY_CLOSE = 1008; // Policy violation
 
 const wsConnectionsPerIp = new Map<string, number>();
@@ -776,222 +776,231 @@ function buildJsonError(body: any, status = 500, requestId?: string): Response {
   });
 }
 
-const server = serve<AppWebSocketData>({
-  port: CONST.HOST_PORT,
-  hostname: CONST.HOST_NAME,
-  websocket: websocketHandler,
-  fetch: async (req, server) => {
-    // Reject new requests during shutdown
-    if (isShuttingDown) {
-      return new Response('Server is shutting down', { status: 503 });
-    }
-
-    const url = new URL(req.url);
-    const requestId = randomUUID();
-    const clientIp = getTrustedClientIp(req, server.requestIP(req)?.address);
-    
-    // Handle WebSocket upgrade for event stream
-    if (url.pathname === '/api/events' && req.headers.get('upgrade') === 'websocket') {
-      // WebSocket upgrade rate limit and Origin check
-      // (auth functions now available via static import at top of file)
-
-      // Sanitize ws-upgrade rate limiter envs
-      const wsWinSecRaw = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
-      const wsWinSecParsed = Number.parseInt(wsWinSecRaw, 10);
-      const wsUpWindow = Math.max(1000, (Number.isFinite(wsWinSecParsed) ? wsWinSecParsed : 900) * 1000);
-      const wsMaxRaw = process.env.RATE_LIMIT_WS_UPGRADE_MAX ?? '30';
-      const wsMaxParsed = Number.parseInt(wsMaxRaw, 10);
-      const wsUpMax = Math.max(1, Number.isFinite(wsMaxParsed) ? wsMaxParsed : 30);
-      try {
-        const rl = await checkRateLimit(req, 'ws-upgrade', { clientIp, windowMs: wsUpWindow, max: wsUpMax });
-        if (!rl.allowed) {
-          return new Response('Too many WebSocket attempts', { status: 429 });
-        }
-      } catch {
-        // If limiter unavailable, fail closed conservatively
-        return new Response('Service temporarily unavailable', { status: 503 });
-      }
-
-      const originCheck = isWebSocketOriginAllowed(req);
-      if (!originCheck.allowed) {
-        return new Response('Forbidden', { status: 403 });
-      }
-
-      let selectedSubprotocol: string | undefined;
-      if (AUTH_CONFIG.ENABLED) {
-        // Build an auth request by first mapping legacy query params to headers (compat),
-        // then mapping Sec-WebSocket-Protocol hints.
-        let authReq = req;
-        const qpHeaders = new Headers(req.headers);
-        let qpTouched = false;
-        if (WS_ALLOW_QUERY_CREDENTIALS) {
-          const qpApiKey = url.searchParams.get('apiKey');
-          const qpSessionId = url.searchParams.get('sessionId');
-          if (qpApiKey) { qpHeaders.set('X-API-Key', qpApiKey); qpTouched = true; }
-          if (qpSessionId) { qpHeaders.set('X-Session-ID', qpSessionId); qpTouched = true; }
-        }
-        if (qpTouched) {
-          authReq = new Request(req.url, { method: req.method, headers: qpHeaders });
+const SHOULD_START_SERVER = !(process.env.NODE_ENV === 'test' && process.env.SKIP_SERVER_LISTEN === 'true');
+const server = SHOULD_START_SERVER
+  ? serve<AppWebSocketData>({
+      port: CONST.HOST_PORT,
+      hostname: CONST.HOST_NAME,
+      websocket: websocketHandler,
+      fetch: async (req, server) => {
+        // Reject new requests during shutdown
+        if (isShuttingDown) {
+          return new Response('Server is shutting down', { status: 503 });
         }
 
-        // Parse optional credentials from Sec-WebSocket-Protocol (for non-browser clients)
-        const proto = req.headers.get('sec-websocket-protocol');
-        if (proto) {
-          const headers = new Headers(authReq.headers);
-          const offered = proto.split(',').map(p => p.trim()).filter(Boolean);
-          // Choose the first offered value to echo back (required by RFC6455)
-          if (offered.length > 0) {
-            selectedSubprotocol = offered[0];
+        const url = new URL(req.url);
+        const requestId = randomUUID();
+        const clientIp = getTrustedClientIp(req, server.requestIP(req)?.address);
+
+        // Handle WebSocket upgrade for event stream
+        if (url.pathname === '/api/events' && req.headers.get('upgrade') === 'websocket') {
+          // WebSocket upgrade rate limit and Origin check
+          // (auth functions now available via static import at top of file)
+
+          // Sanitize ws-upgrade rate limiter envs
+          const wsWinSecRaw = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+          const wsWinSecParsed = Number.parseInt(wsWinSecRaw, 10);
+          const wsUpWindow = Math.max(1000, (Number.isFinite(wsWinSecParsed) ? wsWinSecParsed : 900) * 1000);
+          const wsMaxRaw = process.env.RATE_LIMIT_WS_UPGRADE_MAX ?? '30';
+          const wsMaxParsed = Number.parseInt(wsMaxRaw, 10);
+          const wsUpMax = Math.max(1, Number.isFinite(wsMaxParsed) ? wsMaxParsed : 30);
+          try {
+            const rl = await checkRateLimit(req, 'ws-upgrade', { clientIp, windowMs: wsUpWindow, max: wsUpMax });
+            if (!rl.allowed) {
+              return new Response('Too many WebSocket attempts', { status: 429 });
+            }
+          } catch {
+            // If limiter unavailable, fail closed conservatively
+            return new Response('Service temporarily unavailable', { status: 503 });
           }
-          for (const raw of offered) {
-            const token = raw.trim();
-            if (!token) continue;
-            // Supported hints: apikey.<token>, api-key.<token>, bearer.<token>, session.<id>
-            const lower = token.toLowerCase();
-            if (lower.startsWith('apikey.') || lower.startsWith('api-key.')) {
-              headers.set('X-API-Key', token.substring(token.indexOf('.') + 1));
-            } else if (lower.startsWith('bearer.')) {
-              headers.set('Authorization', `Bearer ${token.substring(token.indexOf('.') + 1)}`);
-            } else if (lower.startsWith('session.')) {
-              headers.set('X-Session-ID', token.substring(token.indexOf('.') + 1));
+
+          const originCheck = isWebSocketOriginAllowed(req);
+          if (!originCheck.allowed) {
+            return new Response('Forbidden', { status: 403 });
+          }
+
+          let selectedSubprotocol: string | undefined;
+          if (AUTH_CONFIG.ENABLED) {
+            // Build an auth request by first mapping legacy query params to headers (compat),
+            // then mapping Sec-WebSocket-Protocol hints.
+            let authReq = req;
+            const qpHeaders = new Headers(req.headers);
+            let qpTouched = false;
+            if (WS_ALLOW_QUERY_CREDENTIALS) {
+              const qpApiKey = url.searchParams.get('apiKey');
+              const qpSessionId = url.searchParams.get('sessionId');
+              if (qpApiKey) { qpHeaders.set('X-API-Key', qpApiKey); qpTouched = true; }
+              if (qpSessionId) { qpHeaders.set('X-Session-ID', qpSessionId); qpTouched = true; }
+            }
+            if (qpTouched) {
+              authReq = new Request(req.url, { method: req.method, headers: qpHeaders });
+            }
+
+            // Parse optional credentials from Sec-WebSocket-Protocol (for non-browser clients)
+            const proto = req.headers.get('sec-websocket-protocol');
+            if (proto) {
+              const headers = new Headers(authReq.headers);
+              const offered = proto.split(',').map(p => p.trim()).filter(Boolean);
+              // Choose the first offered value to echo back (required by RFC6455)
+              if (offered.length > 0) {
+                selectedSubprotocol = offered[0];
+              }
+              for (const raw of offered) {
+                const token = raw.trim();
+                if (!token) continue;
+                // Supported hints: apikey.<token>, api-key.<token>, bearer.<token>, session.<id>
+                const lower = token.toLowerCase();
+                if (lower.startsWith('apikey.') || lower.startsWith('api-key.')) {
+                  headers.set('X-API-Key', token.substring(token.indexOf('.') + 1));
+                } else if (lower.startsWith('bearer.')) {
+                  headers.set('Authorization', `Bearer ${token.substring(token.indexOf('.') + 1)}`);
+                } else if (lower.startsWith('session.')) {
+                  headers.set('X-Session-ID', token.substring(token.indexOf('.') + 1));
+                }
+              }
+              authReq = new Request(req.url, { method: req.method, headers });
+            }
+
+            const authResult = await authenticate(authReq);
+            if (!authResult.authenticated) {
+              return new Response('Unauthorized', {
+                status: 401,
+                headers: {
+                  'Content-Type': 'text/plain',
+                  'WWW-Authenticate': 'Bearer realm="WebSocket"'
+                }
+              });
             }
           }
-          authReq = new Request(req.url, { method: req.method, headers });
-        }
 
-        const authResult = await authenticate(authReq);
-        if (!authResult.authenticated) {
-          return new Response('Unauthorized', { 
-            status: 401,
-            headers: {
-              'Content-Type': 'text/plain',
-              'WWW-Authenticate': 'Bearer realm="WebSocket"'
-            }
+          // Pre-upgrade per-IP cap with reservation to prevent concurrent bypass
+          const ipKey = clientIp || 'unknown';
+          const current = wsConnectionsPerIp.get(ipKey) || 0;
+          if (current >= WS_MAX_CONNECTIONS_PER_IP) {
+            return new Response('Too many connections from your IP', { status: 429 });
+          }
+          incIp(ipKey);
+
+          const upgradeHeaders = new Headers();
+          if (selectedSubprotocol) upgradeHeaders.set('Sec-WebSocket-Protocol', selectedSubprotocol);
+
+          const upgraded = server.upgrade(req, {
+            data: { isEventStream: true, clientIp, counted: true },
+            headers: upgradeHeaders
           });
+
+          if (upgraded) {
+            return undefined; // WebSocket upgrade successful
+          } else {
+            // WebSocket upgrade failed; release reservation
+            decIp(ipKey);
+            return new Response('WebSocket upgrade failed', {
+              status: 400,
+              headers: {
+                'Content-Type': 'text/plain'
+              }
+            });
+          }
+        }
+
+        // Handle WebSocket upgrade for Nostr relay
+        if (url.pathname === '/' && req.headers.get('upgrade') === 'websocket') {
+          // Origin and per-IP protections for relay WS
+          // (checkRateLimit now available via static import at top of file)
+          const wsWinSecRaw2 = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
+          const wsWinSecParsed2 = Number.parseInt(wsWinSecRaw2, 10);
+          const wsUpWindow = Math.max(1000, (Number.isFinite(wsWinSecParsed2) ? wsWinSecParsed2 : 900) * 1000);
+          const wsMaxRaw2 = process.env.RATE_LIMIT_WS_UPGRADE_MAX ?? '30';
+          const wsMaxParsed2 = Number.parseInt(wsMaxRaw2, 10);
+          const wsUpMax = Math.max(1, Number.isFinite(wsMaxParsed2) ? wsMaxParsed2 : 30);
+          try {
+            const rl = await checkRateLimit(req, 'ws-upgrade', { clientIp, windowMs: wsUpWindow, max: wsUpMax });
+            if (!rl.allowed) return new Response('Too many WebSocket attempts', { status: 429 });
+          } catch { return new Response('Service temporarily unavailable', { status: 503 }); }
+
+          const originCheck = isWebSocketOriginAllowed(req);
+          if (!originCheck.allowed) return new Response('Forbidden', { status: 403 });
+
+          const ipKey2 = clientIp || 'unknown';
+          const current = wsConnectionsPerIp.get(ipKey2) || 0;
+          if (current >= WS_MAX_CONNECTIONS_PER_IP) return new Response('Too many connections from your IP', { status: 429 });
+          incIp(ipKey2);
+
+          // Echo the first offered subprotocol if present (even though relay doesn't consume it)
+          let relaySelectedProto: string | undefined;
+          const protoOffer = req.headers.get('sec-websocket-protocol');
+          if (protoOffer) {
+            const offered = protoOffer.split(',').map(p => p.trim()).filter(Boolean);
+            if (offered.length > 0) relaySelectedProto = offered[0];
+          }
+          const relayUpgradeHeaders = new Headers();
+          if (relaySelectedProto) relayUpgradeHeaders.set('Sec-WebSocket-Protocol', relaySelectedProto);
+
+          const upgraded = server.upgrade(req, {
+            data: { isEventStream: false, clientIp, counted: true },
+            headers: relayUpgradeHeaders
+          });
+
+          if (upgraded) {
+            return undefined; // WebSocket upgrade successful
+          } else {
+            // WebSocket upgrade failed; release reservation
+            decIp(ipKey2);
+            return new Response('WebSocket upgrade failed', {
+              status: 400,
+              headers: {
+                'Content-Type': 'text/plain'
+              }
+            });
+          }
+        }
+
+        // Create base (restricted) context for general routes
+        const baseContext = {
+          node,
+          peerStatuses,
+          eventStreams,
+          addServerLog,
+          broadcastEvent,
+          requestId,
+          clientIp,
+          restartState
+        };
+
+        // Create privileged context with updateNode for trusted routes
+        const privilegedContext = {
+          ...baseContext,
+          updateNode
+        };
+
+        // Handle the request using the unified router with appropriate context
+        try {
+          const resp = await handleRequest(req, url, baseContext, privilegedContext);
+          return resp;
+        } catch (err: any) {
+          if (err?.code === 'RATE_LIMITER_UNAVAILABLE') {
+            const status = typeof err.status === 'number' ? err.status : 503;
+            return buildJsonError({ error: err.message, code: err.code }, status, requestId);
+          }
+          // Convert unhandled errors into a structured JSON error with correlation id
+          const message = err?.message || String(err);
+          try {
+            addServerLog('error', 'Unhandled route error', { requestId, path: url.pathname, method: req.method, message });
+          } catch {}
+          return buildJsonError({ error: 'Unexpected server error', code: 'UNHANDLED_EXCEPTION', detail: message }, 500, requestId);
         }
       }
-      
-      // Pre-upgrade per-IP cap with reservation to prevent concurrent bypass
-      const ipKey = clientIp || 'unknown';
-      const current = wsConnectionsPerIp.get(ipKey) || 0;
-      if (current >= WS_MAX_CONNECTIONS_PER_IP) {
-        return new Response('Too many connections from your IP', { status: 429 });
-      }
-      incIp(ipKey);
+    })
+  : {
+      stop() {}
+    } as ReturnType<typeof serve>;
 
-      const upgradeHeaders = new Headers();
-      if (selectedSubprotocol) upgradeHeaders.set('Sec-WebSocket-Protocol', selectedSubprotocol);
-
-      const upgraded = server.upgrade(req, {
-        data: { isEventStream: true, clientIp, counted: true },
-        headers: upgradeHeaders
-      });
-      
-      if (upgraded) {
-        return undefined; // WebSocket upgrade successful
-      } else {
-        // WebSocket upgrade failed; release reservation
-        decIp(ipKey);
-        return new Response('WebSocket upgrade failed', { 
-          status: 400,
-          headers: {
-            'Content-Type': 'text/plain'
-          }
-        });
-      }
-    }
-    
-    // Handle WebSocket upgrade for Nostr relay
-    if (url.pathname === '/' && req.headers.get('upgrade') === 'websocket') {
-      // Origin and per-IP protections for relay WS
-      // (checkRateLimit now available via static import at top of file)
-      const wsWinSecRaw2 = process.env.RATE_LIMIT_WS_UPGRADE_WINDOW ?? process.env.RATE_LIMIT_WINDOW ?? '900';
-      const wsWinSecParsed2 = Number.parseInt(wsWinSecRaw2, 10);
-      const wsUpWindow = Math.max(1000, (Number.isFinite(wsWinSecParsed2) ? wsWinSecParsed2 : 900) * 1000);
-      const wsMaxRaw2 = process.env.RATE_LIMIT_WS_UPGRADE_MAX ?? '30';
-      const wsMaxParsed2 = Number.parseInt(wsMaxRaw2, 10);
-      const wsUpMax = Math.max(1, Number.isFinite(wsMaxParsed2) ? wsMaxParsed2 : 30);
-      try {
-        const rl = await checkRateLimit(req, 'ws-upgrade', { clientIp, windowMs: wsUpWindow, max: wsUpMax });
-        if (!rl.allowed) return new Response('Too many WebSocket attempts', { status: 429 });
-      } catch { return new Response('Service temporarily unavailable', { status: 503 }); }
-
-      const originCheck = isWebSocketOriginAllowed(req);
-      if (!originCheck.allowed) return new Response('Forbidden', { status: 403 });
-
-      const ipKey2 = clientIp || 'unknown';
-      const current = wsConnectionsPerIp.get(ipKey2) || 0;
-      if (current >= WS_MAX_CONNECTIONS_PER_IP) return new Response('Too many connections from your IP', { status: 429 });
-      incIp(ipKey2);
-
-      // Echo the first offered subprotocol if present (even though relay doesn't consume it)
-      let relaySelectedProto: string | undefined;
-      const protoOffer = req.headers.get('sec-websocket-protocol');
-      if (protoOffer) {
-        const offered = protoOffer.split(',').map(p => p.trim()).filter(Boolean);
-        if (offered.length > 0) relaySelectedProto = offered[0];
-      }
-      const relayUpgradeHeaders = new Headers();
-      if (relaySelectedProto) relayUpgradeHeaders.set('Sec-WebSocket-Protocol', relaySelectedProto);
-
-      const upgraded = server.upgrade(req, {
-        data: { isEventStream: false, clientIp, counted: true },
-        headers: relayUpgradeHeaders
-      });
-      
-      if (upgraded) {
-        return undefined; // WebSocket upgrade successful
-      } else {
-        // WebSocket upgrade failed; release reservation
-        decIp(ipKey2);
-        return new Response('WebSocket upgrade failed', { 
-          status: 400,
-          headers: {
-            'Content-Type': 'text/plain'
-          }
-        });
-      }
-    }
-
-    // Create base (restricted) context for general routes
-    const baseContext = {
-      node,
-      peerStatuses,
-      eventStreams,
-      addServerLog,
-      broadcastEvent,
-      requestId,
-      clientIp,
-      restartState
-    };
-
-  // Create privileged context with updateNode for trusted routes  
-  const privilegedContext = {
-    ...baseContext,
-    updateNode
-  };
-
-    // Handle the request using the unified router with appropriate context
-    try {
-      const resp = await handleRequest(req, url, baseContext, privilegedContext);
-      return resp;
-    } catch (err: any) {
-      if (err?.code === 'RATE_LIMITER_UNAVAILABLE') {
-        const status = typeof err.status === 'number' ? err.status : 503;
-        return buildJsonError({ error: err.message, code: err.code }, status, requestId);
-      }
-      // Convert unhandled errors into a structured JSON error with correlation id
-      const message = err?.message || String(err);
-      try {
-        addServerLog('error', 'Unhandled route error', { requestId, path: url.pathname, method: req.method, message });
-      } catch {}
-      return buildJsonError({ error: 'Unexpected server error', code: 'UNHANDLED_EXCEPTION', detail: message }, 500, requestId);
-    }
-  }
-});
-
-console.log(`Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
-addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
+if (SHOULD_START_SERVER) {
+  console.log(`Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
+  addServerLog('info', `Server running at ${CONST.HOST_NAME}:${CONST.HOST_PORT}`);
+} else {
+  addServerLog('info', 'Server listener startup skipped for test bootstrap');
+}
 
 // Note: Node event listeners are already set up in setupNodeEventListeners() if node exists
 if (!node) {

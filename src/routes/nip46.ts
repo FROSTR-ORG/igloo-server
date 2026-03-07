@@ -1,7 +1,7 @@
 import { HEADLESS } from '../const.js'
 import { getSecureCorsHeaders, mergeVaryHeaders, parseJsonRequestBody } from './utils.js'
 import type { PrivilegedRouteContext, RequestAuth } from './types.js'
-import { listSessionEvents, listSessions, logSessionEvent, upsertSession, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey, getNip46Relays, setNip46Relays, mergeNip46Relays, listNip46Requests, updateNip46RequestStatus, deleteNip46Request, type Nip46RequestStatus, getSession, getNip46RequestById } from '../db/nip46.js'
+import { createSessionWithCreatedEvent, listSessionEvents, listSessions, updatePolicy, updateStatus, deleteSession, countUserSessionsInWindow, initializeNip46DB, type Nip46Policy, type Nip46Profile, getTransportKey, setTransportKey, getNip46Relays, setNip46Relays, mergeNip46Relays, listNip46Requests, updateNip46RequestStatus, deleteNip46Request, type Nip46RequestStatus, getSession, getNip46RequestById } from '../db/nip46.js'
 import { getNip46Service } from '../nip46/index.js'
 import { get_pubkey } from '../util/ecc.js'
 
@@ -639,17 +639,7 @@ export async function handleNip46Route(
       return Response.json({ error: message }, { status: 400, headers })
     }
     try {
-      const session = upsertSession({ userId, client_pubkey: pubkey, status, profile, relays, policy })
-      try {
-        logSessionEvent(userId, pubkey, 'created')
-      } catch (err) {
-        console.error('[NIP46] Database error during logSessionEvent(created)', {
-          userId,
-          pubkey,
-          operation: 'logSessionEvent(created)',
-          error: err instanceof Error ? err.message : String(err)
-        })
-      }
+      const session = createSessionWithCreatedEvent({ userId, client_pubkey: pubkey, status, profile, relays, policy })
       return Response.json({ ok: true, session: {
         pubkey: session.client_pubkey,
         status: session.status,

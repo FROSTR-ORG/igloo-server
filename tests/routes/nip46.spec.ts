@@ -250,7 +250,9 @@ describe('NIP-46 routes', () => {
       const columns = database.default.prepare("PRAGMA table_info(nip46_requests)").all();
       const indexes = database.default.prepare("PRAGMA index_list(nip46_requests)").all();
       const hasClientRequestId = columns.some((column) => column.name === 'client_request_id');
-      const hasPendingDedupe = indexes.some((index) => index.name === 'idx_nip46_requests_pending_dedupe' && index.unique === 1);
+      const hasPendingDedupe = indexes.some(
+        (index) => index.name === 'idx_nip46_requests_pending_dedupe' && index.unique === 1 && index.partial === 1
+      );
 
       try { await database.closeDatabase(); } catch {}
       console.log('@@RESULT@@' + JSON.stringify({ hasClientRequestId, hasPendingDedupe }));

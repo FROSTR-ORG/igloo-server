@@ -148,29 +148,60 @@ describe('Headless performance optimizations', () => {
   });
 
   describe('NIP-46 service gated in headless mode (3.3)', () => {
-    test('getNip46Service returns null in headless mode', () => {
+    test('server bootstrap skips NIP-46 service init in headless mode', () => {
       const script = `
         const root = ${JSON.stringify(PROJECT_ROOT)};
         process.env.NODE_ENV = 'test';
         process.env.HEADLESS = 'true';
         process.env.AUTH_ENABLED = 'false';
         process.env.RATE_LIMIT_ENABLED = 'false';
+        process.env.SKIP_SERVER_LISTEN = 'true';
 
+        const bootstrap = import(root + 'src/server.ts');
+        bootstrap.catch((error) => {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1000));
         const { getNip46Service } = await import(root + 'src/nip46/index.ts');
 
-        // In headless mode, the service should not be initialized
-        // (server.ts gates initNip46Service on !HEADLESS)
         const service = getNip46Service();
 
         console.log('@@RESULT@@' + JSON.stringify({
-          serviceIsNull: service === null || service === undefined
+          serviceIsNull: service === null
         }));
         process.exit(0);
       `;
 
       const result = runRouteScript(script);
-      // Service should be null/undefined since it was never initialized
       expect(result.serviceIsNull).toBe(true);
+    }, { timeout: 10000 });
+
+    test('server bootstrap initializes NIP-46 service outside headless mode', () => {
+      const script = `
+        const root = ${JSON.stringify(PROJECT_ROOT)};
+        process.env.NODE_ENV = 'test';
+        process.env.HEADLESS = 'false';
+        process.env.AUTH_ENABLED = 'false';
+        process.env.RATE_LIMIT_ENABLED = 'false';
+        process.env.SKIP_SERVER_LISTEN = 'true';
+
+        const bootstrap = import(root + 'src/server.ts');
+        bootstrap.catch((error) => {
+          console.error(error instanceof Error ? error.message : String(error));
+          process.exit(1);
+        });
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const { getNip46Service } = await import(root + 'src/nip46/index.ts');
+
+        console.log('@@RESULT@@' + JSON.stringify({
+          serviceIsPresent: getNip46Service() !== null
+        }));
+        process.exit(0);
+      `;
+
+      const result = runRouteScript(script);
+      expect(result.serviceIsPresent).toBe(true);
     }, { timeout: 10000 });
 
     test('initNip46Service replaces the singleton when init callbacks change', () => {
