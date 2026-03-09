@@ -104,6 +104,35 @@ if [[ -z "$NEW_VERSION" || ! "$NEW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0
     exit 1
 fi
 
+echo "🧭 Syncing release metadata..."
+bun scripts/sync-version.mjs --from-package
+bun run docs:bundle
+
+if [ ! -f CHANGELOG.md ]; then
+    printf '# CHANGELOG\n' > CHANGELOG.md
+fi
+
+if ! grep -Fq "## [$NEW_VERSION]" CHANGELOG.md; then
+    RELEASE_DATE=$(date +%Y-%m-%d)
+    awk -v version="$NEW_VERSION" -v date="$RELEASE_DATE" '
+        NR == 1 {
+            print
+            print ""
+            print "## [" version "] — " date
+            print ""
+            print "### Added"
+            print ""
+            print "### Changed"
+            print ""
+            print "### Fixed"
+            print ""
+            next
+        }
+        { print }
+    ' CHANGELOG.md > CHANGELOG.md.tmp
+    mv CHANGELOG.md.tmp CHANGELOG.md
+fi
+
 # Create release branch
 RELEASE_BRANCH="release/prepare-v${NEW_VERSION:-next}"
 echo "🌿 Creating release branch: $RELEASE_BRANCH"
@@ -111,7 +140,7 @@ git checkout -b "$RELEASE_BRANCH"
 
 # Stage and commit the version bump
 echo "📦 Committing version bump..."
-git add package.json
+git add package.json docs/openapi/openapi.yaml docs/openapi/openapi.json CHANGELOG.md
 # Also stage lockfiles if they were updated
 git add bun.lock package-lock.json yarn.lock 2>/dev/null || true
 
@@ -126,7 +155,8 @@ echo "✅ Release preparation complete!"
 echo ""
 echo "Next steps:"
 echo "1. 🔍 Review changes: https://github.com/FROSTR-ORG/igloo-server/compare/master...$RELEASE_BRANCH"
-echo "2. 📝 Create PR: $RELEASE_BRANCH → master"
-echo "3. 🔄 Merge PR to trigger automated release"
-echo "4. 🎉 Monitor GitHub Actions for release completion"
+echo "2. 📝 Fill in the CHANGELOG.md sections for v$NEW_VERSION if they are still placeholders"
+echo "3. 📝 Create PR: $RELEASE_BRANCH → master"
+echo "4. 🔄 Merge PR to trigger the automated release workflow on master"
+echo "5. 🎉 Monitor GitHub Actions for release completion"
 echo "" 

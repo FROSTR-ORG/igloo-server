@@ -684,73 +684,6 @@ interface BackgroundProbeResult {
   timestamp: number;
 }
 let lastBackgroundProbeResult: BackgroundProbeResult | null = null;
-let backgroundProbeRelayApplier:
-  ((filteredRelays: string[], originalRelays: string[], addServerLog?: ReturnType<typeof createAddServerLog>) => Promise<void>) | null = null;
-
-function sameRelayList(a: string[], b: string[]): boolean {
-  if (a.length !== b.length) return false;
-  return a.every((relay, index) => relay === b[index]);
-}
-
-async function applyFilteredRelaysToActiveNode(
-  node: ServerBifrostNode | null,
-  filteredRelays: string[],
-  originalRelays: string[],
-  addServerLog?: ReturnType<typeof createAddServerLog>
-): Promise<void> {
-  if (!node || filteredRelays.length === 0) return;
-
-  const client = (node as any)._client || (node as any).client;
-  if (!client || typeof client.update !== 'function') {
-    if (addServerLog) {
-      addServerLog('warning', 'Background probe could not update the active node relay set');
-    }
-    return;
-  }
-
-  const currentRelays: string[] = Array.isArray(client.relays)
-    ? client.relays
-        .filter((relay: unknown): relay is string => typeof relay === 'string')
-        .map((relay: string) => relay.trim())
-    : [];
-
-  if (!sameRelayList(currentRelays, originalRelays)) {
-    if (addServerLog) {
-      addServerLog('debug', 'Skipping background relay reconcile because the active relay set changed', {
-        currentRelays,
-        originalRelays
-      });
-    }
-    return;
-  }
-
-  if (sameRelayList(currentRelays, filteredRelays)) {
-    return;
-  }
-
-  const dropped = currentRelays.filter((relay) => !filteredRelays.includes(relay));
-
-  if (Array.isArray(client._relays)) {
-    client._relays = [...filteredRelays];
-  } else {
-    client._relays = [...filteredRelays];
-  }
-
-  try {
-    if (client._pool && typeof client._pool.close === 'function' && dropped.length > 0) {
-      client._pool.close(dropped);
-    }
-  } catch {}
-
-  await client.update(client.filter);
-
-  if (addServerLog) {
-    addServerLog('info', 'Applied background relay probe result to active node', {
-      dropped,
-      kept: filteredRelays
-    });
-  }
-}
 
 // Quick relay capability probe: keep relays that accept the given kind.
 // Uses an ephemeral keypair and a tiny, throwaway event, and closes connections immediately.
@@ -796,8 +729,8 @@ export async function filterRelaysForKindSupport(
 }
 
 /**
- * Runs relay probe in background and logs results.
- * Does not block startup. (perf optimization 3.1)
+ * Runs relay probe in background and records diagnostic results.
+ * Does not block startup or mutate the active relay set. (perf optimization 3.1)
  */
 async function runBackgroundRelayProbe(
   relays: string[],
@@ -850,9 +783,6 @@ async function runBackgroundRelayProbe(
       addServerLog('debug', 'Background probe complete: all relays support kind 20004');
     }
 
-    if (backgroundProbeGeneration === myGeneration) {
-      await backgroundProbeRelayApplier?.(filtered, relays, addServerLog);
-    }
   } catch (error) {
     if (addServerLog) {
       addServerLog('warning', 'Background relay probe failed', {
@@ -2208,7 +2138,7 @@ export async function createNodeWithCredentials(
     }
   } else if (DEFER_RELAY_PROBE) {
     if (addServerLog) {
-      addServerLog('info', 'DEFER_RELAY_PROBE enabled: relay verification will run in background');
+      addServerLog('info', 'DEFER_RELAY_PROBE enabled: relay verification will run in background for diagnostics only');
     }
     // Background probe will be started after node creation (see below)
   } else {
@@ -2381,9 +2311,6 @@ export async function createNodeWithCredentials(
           
           // Create instrumented proxy and use it for subsequent operations
           const wrappedNode = createInstrumentedNode(node, addServerLog);
-          backgroundProbeRelayApplier = async (filtered, original, logger) => {
-            await applyFilteredRelaysToActiveNode(wrappedNode, filtered, original, logger);
-          };
 
           // Seed activity immediately upon successful connection to avoid
           // the first connectivity check being treated as idle.
@@ -2454,9 +2381,6 @@ export async function createNodeWithCredentials(
                 addServerLog('info', 'Node connected and ready (basic mode)');
               }
               const wrappedNode = createInstrumentedNode(node, addServerLog);
-              backgroundProbeRelayApplier = async (filtered, original, logger) => {
-                await applyFilteredRelaysToActiveNode(wrappedNode, filtered, original, logger);
-              };
 
               // Start background probe if deferred (perf optimization 3.1)
               if (DEFER_RELAY_PROBE && !SKIP_RELAY_PROBE) {

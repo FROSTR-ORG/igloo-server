@@ -30,16 +30,16 @@ curl -fsSL https://get.docker.com -o get-docker.sh && sh get-docker.sh
 sudo curl -L "https://github.com/docker/compose/releases/download/v2.20.2/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 ```
-2) Pull and run (pin a release tag for reproducibility, e.g., `1.1.1` or `umbrel-1.1.1`):
+2) Pull and run (pin a release tag for reproducibility, e.g., `1.2.0` or `umbrel-1.2.0`):
 ```bash
-docker pull ghcr.io/frostr-org/igloo-server:1.1.1
+docker pull ghcr.io/frostr-org/igloo-server:1.2.0
 docker run -d --name igloo-server -p 8002:8002 \
   -v $PWD/data:/app/data \
   -e ADMIN_SECRET=$(openssl rand -hex 32) \
   -e AUTH_ENABLED=true \
   -e TRUST_PROXY=true \
   -e ALLOWED_ORIGINS=https://yourdomain.com \
-  ghcr.io/frostr-org/igloo-server:1.1.1
+  ghcr.io/frostr-org/igloo-server:1.2.0
 ```
 3) Docker Compose option (create `docker-compose.yml`):
 ```yaml

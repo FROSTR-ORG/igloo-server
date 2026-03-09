@@ -145,6 +145,30 @@ describe('Headless performance optimizations', () => {
       const result = runRouteScript(script);
       expect(result.sessionSecretExists).toBe(true);
     }, { timeout: 10000 });
+
+    test('treats whitespace-only API_KEY as unset', () => {
+      const script = `
+        const root = ${JSON.stringify(PROJECT_ROOT)};
+        process.env.NODE_ENV = 'test';
+        process.env.HEADLESS = 'true';
+        process.env.AUTH_ENABLED = 'true';
+        process.env.API_KEY = '   ';
+        process.env.RATE_LIMIT_ENABLED = 'false';
+
+        const { AUTH_CONFIG, stopAuthCleanup } = await import(root + 'src/routes/auth.ts');
+
+        console.log('@@RESULT@@' + JSON.stringify({
+          apiKeyIsUnset: AUTH_CONFIG.API_KEY === undefined,
+          sessionSecretExists: typeof AUTH_CONFIG.SESSION_SECRET === 'string' && AUTH_CONFIG.SESSION_SECRET.length > 0
+        }));
+        stopAuthCleanup();
+        process.exit(0);
+      `;
+
+      const result = runRouteScript(script);
+      expect(result.apiKeyIsUnset).toBe(true);
+      expect(result.sessionSecretExists).toBe(true);
+    }, { timeout: 10000 });
   });
 
   describe('NIP-46 service gated in headless mode (3.3)', () => {

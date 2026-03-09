@@ -209,6 +209,7 @@ export async function handleUpdateRoute(
 
   const headers = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, private',
     ...corsHeaders,
     'Vary': mergedVary,
     'Access-Control-Allow-Methods': 'GET, OPTIONS',

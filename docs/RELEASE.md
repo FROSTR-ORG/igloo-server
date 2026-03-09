@@ -2,7 +2,7 @@
 
 Quick reference for releasing Igloo Server.
 
-## 🚀 Quick Release (Recommended)
+## Quick Release
 
 ```bash
 # For new features (minor)
@@ -16,73 +16,84 @@ bun run release:major
 ```
 
 This will:
-1. ✅ Validate you're on `dev` branch
-2. ✅ Run tests and build  
-3. ✅ Create release branch
-4. ✅ Push to GitHub
-5. ✅ Show next steps
+1. Validate you're on `dev`
+2. Run checks and build
+3. Sync `package.json` and OpenAPI version metadata
+4. Seed a `CHANGELOG.md` heading if it is missing
+5. Create and push `release/prepare-vX.Y.Z`
 
-## 📋 Manual Process
+## Manual Process
 
-### 1. Prepare Release
+### 1. Prepare release on `dev`
+
 ```bash
 git checkout dev
 git pull origin dev
-bun install && bun run build
+bun install
+bun run build
 bun run docs:validate
 ```
 
-### 2. Create Release PR  
+### 2. Create the release branch
+
 ```bash
-git checkout -b release/prepare-v1.1.1
-git push origin release/prepare-v1.1.1
+bun run release:minor
 ```
-Create PR: `release/prepare-v1.1.1` → `main`
 
-### 3. Merge & Release
-- Merge PR to `main`
-- GitHub Actions automatically:
-  - Bumps version in `package.json`
-  - Updates `CHANGELOG.md`
-  - Creates GitHub release
-  - Builds & publishes Docker images
+This creates a `release/prepare-vX.Y.Z` branch with:
+- `package.json` bumped
+- `docs/openapi/openapi.yaml` and `docs/openapi/openapi.json` synced
+- a top-level `CHANGELOG.md` entry inserted when missing
 
-### 4. Verify Release
-- ✅ Check [GitHub Releases](https://github.com/FROSTR-ORG/igloo-server/releases)
-- ✅ Test Docker image: `docker pull ghcr.io/frostr-org/igloo-server:latest`
-- ✅ Sync dev: `git checkout dev && git merge main && git push origin dev`
+Before opening the PR, replace any placeholder changelog headings with real release notes.
 
-## 🔄 Version Bumping Logic
+Create PR: `release/prepare-vX.Y.Z` -> `master`
 
-GitHub Actions automatically detects version type from commit messages:
+### 3. Merge and publish
 
-| Commit Message | Version Bump | Example |
-|----------------|--------------|---------|
-| `feat:` | Minor | 1.1.1 → 1.2.0 |
-| `fix:` | Patch | 1.1.1 → 1.1.2 |
-| `BREAKING CHANGE:` | Major | 1.1.1 → 2.0.0 |
+Merge the PR to `master`.
 
-## 🚨 Emergency Releases
+The release workflow on `master` then:
+- verifies version metadata consistency
+- validates the OpenAPI spec
+- runs tests and build
+- tags `vX.Y.Z`
+- creates the GitHub release
+- publishes Docker and Umbrel images
 
-For critical fixes:
+### 4. Verify release
+
+- Check [GitHub Releases](https://github.com/FROSTR-ORG/igloo-server/releases)
+- Test `docker pull ghcr.io/frostr-org/igloo-server:latest`
+- Sync `dev`: `git checkout dev && git merge master && git push origin dev`
+
+## Version Selection
+
+Release prep is explicit:
+
+| Command | Version bump | Example |
+|---------|--------------|---------|
+| `bun run release:minor` | Minor | `1.1.1 -> 1.2.0` |
+| `bun run release:patch` | Patch | `1.1.1 -> 1.1.2` |
+| `bun run release:major` | Major | `1.1.1 -> 2.0.0` |
+| `bun run release -- 1.2.0` | Exact version | set the version directly |
+
+The release workflow publishes the version already committed on `master`. It does not infer semver from commit messages.
+
+## Emergency Releases
+
 ```bash
-git checkout main
+git checkout master
 git checkout -b hotfix/critical-fix
 # Make fix and commit
 git push origin hotfix/critical-fix
-# Create PR to main
+# Create PR to master
 ```
 
-## 📦 Release Artifacts
+## Release Artifacts
 
 Each release creates:
-- 🐳 **Docker images**: `ghcr.io/frostr-org/igloo-server:latest` & `ghcr.io/frostr-org/igloo-server:x.y.z`
-- 📁 **Source archive**: `igloo-server-x.y.z-src.tar.gz`
-- 📦 **Binary archive**: `igloo-server-x.y.z.tar.gz` (with built frontend)
-- 📝 **GitHub release** with changelog
-
-## 📞 Help
-
-- 📖 **Full docs**: [CONTRIBUTING.md](../CONTRIBUTING.md)
-- 🐛 **Issues**: [GitHub Issues](https://github.com/FROSTR-ORG/igloo-server/issues)
-- 💬 **Discord**: [FROSTR Community](https://discord.gg/frostr) 
+- Docker images: `ghcr.io/frostr-org/igloo-server:latest` and `ghcr.io/frostr-org/igloo-server:x.y.z`
+- Source archive: `igloo-server-x.y.z-src.tar.gz`
+- Binary archive: `igloo-server-x.y.z.tar.gz`
+- GitHub release tagged `vX.Y.Z`

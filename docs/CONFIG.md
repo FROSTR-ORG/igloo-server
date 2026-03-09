@@ -14,7 +14,7 @@ Igloo Server runs in two modes:
 
 Key differences:
 - `API_KEY` is only used in headless mode (ignored in database mode).
-- In headless mode with `API_KEY` set, session management is disabled (no `.session-secret` I/O).
+- In headless mode with a non-empty `API_KEY`, session management is disabled (no `.session-secret` I/O).
 
 ## Must-Set Values
 
@@ -57,7 +57,7 @@ Practical recipes:
 Behavior:
 - If unset, Igloo auto-generates a 32-byte secret (64 hex chars) and persists it to `<DB_PATH>/.session-secret` (or `./data/.session-secret` when `DB_PATH` is unset).
 - In `NODE_ENV=production`, failure to load/generate/persist `SESSION_SECRET` is fatal (process exits).
-- In headless mode with `API_KEY` set, sessions are disabled to avoid unnecessary file I/O.
+- In headless mode with a non-empty `API_KEY`, sessions are disabled to avoid unnecessary file I/O.
 
 Operational implication:
 - Persist your data directory (volume mount in Docker/Umbrel). Otherwise sessions will reset on every restart.
@@ -114,7 +114,7 @@ Onboarding hardening (database mode only):
 - `LOG_FINGERPRINT_FALLBACK=true` (diagnostic logging; avoid in production unless troubleshooting)
 
 Performance toggles (advanced):
-- `SKIP_RELAY_PROBE`, `DEFER_RELAY_PROBE` (relay probing behavior)
+- `SKIP_RELAY_PROBE`, `DEFER_RELAY_PROBE` (relay probing behavior; deferred probing is diagnostics-only and does not rewrite the active relay set)
 - `SKIP_STARTUP_ECHO` (skips headless startup echo broadcasts)
 - `MAX_PEER_STATUS_ENTRIES` (bounds peer status memory)
 

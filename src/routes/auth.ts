@@ -172,7 +172,7 @@ function loadOrGenerateSessionSecret(): string | null {
 function validateSessionSecret(): string | null {
   // Fast path: headless with API key doesn't need sessions (perf optimization 3.2)
   // Skip file I/O for session secret when using API key auth
-  if (HEADLESS && process.env.API_KEY) {
+  if (HEADLESS && HEADLESS_API_KEY) {
     console.log('Headless mode with API_KEY: session management disabled');
     return null;
   }
@@ -235,13 +235,20 @@ const parsePositiveIntEnv = (value: string | undefined, fallback: number): numbe
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 };
 
+const HEADLESS_API_KEY = (() => {
+  const value = process.env.API_KEY;
+  if (!value) return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+})();
+
 // Authentication configuration from environment variables
 export const AUTH_CONFIG = {
   // Enable/disable authentication (default: true for security)
   ENABLED: process.env.AUTH_ENABLED !== 'false',
   
   // Authentication methods
-  API_KEY: HEADLESS ? process.env.API_KEY : undefined,
+  API_KEY: HEADLESS ? HEADLESS_API_KEY : undefined,
   BASIC_AUTH_USER: process.env.BASIC_AUTH_USER,
   BASIC_AUTH_PASS: process.env.BASIC_AUTH_PASS,
   
@@ -810,7 +817,7 @@ let sessionCleanupTimer: ReturnType<typeof setInterval> | null = null;
 let vaultCleanupTimer: ReturnType<typeof setInterval> | null = null;
 
 // Skip timers in headless mode with API key - sessions are disabled anyway (perf optimization 2.3)
-if (!HEADLESS || !process.env.API_KEY) {
+if (!HEADLESS || !HEADLESS_API_KEY) {
   // Start session cleanup timer
   sessionCleanupTimer = setInterval(() => {
     void cleanupExpiredSessions();

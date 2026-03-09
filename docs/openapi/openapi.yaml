@@ -39,7 +39,7 @@ info:
     ## CORS
 
     Cross-origin requests are supported with configurable origins via `ALLOWED_ORIGINS` environment variable.
-  version: 1.1.1
+  version: 1.2.0
   contact:
     name: FROSTR Organization
     url: https://github.com/FROSTR-ORG/igloo-server
