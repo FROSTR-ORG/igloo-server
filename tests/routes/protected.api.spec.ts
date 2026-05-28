@@ -1,6 +1,47 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { randomBytes, createHmac } from 'node:crypto';
 import { pathToFileURL } from 'url';
+import { secp256k1 } from '@noble/curves/secp256k1';
+import { nip44 } from 'nostr-tools';
 import { runRouteScript } from './helpers/script-runner';
+
+function bytesToHex(bytes: Uint8Array): string {
+  return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function oracleConversationKey(sharedX: Uint8Array): Uint8Array {
+  if (sharedX.length !== 32) throw new Error('sharedX must be 32 bytes');
+  return Uint8Array.from(
+    createHmac('sha256', Buffer.from('nip44-v2', 'utf8')).update(Buffer.from(sharedX)).digest()
+  );
+}
+
+/**
+ * Build a shared peer+signer fixture used to assert cross-surface NIP-44
+ * interop between HTTP `/api/nip44/*` and NIP-46 `nip44_*`.
+ */
+function buildCrossSurfaceFixture() {
+  const peerPriv = randomBytes(32);
+  const peerPubFull = secp256k1.getPublicKey(peerPriv, true);
+  const peerPubCompressed = bytesToHex(peerPubFull);
+  const peerPubXOnly = peerPubCompressed.slice(2);
+
+  const signerPriv = randomBytes(32);
+  const signerPubFull = secp256k1.getPublicKey(signerPriv, true);
+  const signerPubXOnly = bytesToHex(signerPubFull).slice(2);
+
+  const sharedFromSigner = secp256k1.getSharedSecret(signerPriv, peerPubCompressed).slice(1, 33);
+  const sharedFromPeerCompat = secp256k1.getSharedSecret(peerPriv, '02' + signerPubXOnly).slice(1, 33);
+  const convToolkitBytes = nip44.v2.utils.getConversationKey(peerPriv, signerPubXOnly);
+
+  return {
+    peerPubCompressed,
+    peerPubXOnly,
+    sharedXHex: bytesToHex(sharedFromSigner),
+    convBytesHex: bytesToHex(convToolkitBytes),
+    convLocalHex: bytesToHex(oracleConversationKey(sharedFromPeerCompat)),
+  };
+}
 
 type FakeSignNode = {
   req: {
@@ -237,6 +278,154 @@ describe('API key-protected route handlers', () => {
     const decBody = await decRes?.json();
     expect(decBody?.result).toBe('hello nip04');
   }, { timeout: 10000 });
+
+  test('cross-surface nip44 interop: HTTP /api/nip44/encrypt ciphertext decrypts via NIP-46 nip44_decrypt (x-only peer)', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.AUTH_ENABLED = 'true';
+    process.env.RATE_LIMIT_ENABLED = 'false';
+
+    const fixture = buildCrossSurfaceFixture();
+    expect(fixture.convBytesHex).toBe(fixture.convLocalHex);
+
+    const node = {
+      req: { ecdh: async () => ({ ok: true, data: fixture.sharedXHex }) },
+    };
+    const context = makeContext(node);
+
+    // 1. Encrypt via HTTP route on the shared "instance" (same fake ECDH node).
+    const { handleNip44Route } = await import(`../../src/routes/nip44.ts?${Math.random()}`);
+    const plaintext = 'hello cross-surface (x-only)';
+    const encReq = new Request('http://localhost/api/nip44/encrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peer_pubkey: fixture.peerPubXOnly, content: plaintext }),
+    });
+    const encRes = await handleNip44Route(encReq, new URL(encReq.url), context, { authenticated: true });
+    expect(encRes?.status).toBe(200);
+    const encBody = await encRes?.json();
+    expect(typeof encBody?.result).toBe('string');
+
+    // 2. Decrypt that HTTP-produced ciphertext via NIP-46 service against the same node.
+    const script = `
+      const root = ${JSON.stringify(pathToFileURL(process.cwd() + '/').href)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'false';
+
+      const { Nip46Service } = await import(root + 'src/nip46/service.ts');
+
+      const service = new Nip46Service({
+        addServerLog: () => {},
+        broadcastEvent: () => {},
+        getNode: () => ({ req: { ecdh: async () => ({ ok: true, data: ${JSON.stringify(fixture.sharedXHex)} }) } }),
+      });
+
+      const plaintext = await service.handleNip44Decrypt({
+        params: [${JSON.stringify(fixture.peerPubXOnly)}, ${JSON.stringify(encBody.result)}]
+      });
+      console.log('@@RESULT@@' + JSON.stringify({ plaintext }));
+      process.exit(0);
+    `;
+    const result = runRouteScript<{ plaintext: string }>(script);
+    expect(result.plaintext).toBe(plaintext);
+  }, { timeout: 15000 });
+
+  test('cross-surface nip44 interop: NIP-46 nip44_encrypt ciphertext decrypts via HTTP /api/nip44/decrypt (compressed peer)', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.AUTH_ENABLED = 'true';
+    process.env.RATE_LIMIT_ENABLED = 'false';
+
+    const fixture = buildCrossSurfaceFixture();
+
+    // 1. Encrypt via NIP-46 service on the shared "instance" using a compressed peer key.
+    const script = `
+      const root = ${JSON.stringify(pathToFileURL(process.cwd() + '/').href)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'false';
+
+      const { Nip46Service } = await import(root + 'src/nip46/service.ts');
+
+      const service = new Nip46Service({
+        addServerLog: () => {},
+        broadcastEvent: () => {},
+        getNode: () => ({ req: { ecdh: async () => ({ ok: true, data: ${JSON.stringify(fixture.sharedXHex)} }) } }),
+      });
+
+      const ciphertext = await service.handleNip44Encrypt({
+        params: [${JSON.stringify(fixture.peerPubCompressed)}, 'hello cross-surface (compressed)']
+      });
+      console.log('@@RESULT@@' + JSON.stringify({ ciphertext }));
+      process.exit(0);
+    `;
+    const result = runRouteScript<{ ciphertext: string }>(script);
+    expect(typeof result.ciphertext).toBe('string');
+
+    // 2. Decrypt that NIP-46-produced ciphertext via HTTP route against the same node.
+    const node = {
+      req: { ecdh: async () => ({ ok: true, data: fixture.sharedXHex }) },
+    };
+    const context = makeContext(node);
+    const { handleNip44Route } = await import(`../../src/routes/nip44.ts?${Math.random()}`);
+    const decReq = new Request('http://localhost/api/nip44/decrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peer_pubkey: fixture.peerPubCompressed, content: result.ciphertext }),
+    });
+    const decRes = await handleNip44Route(decReq, new URL(decReq.url), context, { authenticated: true });
+    expect(decRes?.status).toBe(200);
+    const decBody = await decRes?.json();
+    expect(decBody?.result).toBe('hello cross-surface (compressed)');
+  }, { timeout: 15000 });
+
+  test('cross-surface nip44 interop: standards-compliant external peer ciphertext decrypts on both HTTP and NIP-46', async () => {
+    process.env.NODE_ENV = 'test';
+    process.env.AUTH_ENABLED = 'true';
+    process.env.RATE_LIMIT_ENABLED = 'false';
+
+    const fixture = buildCrossSurfaceFixture();
+    const externalCiphertext = nip44.encrypt(
+      'external peer message',
+      Buffer.from(fixture.convBytesHex, 'hex')
+    );
+
+    // 1. Decrypt via HTTP.
+    const node = {
+      req: { ecdh: async () => ({ ok: true, data: fixture.sharedXHex }) },
+    };
+    const context = makeContext(node);
+    const { handleNip44Route } = await import(`../../src/routes/nip44.ts?${Math.random()}`);
+    const httpReq = new Request('http://localhost/api/nip44/decrypt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ peer_pubkey: fixture.peerPubXOnly, content: externalCiphertext }),
+    });
+    const httpRes = await handleNip44Route(httpReq, new URL(httpReq.url), context, { authenticated: true });
+    expect(httpRes?.status).toBe(200);
+    const httpBody = await httpRes?.json();
+    expect(httpBody?.result).toBe('external peer message');
+
+    // 2. Decrypt via NIP-46 against the same shared instance.
+    const script = `
+      const root = ${JSON.stringify(pathToFileURL(process.cwd() + '/').href)};
+      process.env.NODE_ENV = 'test';
+      process.env.HEADLESS = 'false';
+
+      const { Nip46Service } = await import(root + 'src/nip46/service.ts');
+
+      const service = new Nip46Service({
+        addServerLog: () => {},
+        broadcastEvent: () => {},
+        getNode: () => ({ req: { ecdh: async () => ({ ok: true, data: ${JSON.stringify(fixture.sharedXHex)} }) } }),
+      });
+
+      const plaintext = await service.handleNip44Decrypt({
+        params: [${JSON.stringify('02' + fixture.peerPubXOnly)}, ${JSON.stringify(externalCiphertext)}]
+      });
+      console.log('@@RESULT@@' + JSON.stringify({ plaintext }));
+      process.exit(0);
+    `;
+    const result = runRouteScript<{ plaintext: string }>(script);
+    expect(result.plaintext).toBe('external peer message');
+  }, { timeout: 15000 });
 
   test('HTTP requests to /api/events return 404', () => {
     const root = pathToFileURL(process.cwd() + '/').href;

@@ -16,7 +16,7 @@ import {
   updateNip46RequestStatus,
 } from '../db/nip46.js'
 import { logSessionEvent } from '../db/nip46.js'
-import { deriveSharedSecret, xOnly } from '../routes/crypto-utils.js'
+import { deriveNip44ConversationKey, deriveSharedSecret, xOnly } from '../routes/crypto-utils.js'
 import { getOpTimeoutMs, withTimeout } from '../routes/utils.js'
 import { getEventHash, nip44 } from 'nostr-tools'
 
@@ -120,12 +120,6 @@ function arraysEqual(a: string[], b: string[]): boolean {
     if (a[i] !== b[i]) return false
   }
   return true
-}
-
-function hexToUint8(hex: string): Uint8Array {
-  const matches = hex.match(/.{1,2}/g)
-  if (!matches) throw new Error('Invalid hex string')
-  return new Uint8Array(matches.map(byte => parseInt(byte, 16)))
 }
 
 function nip04EncryptInternal(plaintext: string, sharedSecretHex: string): string {
@@ -936,8 +930,12 @@ export class Nip46Service {
     const plaintext = typeof params[1] === 'string' ? params[1] : ''
     if (!peer || !plaintext) throw new Error('Invalid parameters for nip44_encrypt')
     const secretHex = await this.computeSharedSecret(peer)
-    const keyBytes = hexToUint8(secretHex)
-    return await nip44.encrypt(plaintext, keyBytes)
+    // NIP-44 v2 requires HKDF-extract derivation of the conversation key from
+    // the raw ECDH shared X. Using the raw secret directly is non-standard and
+    // breaks interop with standards-compliant NIP-44 peers. This must mirror
+    // the HTTP `/api/nip44/*` derivation so both surfaces stay in lockstep.
+    const convBytes = deriveNip44ConversationKey(secretHex)
+    return await nip44.encrypt(plaintext, convBytes)
   }
 
   private async handleNip44Decrypt(payload: any): Promise<string> {
@@ -946,8 +944,11 @@ export class Nip46Service {
     const ciphertext = typeof params[1] === 'string' ? params[1] : ''
     if (!peer || !ciphertext) throw new Error('Invalid parameters for nip44_decrypt')
     const secretHex = await this.computeSharedSecret(peer)
-    const keyBytes = hexToUint8(secretHex)
-    return await nip44.decrypt(ciphertext, keyBytes)
+    // NIP-44 v2 requires HKDF-extract derivation of the conversation key from
+    // the raw ECDH shared X. This is standards-only: no legacy raw-secret
+    // fallback is attempted on failure.
+    const convBytes = deriveNip44ConversationKey(secretHex)
+    return await nip44.decrypt(ciphertext, convBytes)
   }
 
   private async handleNip04Encrypt(payload: any): Promise<string> {
