@@ -76,6 +76,14 @@ High-level flow:
 | NIP-46 `nip44_decrypt` | RPC params `[peer_pubkey, ciphertext]` | RPC `{ id, result }` or `{ id, error }` | DB mode only; requires a connected session and approval/policy |
 | NIP-46 `get_public_key` | no payload beyond request envelope | signer user pubkey | Used by interop harness to derive peer-side standards-compliant ciphertext |
 
+### Defense-in-depth auth behavior
+
+Even when `AUTH_ENABLED=false`, the route handlers for `/api/nip44/*`, `/api/sign`, and `/api/nip04/*` still return `401` for unauthenticated requests. The router only injects `authInfo` when `AUTH_CONFIG.ENABLED` is true, but the handlers themselves require an explicit `authenticated` auth context. This means smoke tests that set `AUTH_ENABLED=false` must still provide a valid authenticated session or API key to reach these routes.
+
+When testing these routes in a hermetic smoke, either:
+- Set `AUTH_ENABLED=true` and authenticate with a valid session or API key, or
+- Use the test harnesses that bypass the router's auth enforcement for unit/contract tests.
+
 ## Shared Crypto Boundary
 
 The shared crypto boundary for this mission is:
