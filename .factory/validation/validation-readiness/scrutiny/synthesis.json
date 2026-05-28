@@ -1,0 +1,67 @@
+{
+  "milestone": "validation-readiness",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "bun test --max-concurrency=9",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "bun run typecheck",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "N/A - project uses tsc --noEmit as type/lint gate; no separate lint runner configured",
+      "exitCode": 0
+    },
+    "build": {
+      "passed": true,
+      "command": "bun run build",
+      "exitCode": 0
+    },
+    "docs_validate": {
+      "passed": true,
+      "command": "bun run docs:validate",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add explicit guidance about `static/docs/swagger-ui.css` and `static/docs/swagger-ui-standalone-preset.js` being tracked generated assets that produce phantom diffs on every `bun run build` / `bun run docs:vendor`. Either (a) re-pin the vendored swagger-ui assets to the committed version so the vendor script produces a no-op diff, or (b) remove the generated static/docs files from version control entirely and let CI/build re-create them.",
+      "evidence": "Review of validation-readiness-source-repo noted: 'Running `bun run build` re-vendors swagger-ui from unpkg and produces a slight whitespace/ordering drift in two tracked generated assets'. AGENTS.md already says 'do not commit generated assets', yet these files remain tracked.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The hermetic smoke used `env -i` combined with a long inline env string. Documenting the exact recipe in `.factory/library/environment.md` would make this reusable.",
+      "reason": "already-documented - The mission scaffolding commit already added a comprehensive `environment.md` that documents the `env -i` hermetic smoke pattern and the exact inline env string used."
+    },
+    {
+      "observation": "The interop-backend-worker skill procedure matches reality.",
+      "reason": "duplicate - Positive confirmation that existing skills work; no change needed."
+    },
+    {
+      "observation": "The `.factory/services.yaml` commands and app service definition are accurate.",
+      "reason": "duplicate - Positive confirmation that existing services.yaml works; no change needed."
+    },
+    {
+      "observation": "The mission scaffolding commit added comprehensive `.factory/library/` documentation.",
+      "reason": "already-documented - The library docs are already in place and high-quality."
+    }
+  ],
+  "previousRound": null
+}

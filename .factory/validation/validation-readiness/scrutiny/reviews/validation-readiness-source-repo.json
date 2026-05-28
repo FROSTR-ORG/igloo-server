@@ -1,0 +1,48 @@
+{
+  "featureId": "validation-readiness-source-repo",
+  "milestone": "validation-readiness",
+  "reviewedAt": "2026-05-28T16:45:00Z",
+  "commitId": "5e91d69",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "This is a validation-only feature with no application code changes. Commit 5e91d69 adds mission scaffolding files (.factory/, AGENTS.md, CLAUDE.md) and the worker confirmed the repo was already in a valid state. All four expected behaviors from the feature description are satisfied, matching the four VAL-READY assertions in the validation contract. The handoff is precise, commands are listed with exit codes and observations, and the interactive checks cover the hermetic smoke baseline in detail.",
+    "issues": [
+      {
+        "severity": "non_blocking",
+        "description": "Pre-existing generated-asset drift: `bun run build` re-vendors swagger-ui from unpkg and produces whitespace/ordering diffs in tracked files `static/docs/swagger-ui.css` and `static/docs/swagger-ui-standalone-preset.js`. The worker correctly restored them before handoff per AGENTS.md guidance, but future workers and CI will repeatedly encounter this phantom diff. Consider either (a) re-pinning the vendored swagger-ui assets to the committed version so `bun run docs:vendor` is a no-op diff, or (b) removing generated static/docs assets from version control entirely.",
+        "file": "static/docs/swagger-ui.css"
+      },
+      {
+        "severity": "non_blocking",
+        "description": "The hermetic smoke used `env -i` combined with a long inline env string. This is correct and effective, but it is shell-dependent. If the worker shell or `env` behavior differs across environments, the hermetic guarantee could break. Documenting the exact hermetic startup recipe in `.factory/library/environment.md` would make this reusable for validators and future workers.",
+        "file": ".factory/library/environment.md"
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "Generated static assets under `static/docs/` are tracked in git but are overwritten by `bun run build` / `bun run docs:vendor`, causing reproducible phantom diffs. AGENTS.md says 'never edit by hand' and 'do not commit generated assets', yet the files remain tracked. This creates a recurring friction point for every worker who runs build.",
+      "evidence": "Worker handoff: 'Running `bun run build` re-vendors swagger-ui from unpkg and produces a slight whitespace/ordering drift in two tracked generated assets'. Git diff after build on HEAD: `static/docs/swagger-ui-standalone-preset.js` and `static/docs/swagger-ui.css`."
+    },
+    {
+      "area": "skills",
+      "observation": "The interop-backend-worker skill procedure matches reality. The worker followed it exactly (skillFeedback.followedProcedure: true, deviations: []). The skill's validation layer order (targeted tests → services.yaml commands → live smoke) correctly guided the worker. No skill changes are needed.",
+      "evidence": "Worker handoff skillFeedback and transcript show the worker ran install → test → typecheck → build → docs:validate → hermetic smoke in that order."
+    },
+    {
+      "area": "services",
+      "observation": "The `.factory/services.yaml` commands and app service definition are accurate and match the commands the worker actually used. The app start/stop/healthcheck recipes on port 8002 are correctly documented.",
+      "evidence": "services.yaml defines `install: bun install --frozen-lockfile`, `test: bun test --max-concurrency=9`, `typecheck: bun run typecheck`, `build: bun run build`, `docs_validate: bun run docs:validate`, `version_check: bun run version:check`, and app service on port 8002."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The mission scaffolding commit (5e91d69) added comprehensive `.factory/library/` documentation (architecture.md, environment.md, release.md, user-testing.md) that captures key codebase knowledge discovered during planning: DB-mode vs headless mode distinction, NIP-44 conversation-key derivation invariant, NIP-46 method-specific policy grants, release artifact lineage, and store repo pre-mission state (version 1.1.0, umbrel-dev digest pin). This is high-quality shared state that will prevent future workers from re-discovering these facts.",
+      "evidence": "Commit 5e91d69 adds 588 lines across 8 files. architecture.md documents the threshold-ECDH → NIP-44 conversation-key derivation invariant. environment.md documents the `env -i` hermetic smoke pattern and port boundaries. release.md documents the GHCR tag expectations and store repo pre-mission state."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "The feature passed review. The repo was already validation-ready on the mission branch; the worker correctly identified this and produced a thorough, evidence-driven handoff. Commit 5e91d69 only adds mission scaffolding (no application code changes). All VAL-READY assertions (001–004) are covered. The single non-blocking issue is a pre-existing generated-asset drift in tracked static/docs files that will continue to cause phantom diffs for every subsequent build. The shared state (library docs, services.yaml, skills) is well-aligned and needs no urgent changes."
+}
