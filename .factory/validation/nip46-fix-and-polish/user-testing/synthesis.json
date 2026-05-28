@@ -1,0 +1,23 @@
+{
+  "milestone": "nip46-fix-and-polish",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 6,
+    "passed": 6,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-NIP46-001",
+    "VAL-NIP46-002",
+    "VAL-NIP46-003",
+    "VAL-NIP46-004",
+    "VAL-NIP46-005",
+    "VAL-CROSS-001"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null
+}

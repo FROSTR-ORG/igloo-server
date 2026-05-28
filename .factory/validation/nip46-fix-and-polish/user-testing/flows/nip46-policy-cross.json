@@ -1,0 +1,87 @@
+{
+  "groupId": "nip46-policy-cross",
+  "testedAt": "2026-05-28T12:25:00Z",
+  "isolation": {
+    "workingDirectory": "/Users/plebdev/Desktop/Work/code/frostr/igloo/igloo-server",
+    "testRunner": "bun",
+    "mode": "in-process integration tests (no server startup)"
+  },
+  "toolsUsed": ["bun test"],
+  "assertions": [
+    {
+      "id": "VAL-NIP46-005",
+      "title": "NIP-46 nip44 method-specific policy controls auto-approval vs pending",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/nip46.spec.ts --test-name-pattern 'method-specific policy'",
+          "expected": "All 3 policy tests pass",
+          "observed": "3 pass, 0 fail, 15 expect() calls"
+        },
+        {
+          "action": "Verify sub-test: only nip44_encrypt granted auto-approves while nip44_decrypt stays pending",
+          "expected": "encryptStatus='completed', encryptHasResult=true, decryptStatus='pending', sendsCount=1",
+          "observed": "Test passed (621.40ms)"
+        },
+        {
+          "action": "Verify sub-test: only nip44_decrypt granted auto-approves while nip44_encrypt stays pending",
+          "expected": "decryptStatus='completed', decryptResult='peer-encrypted', encryptStatus='pending', sendsCount=1",
+          "observed": "Test passed (608.53ms)"
+        },
+        {
+          "action": "Verify sub-test: both granted means both auto-approve",
+          "expected": "encryptStatus='completed', decryptStatus='completed', sendsCount=2, original request IDs preserved",
+          "observed": "Test passed (602.42ms)"
+        }
+      ],
+      "evidence": {
+        "testOutput": [
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44 method-specific policy: only nip44_encrypt granted auto-approves while nip44_decrypt stays pending [621.40ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44 method-specific policy: only nip44_decrypt granted auto-approves while nip44_encrypt stays pending [608.53ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44 method-specific policy: both granted means both auto-approve [602.42ms]",
+          "3 pass / 15 filtered out / 0 fail / 15 expect() calls"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-001",
+      "title": "Cross-surface NIP-44 interop between HTTP /api/nip44/* and NIP-46 nip44_* methods",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/protected.api.spec.ts --test-name-pattern 'cross-surface nip44 interop'",
+          "expected": "All 3 cross-surface interop tests pass",
+          "observed": "3 pass, 0 fail, 10 expect() calls"
+        },
+        {
+          "action": "Verify HTTP→NIP-46: HTTP /api/nip44/encrypt ciphertext decrypts via NIP-46 nip44_decrypt (x-only peer)",
+          "expected": "HTTP encrypt produces valid ciphertext, NIP-46 decrypt returns original plaintext",
+          "observed": "Test passed (67.31ms)"
+        },
+        {
+          "action": "Verify NIP-46→HTTP: NIP-46 nip44_encrypt ciphertext decrypts via HTTP /api/nip44/decrypt (compressed peer)",
+          "expected": "NIP-46 encrypt produces valid ciphertext, HTTP decrypt returns original plaintext",
+          "observed": "Test passed (45.67ms)"
+        },
+        {
+          "action": "Verify external peer: standards-compliant external peer ciphertext decrypts on both HTTP and NIP-46",
+          "expected": "External ciphertext decrypts to 'external peer message' on both surfaces",
+          "observed": "Test passed (45.80ms)"
+        }
+      ],
+      "evidence": {
+        "testOutput": [
+          "(pass) API key-protected route handlers > cross-surface nip44 interop: HTTP /api/nip44/encrypt ciphertext decrypts via NIP-46 nip44_decrypt (x-only peer) [67.31ms]",
+          "(pass) API key-protected route handlers > cross-surface nip44 interop: NIP-46 nip44_encrypt ciphertext decrypts via HTTP /api/nip44/decrypt (compressed peer) [45.67ms]",
+          "(pass) API key-protected route handlers > cross-surface nip44 interop: standards-compliant external peer ciphertext decrypts on both HTTP and NIP-46 [45.80ms]",
+          "3 pass / 8 filtered out / 0 fail / 10 expect() calls"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 2 assertions (VAL-NIP46-005, VAL-CROSS-001): both passed. VAL-NIP46-005: 3/3 method-specific policy sub-tests passed (encrypt-only, decrypt-only, both). VAL-CROSS-001: 3/3 cross-surface NIP-44 interop sub-tests passed (HTTP→NIP-46 x-only, NIP-46→HTTP compressed, external peer on both)."
+}

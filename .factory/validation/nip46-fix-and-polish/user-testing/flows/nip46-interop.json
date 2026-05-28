@@ -1,0 +1,129 @@
+{
+  "groupId": "nip46-interop",
+  "testedAt": "2026-05-28T12:30:00.000Z",
+  "isolation": {
+    "workingDirectory": "/Users/plebdev/Desktop/Work/code/frostr/igloo/igloo-server",
+    "testRunner": "bun",
+    "testFile": "tests/routes/nip46.spec.ts",
+    "testNamePattern": "nip44",
+    "serverRequired": false
+  },
+  "toolsUsed": ["bun test"],
+  "assertions": [
+    {
+      "id": "VAL-NIP46-001",
+      "title": "nip44_encrypt produces ciphertext decryptable by a standards-compliant external peer",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/nip46.spec.ts --test-name-pattern 'nip44'",
+          "expected": "Test 'nip44_encrypt produces ciphertext decryptable by a standards-compliant external peer' passes",
+          "observed": "Test passed in 48.10ms"
+        },
+        {
+          "action": "Verify ciphertext produced by Nip46Service.handleNip44Encrypt can be decrypted by nostr-tools nip44.decrypt using standards-compliant conversation key",
+          "expected": "Decrypted plaintext matches 'hello from igloo nip46'",
+          "observed": "Decrypted plaintext matches exactly"
+        }
+      ],
+      "evidence": {
+        "testOutput": "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_encrypt produces ciphertext decryptable by a standards-compliant external peer [48.10ms]"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-NIP46-002",
+      "title": "nip44_decrypt accepts externally generated standards-compliant ciphertext",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/nip46.spec.ts --test-name-pattern 'nip44'",
+          "expected": "Test 'nip44_decrypt accepts externally generated standards-compliant ciphertext' passes",
+          "observed": "Test passed in 44.82ms"
+        },
+        {
+          "action": "Encrypt plaintext using nostr-tools nip44.encrypt with standards-compliant conversation key, then decrypt via Nip46Service.handleNip44Decrypt",
+          "expected": "Decrypted plaintext matches 'hello from external nip44 peer'",
+          "observed": "Decrypted plaintext matches exactly"
+        }
+      ],
+      "evidence": {
+        "testOutput": "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_decrypt accepts externally generated standards-compliant ciphertext [44.82ms]"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-NIP46-003",
+      "title": "nip44_decrypt rejects legacy raw-shared-secret / malformed / non-v2 ciphertext",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/nip46.spec.ts --test-name-pattern 'nip44'",
+          "expected": "Three negative tests pass: legacy raw-shared-secret, malformed, and non-v2 ciphertext",
+          "observed": "All three negative tests passed"
+        },
+        {
+          "action": "Test 1: Pass legacy ciphertext encrypted with raw shared X (pre-fix non-standard behavior) to handleNip44Decrypt",
+          "expected": "Returns null result and throws error (no fallback)",
+          "observed": "result is null, error is a string describing the failure"
+        },
+        {
+          "action": "Test 2: Pass malformed non-base64 ciphertext '!!!not-base64!!!' to handleNip44Decrypt",
+          "expected": "Returns null result and throws error",
+          "observed": "result is null, error is a string describing the failure"
+        },
+        {
+          "action": "Test 3: Tamper valid ciphertext version byte from 2 to 1 and pass to handleNip44Decrypt",
+          "expected": "Returns null result and throws error containing 'encryption version'",
+          "observed": "result is null, error contains 'encryption version'"
+        }
+      ],
+      "evidence": {
+        "testOutputs": [
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_decrypt rejects legacy raw-shared-secret ciphertext (no fallback) on an allowed session [43.63ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_decrypt rejects malformed ciphertext on an allowed session [40.98ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_decrypt rejects non-v2 payload on an allowed session [43.48ms]"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-NIP46-004",
+      "title": "nip44_encrypt and nip44_decrypt accept x-only and compressed 02/03 peer pubkeys, error on missing/empty params, and preserve request id",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run bun test tests/routes/nip46.spec.ts --test-name-pattern 'nip44'",
+          "expected": "Three sub-tests pass: pubkey formats, param validation, and request id preservation",
+          "observed": "All three sub-tests passed"
+        },
+        {
+          "action": "Test pubkey formats: Use x-only pubkey, compressed 02 prefix, and compressed 03 prefix for both encrypt and decrypt",
+          "expected": "All three formats produce valid ciphertext and decrypt to expected plaintext",
+          "observed": "All three formats work correctly; plaintexts match 'shape-' + prefix"
+        },
+        {
+          "action": "Test param validation: Call encrypt/decrypt with no params, empty peer, and empty payload/ciphertext",
+          "expected": "All six cases throw descriptive error messages",
+          "observed": "All six cases threw errors with non-null messages"
+        },
+        {
+          "action": "Test request id preservation: Execute nip44_encrypt (success) and nip44_decrypt with bad ciphertext (error) via handleSocketRequest",
+          "expected": "Success response contains original request id 'happy-id-42' with result; error response contains original request id 'sad-id-99' with error",
+          "observed": "Both response ids preserved correctly; happy has result, sad has error"
+        }
+      ],
+      "evidence": {
+        "testOutputs": [
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_encrypt and nip44_decrypt accept x-only and compressed 02/03 peer pubkeys [44.01ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44_encrypt and nip44_decrypt error on missing/empty params with descriptive messages [42.11ms]",
+          "(pass) NIP-46 nip44 RPC standards-compliant interop > nip44 RPC responses preserve the original request id on success and on error [600.11ms]"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 4 assigned assertions covering 8 test cases (plus 4 additional related tests): all 12 tests passed, 0 failed. VAL-NIP46-001 and VAL-NIP46-002 confirm standards-compliant NIP-44 v2 interop in both directions. VAL-NIP46-003 confirms three rejection modes for invalid ciphertext. VAL-NIP46-004 confirms pubkey format flexibility, parameter validation, and RPC id preservation."
+}
