@@ -1,0 +1,52 @@
+{
+  "groupId": "command-validators",
+  "milestone": "validation-readiness",
+  "assertions": ["VAL-READY-001", "VAL-READY-002"],
+  "status": "pass",
+  "startedAt": "2026-05-28T16:29:00.000Z",
+  "completedAt": "2026-05-28T16:29:50.000Z",
+  "results": [
+    {
+      "assertionId": "VAL-READY-001",
+      "status": "pass",
+      "evidence": {
+        "command": "bun install --frozen-lockfile",
+        "exitCode": 0,
+        "outputSummary": "Checked 396 installs across 404 packages (no changes) [36.00ms]",
+        "tool": "bun"
+      }
+    },
+    {
+      "assertionId": "VAL-READY-002",
+      "status": "pass",
+      "evidence": {
+        "commands": [
+          {
+            "command": "bun test --max-concurrency=9",
+            "exitCode": 0,
+            "outputSummary": "Ran 125 tests across 26 files. 0 fail. 320 expect() calls. [7.25s]"
+          },
+          {
+            "command": "bun run typecheck",
+            "exitCode": 0,
+            "outputSummary": "$ tsc --noEmit (passed)"
+          },
+          {
+            "command": "bun run build",
+            "exitCode": 0,
+            "outputSummary": "Built frontend assets (static/app.js 757.8kb, static/app.css 5.5kb), swagger-ui assets pinned at 5.31.1"
+          },
+          {
+            "command": "bun run docs:validate",
+            "exitCode": 0,
+            "outputSummary": "docs/openapi/openapi.yaml: validated in 45ms. Woohoo! Your API description is valid."
+          }
+        ],
+        "tool": "bun"
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["bun", "esbuild", "tailwindcss", "redocly"]
+}

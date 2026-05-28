@@ -1,0 +1,82 @@
+{
+  "groupId": "http-smoke",
+  "milestone": "validation-readiness",
+  "assertions": ["VAL-READY-003", "VAL-READY-004"],
+  "status": "pass",
+  "startedAt": "2026-05-28T16:30:00.000Z",
+  "completedAt": "2026-05-28T16:30:15.000Z",
+  "results": [
+    {
+      "assertionId": "VAL-READY-003",
+      "status": "pass",
+      "evidence": {
+        "setup": {
+          "env": {
+            "HEADLESS": "false",
+            "AUTH_ENABLED": "false",
+            "NODE_ENV": "test",
+            "HOST_PORT": "8002",
+            "HOST_NAME": "127.0.0.1",
+            "DB_PATH": "/tmp/igloo-smoke-1779985791/igloo.db",
+            "ENV_FILE_PATH": "/dev/null",
+            "GROUP_CRED": "",
+            "SHARE_CRED": ""
+          },
+          "startCommand": "bun run start",
+          "serverLog": "/tmp/igloo-smoke-1779985791/server.log"
+        },
+        "healthcheck": {
+          "command": "curl -sf http://127.0.0.1:8002/api/status",
+          "exitCode": 0,
+          "response": {"serverRunning":true,"nodeActive":false}
+        },
+        "tool": "curl"
+      }
+    },
+    {
+      "assertionId": "VAL-READY-004",
+      "status": "pass",
+      "evidence": {
+        "requests": [
+          {
+            "endpoint": "GET /api/status",
+            "exitCode": 0,
+            "checks": {
+              "serverRunning": true,
+              "nodeActive": false
+            }
+          },
+          {
+            "endpoint": "GET /api/auth/status",
+            "exitCode": 0,
+            "checks": {
+              "enabled": false
+            }
+          },
+          {
+            "endpoint": "GET /api/onboarding/status",
+            "exitCode": 0,
+            "checks": {
+              "initialized": false,
+              "hasAdminSecret": true,
+              "headlessMode": false,
+              "skipAdminValidation": false
+            }
+          },
+          {
+            "endpoint": "GET /api/docs/openapi.json",
+            "exitCode": 0,
+            "checks": {
+              "info.version": "1.2.0",
+              "matchesPackageJson": true
+            }
+          }
+        ],
+        "tool": "curl"
+      }
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "toolsUsed": ["curl"]
+}
