@@ -1,0 +1,36 @@
+{
+  "featureId": "nip46-nip44-rpc-standards-interop",
+  "reviewedAt": "2026-05-28T17:35:00.000Z",
+  "commitId": "8435004",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature applies a surgical NIP-44 conversation-key derivation fix to NIP-46 `nip44_encrypt` and `nip44_decrypt`, reusing the shared `deriveNip44ConversationKey` helper from `src/routes/crypto-utils.ts`. The implementation correctly replaces the previous raw-shared-secret usage with standards-compliant HKDF-extract (salt='nip44-v2'), mirroring the HTTP `/api/nip44/*` fix. Dead code (`hexToUint8`) was removed. Test coverage is extensive: 12 NIP-46-specific interop tests plus 3 cross-surface HTTP↔NIP-46 tests, all using `nostr-tools` as an independent standards oracle. All expected behaviors from the validation contract are satisfied: VAL-NIP46-001 through VAL-NIP46-005 and VAL-CROSS-001.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The `runRouteScript` test helper pattern is the canonical way to exercise internal service methods (including TypeScript `private` methods) in this codebase. The worker correctly used this pattern for Nip46Service direct-method tests. Other workers should follow this when unit-testing service internals without standing up a full HTTP server.",
+      "evidence": "tests/routes/nip46.spec.ts:348 — `runRouteScript` script directly invokes `service.handleNip44Encrypt` and `service.handleNip44Decrypt`, which are TypeScript-private but accessible at JS runtime inside the Bun process spawned by the helper."
+    },
+    {
+      "area": "conventions",
+      "observation": "The `buildNip46PeerFixture` / `buildCrossSurfaceFixture` pattern (using `@noble/curves/secp256k1` for independent ECDH + `nostr-tools` as the NIP-44 oracle) should be the reference approach for all NIP-44 interop tests. It allows simulating threshold ECDH without exposing real signing credentials.",
+      "evidence": "tests/routes/nip46.spec.ts:32-55 `buildNip46PeerFixture`; tests/routes/protected.api.spec.ts:25-48 `buildCrossSurfaceFixture`"
+    },
+    {
+      "area": "skills",
+      "observation": "The worker followed the interop-backend-worker skill procedure precisely: read mission/AGENTS.md first, wrote failing tests before fixing, kept changes surgical, reused the shared helper, did not broaden into NIP-04, did not add legacy fallback, ran layered validation (targeted tests → full suite → typecheck → build → docs:validate), and restored phantom Swagger UI diffs before handoff.",
+      "evidence": "Transcript skeleton shows the exact sequence: mission.md → AGENTS.md → crypto-utils.ts/nip44.ts/service.ts exploration → test reading → implementation edit → targeted test run → full validator run → git checkout of swagger assets → commit. Skill feedback: followedProcedure=true, deviations=[]."
+    },
+    {
+      "area": "knowledge",
+      "observation": "The `deriveNip44ConversationKey` helper in `src/routes/crypto-utils.ts` is now the single source of truth for NIP-44 v2 conversation-key derivation across both HTTP and NIP-46 surfaces. Any future NIP-44 crypto work must use this helper instead of raw ECDH output to maintain interop. The helper is documented with a detailed JSDoc explaining the HKDF-extract step.",
+      "evidence": "src/routes/crypto-utils.ts:137-162 `deriveNip44ConversationKey` implementation and JSDoc; imported and used in both src/routes/nip44.ts:37 and src/nip46/service.ts:931,945."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Pass. The NIP-46 nip44 RPC standards-interop feature is correctly implemented and thoroughly tested. The surgical change to src/nip46/service.ts replaces raw-secret usage with the shared deriveNip44ConversationKey helper, ensuring HTTP /api/nip44/* and NIP-46 nip44_* derive identical spec-compliant conversation keys. All 15 new tests pass (12 NIP-46 interop + 3 cross-surface), all 155 repo tests pass, typecheck/build/docs:validate are clean, and the validation contract requirements VAL-NIP46-001 through VAL-NIP46-005 and VAL-CROSS-001 are fully covered. No blocking or non-blocking issues found."
+}

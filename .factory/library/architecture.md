@@ -99,6 +99,10 @@ Workers should preserve these invariants:
 - Keep the NIP-44 fix surgical: update only the NIP-44 paths that currently misuse the raw shared secret.
 - Do not add a legacy decrypt fallback; the mission requires standards-only behavior.
 
+### Single source of truth for NIP-44 conversation-key derivation
+
+The `deriveNip44ConversationKey` helper in `src/routes/crypto-utils.ts` is the single source of truth for NIP-44 v2 conversation-key derivation across both HTTP and NIP-46 surfaces. Any future NIP-44 crypto work must use this helper instead of raw ECDH output to maintain interop. The helper applies HKDF-extract with salt `"nip44-v2"` to the threshold ECDH shared secret (`shared_x`).
+
 ## Release and Store Artifact Lineage
 
 This mission spans two repos and two release artifacts.

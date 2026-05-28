@@ -1,0 +1,42 @@
+{
+  "milestone": "nip46-fix-and-polish",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "test": { "passed": true, "command": "bun test --max-concurrency=9", "exitCode": 0, "details": "155 tests passed, 0 failed" },
+    "typecheck": { "passed": true, "command": "bun run typecheck", "exitCode": 0 },
+    "build": { "passed": true, "command": "bun run build", "exitCode": 0 },
+    "docs_validate": { "passed": true, "command": "bun run docs:validate", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added `deriveNip44ConversationKey` single-source-of-truth note to architecture.md under Shared Crypto Boundary.",
+      "sourceFeature": "nip46-nip44-rpc-standards-interop"
+    },
+    {
+      "target": "library",
+      "description": "Created testing.md with `runRouteScript` helper pattern and NIP-44 interop fixture builders (`buildNip46PeerFixture`, `buildCrossSurfaceFixture`).",
+      "sourceFeature": "nip46-nip44-rpc-standards-interop"
+    }
+  ],
+  "suggestedGuidanceUpdates": [],
+  "rejectedObservations": [
+    {
+      "observation": "Worker followed interop-backend-worker skill procedure precisely (read AGENTS.md first, wrote failing tests before fixing, kept changes surgical, etc.)",
+      "reason": "Procedural compliance note; not actionable shared state knowledge for future workers."
+    },
+    {
+      "observation": "The `deriveNip44ConversationKey` helper in `src/routes/crypto-utils.ts` is the single source of truth for NIP-44 v2 conversation-key derivation.",
+      "reason": "already-documented — covered in architecture.md Shared Crypto Boundary and Mission-critical invariant sections."
+    }
+  ],
+  "previousRound": null
+}
