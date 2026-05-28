@@ -1,0 +1,18 @@
+commands:
+  install: bun install --frozen-lockfile
+  test: bun test --max-concurrency=9
+  test_unit: bun run test:unit
+  typecheck: bun run typecheck
+  build: bun run build
+  docs_validate: bun run docs:validate
+  version_check: bun run version:check
+  api_test_nip: bun run api:test:nip
+  release_minor: bun run release:minor
+
+services:
+  app:
+    start: HOST_NAME=127.0.0.1 HOST_PORT=8002 bun run start
+    stop: pids=$(lsof -ti :8002) && [ -n "$pids" ] && kill $pids || true
+    healthcheck: curl -sf http://127.0.0.1:8002/api/status
+    port: 8002
+    depends_on: []
