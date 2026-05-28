@@ -1,0 +1,31 @@
+{
+  "milestone": "nip44-api-fix",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 8,
+    "passed": 8,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-NIP44-API-001",
+    "VAL-NIP44-API-002",
+    "VAL-NIP44-API-003",
+    "VAL-NIP44-API-004",
+    "VAL-NIP44-API-005",
+    "VAL-NIP44-API-006",
+    "VAL-NIP44-API-007",
+    "VAL-NIP44-API-008"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "appliedUpdates": [],
+  "previousRound": null,
+  "synthesizedAt": "2026-05-28T00:00:00Z",
+  "flowReports": [
+    ".factory/validation/nip44-api-fix/user-testing/flows/nip44-interop.json",
+    ".factory/validation/nip44-api-fix/user-testing/flows/nip44-contract.json"
+  ],
+  "notes": "All 8 NIP-44 API assertions validated via Bun contract tests against the real handleNip44Route with independent nostr-tools oracle. No live server required (command/static validation surface). Both flow validator subagents completed successfully with zero frictions or blockers."
+}

@@ -1,0 +1,36 @@
+{
+  "groupId": "nip44-interop",
+  "testedAt": "2026-05-28T00:00:00.000Z",
+  "isolation": {
+    "repoRoot": "/Users/plebdev/Desktop/Work/code/frostr/igloo/igloo-server",
+    "missionDir": ".factory/validation/nip44-api-fix",
+    "milestone": "nip44-api-fix"
+  },
+  "toolsUsed": ["bun test"],
+  "assertions": [
+    {
+      "id": "VAL-NIP44-API-001",
+      "title": "/api/nip44/encrypt produces standards-compliant ciphertext",
+      "status": "pass",
+      "reason": "Both 'oracle parity: nostr-tools getConversationKey matches HKDF(sharedX, nip44-v2)' and '/api/nip44/encrypt produces ciphertext decryptable by a standards-compliant peer' tests passed (8 pass, 0 fail). The oracle parity test confirms conversation key derivation matches the nostr-tools reference implementation. The encrypt test confirms Igloo-produced ciphertext can be decrypted by an external peer using the independently derived conversation key.",
+      "evidence": "Test output captured in testOutput field. No screenshots required for command/static validation surface."
+    },
+    {
+      "id": "VAL-NIP44-API-002",
+      "title": "/api/nip44/decrypt accepts externally generated standards-compliant ciphertext",
+      "status": "pass",
+      "reason": "Test '/api/nip44/decrypt accepts externally generated standards-compliant ciphertext' passed. The test encrypts plaintext with nostr-tools using the independently derived conversation key, then passes that ciphertext to Igloo's decrypt endpoint, which successfully recovers the original plaintext.",
+      "evidence": "Test output captured in testOutput field. No screenshots required for command/static validation surface."
+    },
+    {
+      "id": "VAL-NIP44-API-003",
+      "title": "/api/nip44/decrypt rejects malformed/non-v2/legacy raw-secret ciphertext",
+      "status": "pass",
+      "reason": "All three rejection tests passed: 'rejects legacy raw-shared-secret ciphertext (no fallback)' returned HTTP 500 with error; 'rejects malformed ciphertext' returned HTTP 500 for non-base64 input; 'rejects non-v2 payloads' returned HTTP 500 after flipping version byte from 2 to 1. No backwards-compatibility fallback exists for legacy raw-shared-secret encryption.",
+      "evidence": "Test output captured in testOutput field. No screenshots required for command/static validation surface."
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "testOutput": "bun test v1.3.11 (af24e281)\n\ntests/routes/nip44.spec.ts:\n(pass) HTTP NIP-44 standards-compliant interop > oracle parity: nostr-tools getConversationKey matches HKDF(sharedX, \"nip44-v2\") [15.70ms]\n[init] ADMIN_SECRET was unset. Generated ephemeral secret for CI/test environment.\n🔑 SESSION_SECRET loaded from secure storage\nDevelopment mode: Using wildcard (*) for CORS. Configure ALLOWED_ORIGINS before deploying to production.\n(pass) HTTP NIP-44 standards-compliant interop > /api/nip44/encrypt produces ciphertext decryptable by a standards-compliant peer [14.95ms]\n(pass) HTTP NIP-44 standards-compliant interop > /api/nip44/decrypt accepts externally generated standards-compliant ciphertext [4.66ms]\n(pass) HTTP NIP-44 standards-compliant interop > /api/nip44/decrypt rejects legacy raw-shared-secret ciphertext (no fallback) [4.97ms]\n(pass) HTTP NIP-44 standards-compliant interop > /api/nip44/decrypt rejects malformed ciphertext [3.84ms]\n(pass) HTTP NIP-44 standards-compliant interop > /api/nip44/decrypt rejects non-v2 payloads [4.52ms]\n(pass) HTTP NIP-44 contract semantics > rejects malformed JSON and non-string content with 400 [3.99ms]\n(pass) HTTP NIP-44 contract semantics > rejects malformed peer_pubkey identifiers with 400 [4.80ms]\n\n 8 pass\n 7 filtered out\n 0 fail\n 29 expect() calls\nRan 8 tests across 1 file. [79.00ms]\n\n\n[Process exited with code 0]"
+}
