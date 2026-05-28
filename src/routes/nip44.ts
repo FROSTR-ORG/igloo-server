@@ -1,7 +1,7 @@
 import type { RouteContext, RequestAuth } from './types.js';
 import { getSecureCorsHeaders, mergeVaryHeaders, getOpTimeoutMs, parseJsonRequestBody, isContentLengthWithin, DEFAULT_MAX_JSON_BODY } from './utils.js';
 import { checkRateLimit } from './auth.js';
-import { xOnly, deriveSharedSecret } from './crypto-utils.js';
+import { xOnly, deriveSharedSecret, deriveNip44ConversationKey } from './crypto-utils.js';
 import { nip44 } from 'nostr-tools';
 
 type Nip44Body = {
@@ -64,18 +64,21 @@ export async function handleNip44Route(req: Request, url: URL, context: RouteCon
   const timeoutMs = getOpTimeoutMs();
   try {
     const secretHex = await deriveSharedSecret(context.node, peer, timeoutMs);
-    const conversationKey = Uint8Array.from(Buffer.from(secretHex, 'hex'));
+    // NIP-44 v2 requires HKDF-extract derivation of the conversation key from
+    // the raw ECDH shared X. Using the raw secret directly is non-standard and
+    // breaks interop with standards-compliant NIP-44 peers.
+    const convBytes = deriveNip44ConversationKey(secretHex);
     const mode = url.pathname.endsWith('/encrypt') ? 'encrypt' : url.pathname.endsWith('/decrypt') ? 'decrypt' : null;
     if (!mode) return Response.json({ error: 'Unknown operation' }, { status: 404, headers });
 
-    if (conversationKey.length !== 32) {
-      throw new Error('Invalid shared secret length');
+    if (convBytes.length !== 32) {
+      throw new Error('Invalid conversation key length');
     }
     if (mode === 'encrypt') {
-      const ciphertext = nip44.encrypt(content, conversationKey);
+      const ciphertext = nip44.encrypt(content, convBytes);
       return Response.json({ result: ciphertext }, { status: 200, headers });
     } else {
-      const plaintext = nip44.decrypt(content, conversationKey);
+      const plaintext = nip44.decrypt(content, convBytes);
       return Response.json({ result: plaintext }, { status: 200, headers });
     }
   } catch (e: any) {

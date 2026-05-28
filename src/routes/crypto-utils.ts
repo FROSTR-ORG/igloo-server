@@ -2,6 +2,7 @@
  * Shared cryptographic utility functions for NIP-04 and NIP-44 routes
  */
 
+import { createHmac } from 'node:crypto';
 import type { ServerBifrostNode } from './types.js';
 import { withTimeout, binaryToHex } from './utils.js';
 
@@ -133,4 +134,29 @@ export async function deriveSharedSecret(
   }
 
   return secretHex;
+}
+
+/**
+ * Derive the NIP-44 v2 conversation key from a raw ECDH shared secret (`shared_x`).
+ *
+ * Per NIP-44 v2, the conversation key is:
+ *   conversation_key = HKDF-extract(SHA-256, IKM=shared_x, salt="nip44-v2")
+ *
+ * Threshold ECDH on Bifrost returns the raw shared X coordinate as input keying
+ * material; it MUST NOT be used as the conversation key directly. This helper
+ * applies the spec HKDF-extract step so HTTP `/api/nip44/*` and NIP-46
+ * `nip44_*` derive the exact same key from the same signer/peer relationship.
+ *
+ * @param sharedSecretHex - 32-byte ECDH shared secret as lowercase hex
+ * @returns 32-byte NIP-44 v2 conversation key
+ * @throws Error if the input is not a 32-byte hex string
+ */
+export function deriveNip44ConversationKey(sharedSecretHex: string): Uint8Array {
+  if (typeof sharedSecretHex !== 'string' || !/^[0-9a-f]{64}$/.test(sharedSecretHex)) {
+    throw new Error('Invalid shared secret: expected 32-byte hex string');
+  }
+  const sharedX = Buffer.from(sharedSecretHex, 'hex');
+  // HKDF-extract(SHA-256, salt, IKM) = HMAC-SHA256(salt, IKM)
+  const convBytes = createHmac('sha256', Buffer.from('nip44-v2', 'utf8')).update(sharedX).digest();
+  return Uint8Array.from(convBytes);
 }
